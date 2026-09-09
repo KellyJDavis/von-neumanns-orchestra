@@ -64,6 +64,29 @@ jobs:
 
   lean:
     runs-on: ubuntu-latest
+    # tests/leanserv/test_api.py (M1.8.5) needs both a live Postgres (for the verification cache
+    # and base_env lookups, as the real leanserv role) and the Lean toolchain (to spawn a real
+    # leankernel serve process) at once -- the only place in this workflow both are available
+    # together. Adding Postgres here, rather than adding the Lean toolchain to the python job, is
+    # the cheaper direction: this service container is lightweight, where installing elan and
+    # building Mathlib into the python job would duplicate genuinely expensive setup that job has
+    # no other reason to pay for.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: leanagent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/leanagent
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/leanagent
     steps:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
@@ -80,4 +103,12 @@ jobs:
           enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --all-packages
+      - run: uv run alembic upgrade head
+      - name: Apply deploy/grants.sql
+        run: |
+          uv run python -c "
+          import psycopg
+          with psycopg.connect('postgresql://postgres:postgres@localhost:5432/leanagent', autocommit=True) as conn:
+              conn.execute(open('deploy/grants.sql').read())
+          "
       - run: uv run pytest tests/leanserv
