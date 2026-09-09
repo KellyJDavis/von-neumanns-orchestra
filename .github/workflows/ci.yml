@@ -70,3 +70,14 @@ jobs:
         with:
           lake-package-directory: packages/leankernel
           test: true
+      # tests/leanserv/ spawns the real `leankernel serve` binary this job just built (M1.8.1) --
+      # never a mock, per CLAUDE.md. It lives in this job, not the `python` job, specifically so
+      # the Lean toolchain + Mathlib setup (and its cache) stays in one place rather than being
+      # duplicated into a job that otherwise has no reason to need it. `lean-action` leaves
+      # `elan`/`lake` on PATH for the steps below via the same mechanism it uses internally.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-packages
+      - run: uv run pytest tests/leanserv

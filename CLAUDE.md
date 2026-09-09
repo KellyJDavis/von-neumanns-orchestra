@@ -10,7 +10,7 @@ pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deplo
 (Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), M1.6 (privilege model +
 `mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is in
 progress and, being far larger than M1.1–M1.7, is split into its own sub-milestones rather than one PR:
-M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper), M1.8.3 (`pool.py` LRU),
+M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper — done), M1.8.3 (`pool.py` LRU),
 M1.8.4 (`cache.py` L0/L1 + `verdicts.py`), M1.8.5 (`api.py` FastAPI surface). See "Implementation notes" below
 for load-bearing facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
@@ -66,6 +66,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
   its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` — and
   read one JSON response line per request from stdout. Closing stdin exits it with code 0.
+- `leanserv`'s `ReplWorker` (M1.8.2, `packages/leanserv/src/lean_agent_serv/repl.py`): `lake build` in
+  `packages/leankernel` first (it spawns the real `leankernel serve` binary from that build, never a mock), then
+  `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet, the same way
+  `tests/db/` skips if Postgres isn't reachable — CI's `lean` job builds it first specifically so the skip never
+  triggers there (see `.github/workflows/ci.yml`).
 - Database (`packages/core`'s `lean_agent_core.orm`/`.schemas`, `migrations/`): start Postgres 16 with
   `docker compose -f deploy/compose.yaml up -d`, then apply migrations with
   `DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/leanagent uv run alembic upgrade head`,
@@ -389,6 +394,62 @@ content-addressed store with no Postgres dependency — tested with `tmp_path`, 
   — `tests/db/test_schema.py` already exercises the async-capable ORM through a synchronous driver/session rather
   than async tests. `tests/test_blobs.py` follows the same minimal-dependency approach: plain sync `def test_...`
   functions drive the async `LocalBlobStore`/`store_or_inline` API via `asyncio.run(...)`.
+
+## Implementation notes: leanserv process-management facts
+
+These surfaced while building M1.8.2 (`packages/leanserv/src/lean_agent_serv/repl.py`), the wrapper around one
+`lake exe leankernel serve` process (M1.8.1) — found by actually spawning the real subprocess and driving it into
+each failure mode, not by reasoning about `asyncio.subprocess` in the abstract. Several of these cost real debugging
+time (one test hung for 67 seconds before its root cause was clear), which is exactly why they're recorded here.
+
+- **`lake exe` does not exec-replace itself — it forks the actual compiled binary as its own child and stays
+  alive supervising it.** Confirmed empirically via `ps aux` during a deliberately-hung check: two distinct PIDs
+  were alive simultaneously, `lake exe leankernel serve Init` and a separate `leankernel serve Init`. This means
+  signalling only the direct child (`asyncio.subprocess.Process.kill()`, targeting the `lake` PID) does **not**
+  stop the actual elaboration — it orphans the real worker process, which keeps running (still burning CPU on
+  whatever it was doing) and, worse, keeps its own inherited copy of the stdout pipe's write end open, so a
+  reader on the Python side never even sees EOF. A test built on this wrong assumption "passed" but took 67
+  seconds instead of ~1: the timeout fired correctly, but killing only `lake` left the orphaned grandchild running
+  long enough that unrelated system noise eventually reaped it. **Fix**: spawn with `start_new_session=True`
+  (POSIX `setsid`), which puts `lake` and everything it forks into one new process group with `lake`'s own pid as
+  the group id, then signal the whole group via `os.killpg(pid, signal.SIGKILL)` instead of `process.kill()`. Any
+  future code that spawns a `lake exe` subprocess and needs to be able to kill it reliably needs this same
+  pattern — it is not specific to `leankernel serve`.
+- **A `check` body's `#eval`-triggered `IO.println`/`IO.eprintln` output is captured into the command's message
+  log and returned over *stdout* as ordinary diagnostics — it is never written to the process's real stderr fd.**
+  Confirmed empirically: a body calling `IO.eprintln` thousands of times, run with stderr redirected to a file,
+  left that file at zero bytes; the printed lines showed up in the JSON response's `diagnostics` array instead.
+  This is Lean's own `#eval`/`#print`-output-capture mechanism (the same thing that makes `#eval`'s printed output
+  show up as an info message in an editor) — not a bug in `Serve.lean`. Practical consequences: (1) a large
+  volume of `#eval`-printed output shows up as elaboration *latency* (processing thousands of message-log entries
+  and JSON-encoding a large diagnostics array), not as a stderr-pipe problem — an intended stderr-flood test for
+  `_drain_stderr` was scrapped for exactly this reason, since it couldn't actually reach the real stderr fd at
+  all; (2) real traffic on the worker's stderr pipe in production is expected to be rare (a Lean panic, a
+  C-runtime message, GC diagnostics) rather than anything a normal proof attempt would trigger — `_drain_stderr`
+  is warranted as defense-in-depth regardless, just not something this module's own tests can manufacture on
+  demand to prove prevents a deadlock.
+- **Crash taxonomy is a closed set of three, deliberately not one flat exception**: `ReplTimeout` (wallclock
+  budget elapsed; the process was already SIGKILLed by the time it's raised), `ReplExited` (the process is gone
+  for a reason other than our own timeout kill — crashed, OOM-killed, or exited on its own), and
+  `ReplProtocolError` (the process is alive and responded, but with something that isn't a valid, correlated
+  response — `Serve.lean`'s own `handleLine` guarantees a response line for every input line even a malformed
+  one, so this specifically means stdout desynchronized from the request stream). All three subclass
+  `ReplCrashed`, and a normal elaboration failure (`ok=False`, e.g. a type error) is **not** one of them — it's
+  spec's own "`infra_error` is a distinct, unbudgeted outcome from a proof failure" principle applied one layer
+  down from the obligation state machine to a single worker.
+- **The response-`id`-mismatch branch of `ReplProtocolError` is reproducible for real, not just by construction**:
+  writing an extra, well-formed request line directly to the process's stdin ahead of a normal `check()` call
+  genuinely desynchronizes the pair, since `Serve.lean` answers every line strictly in order — `check()`'s own
+  `readline()` then reads that stray response first. `tests/leanserv/test_repl.py` exercises this directly rather
+  than asserting the branch only by code inspection.
+- **No `pytest-asyncio` dependency here either**, continuing M1.7's precedent: `tests/leanserv/test_repl.py`'s
+  `def test_...` functions are plain sync functions driving `ReplWorker`'s async API via `asyncio.run(...)`.
+- **`tests/leanserv/` lives in CI's `lean` job, not the `python` job.** It spawns the real `leankernel serve`
+  binary (never a mock), which needs the Lean toolchain and Mathlib already set up — putting it in the `lean` job
+  reuses that job's own toolchain setup and cache instead of duplicating an expensive elan+Mathlib install into
+  the `python` job for a handful of tests. Local dev mirrors `tests/db/`'s Postgres-connectivity convention: the
+  suite skips gracefully (not a fake pass) if `packages/leankernel`'s built exe isn't found, and CI always builds
+  it first (via `lean-action`, before `tests/leanserv` runs) specifically so that skip never triggers there.
 
 ## Sequencing constraints (spec §8)
 
