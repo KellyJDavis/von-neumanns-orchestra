@@ -125,9 +125,16 @@ class ReplWorker:
         `lake` child -- see `spawn`'s `start_new_session` note for why killing only `lake` leaves
         the actual `leankernel` process (and whatever CPU-bound loop it's stuck in) running.
         `self._process.pid` is the group leader's pid, which is also the group id.
+
+        Deliberately does not early-return just because `self._process.returncode` is already
+        set. A POSIX process group stays alive as long as *any* member process does, independent
+        of whether the original leader (`lake`, `self._process`) has already exited -- `lake`
+        exiting first and leaving its `leankernel` grandchild still finishing up is exactly the
+        case `close()`'s graceful path needs this to still catch (confirmed empirically: without
+        this, `close()` could return while `leankernel` was still alive for a few more seconds,
+        visible in `ps aux` immediately afterward). `ProcessLookupError` -- meaning the whole
+        group is already gone -- is the only condition that makes calling this a genuine no-op.
         """
-        if self._process.returncode is not None:
-            return
         try:
             os.killpg(self._process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -222,6 +229,13 @@ class ReplWorker:
         """Ask the process to exit cleanly (closing its stdin makes `runServe`'s loop see EOF
         and exit 0 -- see M1.8.1's `Serve.lean`), falling back to SIGKILL if it doesn't within a
         few seconds. Always safe to call, including on an already-exited process.
+
+        Sweeps the whole process group with `_kill()` even after a clean exit, not only on the
+        timeout path -- `self._process.wait()` returning only confirms `lake` (the direct child)
+        is gone, not that its `leankernel` grandchild has finished exiting too (`lake` can exit
+        first and leave it to wind down a moment later). Confirmed empirically: without this
+        sweep, a real `leankernel` process was still visible in `ps aux` for several seconds after
+        `close()` had already returned.
         """
         if self.is_alive:
             if self._process.stdin is not None:
@@ -232,6 +246,7 @@ class ReplWorker:
             except TimeoutError:
                 self._kill()
                 await self._process.wait()
+        self._kill()
         await self._stderr_task
 
     async def __aenter__(self) -> Self:
