@@ -13,8 +13,11 @@ and, having been far larger than M1.1–M1.7, was split into its own sub-milesto
 (`leankernel serve`), M1.8.2 (Python `repl.py` process wrapper), M1.8.3 (`pool.py` LRU), M1.8.4 (`cache.py` L0/L1 +
 `verdicts.py`), M1.8.5 (`api.py` FastAPI surface: `/v1/check`, `/v1/check_batch`, `/v1/health` — `/v1/seal`,
 `/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are deliberately not built yet; see
-`api.py`'s own module docstring and the implementation notes below for why). See "Implementation notes" below
-for load-bearing facts discovered while building all of the above. Read
+`api.py`'s own module docstring and the implementation notes below for why). M1.9 (eval harness skeleton --
+`packages/eval`: `score.py`, `reverify.py`, `contamination.py`, the internal regression suite) is also complete;
+Phase 1's remaining scope is exit-gate validation runs (gate 1's 10k-proof throughput report, gate 7's
+decomposition fuzz test at scale, gate 9's prelude memory delta) rather than new modules. See "Implementation
+notes" below for load-bearing facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -105,6 +108,10 @@ Two decisions drive nearly everything else in the design (spec §1):
   `lean` job grew a Postgres service container specifically for this (see `.github/workflows/ci.yml`); locally,
   `lake build` in `packages/leankernel`, then a reachable Postgres with migrations + grants applied, then
   `uv run pytest tests/leanserv`.
+- `packages/eval` (M1.9, eval harness skeleton): `score.py`/`contamination.py` are pure logic (`uv run pytest
+  tests/eval/test_score.py tests/eval/test_contamination.py`, no external infra); `reverify.py` and the internal
+  regression suite (`suites/internal.py`) spawn real Lean processes, same `lake build` prerequisite and skip
+  convention as `tests/leanserv/` — run all of it with `uv run pytest tests/eval`.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -593,6 +600,56 @@ tested through a real `FastAPI` app against a real spawned Lean process and a re
   ordinary `client.post(...)`/`client.get(...)` calls inside a plain sync `def test_...` function work directly —
   simpler than the `asyncio.run(...)`-per-test pattern `test_repl.py`/`test_pool.py`/`test_cache.py` all use for
   their own directly-async APIs.
+
+## Implementation notes: eval harness facts
+
+These surfaced while building M1.9 (`packages/eval/src/lean_agent_eval/{score,reverify,contamination}.py` and
+`suites/internal.py`), the "eval harness skeleton" spec's Phase 1 description names as a deliverable alongside
+`leankernel`/`leanserv`/DDL/blob store. "Skeleton" is load-bearing here: Phase 2/3/4 (control loop, models,
+policies) don't exist yet, so this milestone builds the scoring/reverification *machinery*, tested with synthetic
+or hand-authored data, not an end-to-end benchmark run against a real prover.
+
+- **`lake check --paranoid`, spec's own literal wording for reverification, does not exist.** `lake --help`
+  (Lake 5.0.0-src, the version v4.33.1's toolchain pins) lists `build`/`test`/`env`/`lean`/... but no `check`
+  subcommand at all, and no `--paranoid` flag anywhere. What actually re-verifies a file from scratch is
+  `lake env lean <file>`: elaboration *is* kernel type-checking in Lean (M1.1's own established finding — there is
+  no separate lighter "check-only" mode), so a plain `lake env lean <file>` genuinely re-verifies, and its exit
+  code is reliable (confirmed against both a real passing and a real failing file). "Paranoid" already means
+  something specific and different elsewhere in this codebase's own vocabulary (`LinkRequest.paranoid`, spec's own
+  field for multi-kernel replay; Appendix B's `paranoid_replay` config knob) — neither implemented yet, since
+  `/v1/link` itself doesn't exist (M1.8.5 deferred it).
+- **`lake env`, not just `lake exe`, forks a real child process rather than exec-replacing itself.** Confirmed
+  empirically the same way M1.8.2 found this for `lake exe` (`ps aux` during a deliberately-hung `lake env lean`
+  showed two live PIDs, `lake env lean <file>` and a separate `lean <file>`). `reverify.py`'s timeout path uses
+  the identical fix: `start_new_session=True` at spawn, `os.killpg` on timeout, never a plain `process.kill()`.
+  Worth restating because it is easy to assume a *different* `lake` subcommand behaves differently without
+  checking — it doesn't, and the fix generalizes to "any `lake` subcommand this codebase spawns," not just the
+  one M1.8.2 happened to hit first.
+- **A `sorry`-as-proof development elaborates with `ok=True` through plain `check`, and this is correctly
+  documented as a known limitation, not silently wrong.** `check` (M1.8.1's `Serve.lean`) is elaboration only —
+  it has no axiom audit, and `sorryAx` produces only a message-log *warning*, never an error (M1.1's own finding).
+  The internal suite includes a `sorry`-as-proof problem specifically to pin this down as a regression test: if a
+  future change to `check` started auditing axioms (or started erroring on `sorryAx`), this test's expectation
+  would need to change too, which is exactly the point of encoding today's actual behavior in `EXPECTED_OK` rather
+  than asserting what a full seal/link/replay/audit acceptance check would eventually do.
+- **`INFRA_ERROR` (and a missing verdict, `kind=None`) are excluded from pass@k's own `n`/`c` count, but still
+  counted in the reported budget totals.** Spec's "infra_error is a distinct, unbudgeted outcome from a proof
+  failure" principle, applied to scoring specifically: an infra crash says nothing about whether the *content* is
+  provable, so folding it into `n` (as an implicit failure) would understate a policy's real capability. But the
+  wallclock/tokens/kernel-ms an infra_error attempt burned were still genuinely spent, so `BudgetTotals` sums
+  every outcome, not just the ones that count toward `n`/`c` -- reported "pass@k with the budget that produced
+  it" (spec's own phrasing) means the full cost, including waste, alongside a capability number that isn't
+  distorted by that waste.
+- **Contamination checking is exact-match-after-normalization only, deliberately, not fuzzy/semantic matching.**
+  Semantic detection needs a model or embeddings, and this codebase has none yet (Phase 3 doesn't exist) --
+  building fuzzy matching now would mean faking that dependency. Exact match catches the common, cheap-to-miss
+  case (a benchmark statement copied verbatim, differing at most in whitespace/comments) without pretending to
+  solve paraphrase-level contamination this milestone has no way to test against the real thing it's for.
+- **The internal regression suite runs through `ReplWorker` directly, not `pool.py`/`cache.py`/`api.py`.** It's
+  meant to be the cheapest possible "did the core acceptance mechanism regress" signal (spec: "every PR"), and
+  the full pool/cache/API stack needs Postgres — `tests/leanserv/test_api.py` already exercises that stack for
+  real; duplicating it here for a suite meant to run on every PR would add an unnecessary Postgres dependency to
+  the one suite that should need the least infrastructure to run.
 
 ## Sequencing constraints (spec §8)
 
