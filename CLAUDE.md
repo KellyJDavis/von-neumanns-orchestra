@@ -11,7 +11,8 @@ pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deplo
 `mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is in
 progress and, being far larger than M1.1–M1.7, is split into its own sub-milestones rather than one PR:
 M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper — done), M1.8.3 (`pool.py` LRU —
-done), M1.8.4 (`cache.py` L0/L1 + `verdicts.py`), M1.8.5 (`api.py` FastAPI surface). See "Implementation notes" below
+done), M1.8.4 (`cache.py` L0/L1 + `verdicts.py` — done), M1.8.5 (`api.py` FastAPI surface). See "Implementation
+notes" below
 for load-bearing facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
@@ -90,6 +91,12 @@ Two decisions drive nearly everything else in the design (spec §1):
   driver suffix). It's idempotent (safe to re-run). CI applies it via `psycopg` instead of the `psql` binary, so
   it doesn't depend on a Postgres client being preinstalled on the runner — see `.github/workflows/ci.yml`. Then
   `tests/db/test_privileges.py` exercises it (gate 8) the same way `test_schema.py` exercises the schema.
+- `leanserv`'s `VerificationCacheStore` and `VerdictWriter` (M1.8.4, `packages/leanserv/src/lean_agent_serv/
+  {cache,verdicts}.py`): both need a live Postgres with migrations *and* `deploy/grants.sql` applied (they
+  connect as the real `leanserv` role), so their tests live under `tests/db/` (`test_cache.py`/`test_verdicts.py`),
+  not `tests/leanserv/` — no Lean process involved at all. `admin_engine`/`app_database_url`/
+  `leanserv_database_url`/`leanserv_async_database_url`/`sealed_obligation` are shared fixtures in
+  `tests/db/conftest.py`; run with `uv run pytest tests/db`.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -486,6 +493,45 @@ crashing one mid-test to confirm the pool's own bookkeeping reacts correctly, no
 - **No `pytest-asyncio` dependency here either**, continuing the pattern from M1.7/M1.8.2: `tests/leanserv/
   test_pool.py`'s `def test_...` functions are plain sync functions driving `LeanReplPool`'s async API via
   `asyncio.run(...)`.
+
+## Implementation notes: cache/verdict facts
+
+These surfaced while building M1.8.4 (`packages/leanserv/src/lean_agent_serv/{cache,verdicts}.py`), the first
+real caller of M1.7's `store_or_inline` — tested against a live Postgres, connected as the actual `leanserv` role
+(never the admin/superuser) for every write the production code path would make.
+
+- **A blob-suffixed `bytea` column can hold either inline content or a CAS digest, and nothing about the column
+  itself says which** — M1.7's `store_or_inline` returns a distinct `Inline`/`BlobRef` in memory, but that
+  distinction evaporates the moment either gets written into the same untyped `bytea` column, and a 32-byte
+  inline value would be indistinguishable from a digest by length alone. `lean_agent_core.blobs` gained
+  `to_bytea`/`from_bytea` in this milestone specifically to close that gap: a one-byte tag prefixed onto the
+  actual bytes, entirely within the existing column type, no migration needed. This was a real, load-bearing gap
+  in M1.7's own design that nothing surfaced until M1.8.4 became the first real consumer — worth remembering that
+  "the caller writes the digest into the column instead" (M1.7's own phrasing) was only half a design.
+- **Reusing one `async_sessionmaker`/engine across two separate `asyncio.run()` calls in the same test raises
+  "Future attached to a different loop."** asyncpg connections are bound to the event loop that created them;
+  `asyncio.run()` tears its loop down on return, so a second `asyncio.run()` reusing the same pooled connection
+  hits a live connection whose loop no longer exists. Confirmed empirically (a first draft of the L1-survives-a-
+  fresh-store test called `asyncio.run` twice against the same fixture and failed exactly this way) — the fix is
+  always one `asyncio.run(run())` wrapping every use of a given engine within one test, never two sequential ones.
+- **Proving an L0 (in-process) hit never reaches Postgres needs more than `engine.dispose()`.** Disposing an
+  `AsyncEngine` only discards its current pooled connections; the engine transparently opens a fresh one on next
+  use, so a disposed-then-reused engine would still "work" and silently defeat the test's own point. The actual
+  proof: swap the store's session factory for one pointed at a host that cannot resolve (`host.invalid`) and
+  confirm `get()` still returns the correct cached value — anything reaching Postgres through that factory would
+  fail immediately, not slowly succeed.
+- **`VerificationCacheStore.put` is idempotent by design, not merely by accident** — two workers computing the
+  same content-addressed `cache_key` concurrently is the expected case, not a race to detect and prevent, so
+  `put` uses `INSERT ... ON CONFLICT (cache_key) DO NOTHING` rather than an upsert or a pre-check-then-insert.
+  `VerdictWriter.write`, in contrast, deliberately does **not** do this — `verdict.attempt_id` being the primary
+  key with no conflict handling is intentional (spec: at most one verdict per attempt, ever), so a second write
+  for the same attempt must surface as a genuine `IntegrityError`, not be quietly absorbed.
+- **`sealed_obligation` (and the admin-engine/role-URL fixtures under it) moved from `test_privileges.py` into
+  `tests/db/conftest.py`** once a third and fourth file (`test_cache.py`, `test_verdicts.py`) needed the exact
+  same genuinely-committed-obligation fixture data. Plain (non-fixture) names from a directory's `conftest.py`
+  are importable from sibling test files in that same directory via a normal `from conftest import ...` — pytest's
+  default "prepend" import mode adds each test file's own directory to `sys.path`, confirmed empirically by
+  running the suite after the move, not assumed from pytest's documentation alone.
 
 ## Sequencing constraints (spec §8)
 
