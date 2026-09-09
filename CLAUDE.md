@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Phase 0 (foundations) is complete and committed: `uv` workspace with stub packages, the `leankernel` Lake package
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
-`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit) and M1.2 (Link) are
-implemented and tested; see "Implementation notes" below for load-bearing facts discovered while building them.
-Read
+`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), and M1.3
+(Replay) are implemented and tested; see "Implementation notes" below for load-bearing facts discovered while
+building them. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -153,14 +153,17 @@ agreement, not single-kernel acceptance.
 
 ## Implementation notes: Lean-runtime facts that will recur
 
-These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`) and M1.2
-(`LeanKernel/Link.lean`) by testing directly against the real v4.33.1 toolchain rather than assuming from memory.
-They are load-bearing for M1.3 (Replay) and especially M1.8 (`leanserv`), which needs this exact capability —
-elaborating arbitrary fresh source from a compiled process — in production, not just in tests.
+These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`), M1.2 (`Link.lean`), and
+M1.3 (`Replay.lean`) by testing directly against the real v4.33.1 toolchain rather than assuming from memory.
+They are load-bearing for M1.8 (`leanserv`), which needs this exact capability — elaborating arbitrary fresh
+source from a compiled process — in production, not just in tests.
 
 - **`lean4checker` is deprecated**: merged into Lean itself as `leanchecker`, built into every toolchain since
   v4.28.0 (`lake env leanchecker`, or `--fresh` to replay into a fresh environment). Don't add it as a Lake
-  dependency; the spec predates this merge.
+  dependency; the spec predates this merge. `Replay.lean` doesn't shell out to either tool — it calls the public
+  primitive both are built on directly: `Lean.Environment.replay (newConstants : Std.HashMap Name ConstantInfo)
+  (env : Environment) : IO Environment`, which type-checks each given constant against a base environment via the
+  kernel, independent of however those constants originally got elaborated.
 - **A `lean_exe` that elaborates fresh source at runtime (not just pre-compiled modules) needs
   `supportInterpreter := true`** in its lakefile target. Without it, parsing works (notation loads fine from
   imported `.olean` data) but every builtin term elaborator silently reports "has not been implemented" —
@@ -205,6 +208,22 @@ elaborating arbitrary fresh source from a compiled process — in production, no
   — something whose own type unfolds to `G_poly`'s value — *not* another `Sort v := PUnit.{v}`-shaped definition
   mirroring the goal's own shape. Got this wrong on the first pass (mirrored the goal instead of inhabiting it),
   and the kernel's "declaration type mismatch" error names the mismatch precisely if it happens again.
+- **Link and Replay check genuinely different things and neither is a substitute for the other.** Link verifies
+  *entry matches goal* (kernel type-checks one constructed declaration, trusting whatever types are already
+  stored for `entry` and its dependencies). Replay verifies *everything newly introduced is kernel-sound on its
+  own terms*, independent of whatever ambient options were active when it was elaborated — confirmed by running
+  both on the exact same poisoned-`debug.skipKernelTC` session from M1.2's gate 4 test: Link still correctly
+  rejects the entry-vs-goal mismatch, and Replay *separately* confirms the agent's own declaration is internally
+  well-typed, unaffected by the poisoning either way, because `Environment.replay` never reads the session's
+  options at all — it calls `addDeclCore` with hardcoded values. Don't expect Replay to "extra-catch" a Link
+  rejection; a properly-formed weakened-mutant test has nothing wrong with it *except* not matching the goal, and
+  Replay isn't checking that relationship.
+- **A raw `Kernel.Environment` cannot be constructed from outside `Lean`** (its constructor is `private`), which
+  is why `Replay.lean`'s test for "does replay actually reject bad data" calls the lower-level
+  `Lean.Environment.replay` primitive directly with a hand-built, deliberately mistyped `ConstantInfo`, rather
+  than trying to route a bogus constant through `LeanKernel.replay`'s own environment-diffing wrapper. There is no
+  public API for smuggling an unchecked constant into an `Environment` in the first place — good to know before
+  assuming a "realistic environment-hacking" test needs to look more elaborate than this.
 
 ## Sequencing constraints (spec §8)
 
