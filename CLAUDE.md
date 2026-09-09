@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Phase 0 (foundations) is complete and committed: `uv` workspace with stub packages, the `leankernel` Lake package
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
 `docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), M1.3
-(Replay), M1.4 (Sorries/Infotree decomposition), and M1.5 (DDL, Alembic, Pydantic mirror) are implemented and
-tested; see "Implementation notes" below for load-bearing facts discovered while building them. Read
+(Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), and M1.6 (privilege model +
+`mark_proved`) are implemented and tested; see "Implementation notes" below for load-bearing facts discovered
+while building them. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -70,6 +71,12 @@ Two decisions drive nearly everything else in the design (spec §1):
 - After changing `orm.py`: regenerate with `alembic revision --autogenerate -m "..."` against a running Postgres,
   then verify it with `alembic check` (should report no drift) and by actually applying it — autogenerate's
   output needs verification, not blind trust (see the enum-type finding below).
+- Privilege model (`deploy/grants.sql`, spec §5.5): after migrations, apply it with
+  `psql postgresql://postgres:postgres@localhost:5432/leanagent -f deploy/grants.sql` — note the plain
+  `postgresql://` URL, not `DATABASE_URL`'s `postgresql+asyncpg://` (psql/libpq don't understand the SQLAlchemy
+  driver suffix). It's idempotent (safe to re-run). CI applies it via `psycopg` instead of the `psql` binary, so
+  it doesn't depend on a Postgres client being preinstalled on the runner — see `.github/workflows/ci.yml`. Then
+  `tests/db/test_privileges.py` exercises it (gate 8) the same way `test_schema.py` exercises the schema.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -303,6 +310,23 @@ applying migrations against a real Postgres 16 instance and round-tripping every
   `values_callable=lambda e: [member.value for member in e]` explicitly; without it, SQLAlchemy's `Enum` type
   uses each Python enum member's uppercase `.name` (`OPEN`, not `open`) for the underlying Postgres type's
   values, which would silently diverge from spec §5.2's lowercase enum values.
+- **A test that connects as multiple roles cannot reuse the "wrap the test in a rolled-back transaction" isolation
+  pattern** `test_schema.py` uses. `test_privileges.py` needs data inserted by an admin connection to be visible
+  to entirely separate `app`/`leanserv` connections, and other transactions can never see another transaction's
+  *uncommitted* work (ordinary MVCC) — confirmed empirically, the first version of that fixture used the
+  roll-back pattern and every role-scoped test failed with a foreign-key violation because the referenced row
+  was never actually committed. Its fixture genuinely commits and cleans up explicitly (`DELETE ... CASCADE`)
+  instead.
+- **Postgres roles created via `CREATE ROLE ... LOGIN` with no password cannot authenticate over TCP at all** —
+  fine for `grants.sql` itself (production manages credentials separately), but `test_privileges.py` needs to
+  actually connect as `app`/`leanserv` to exercise their grants, so its `admin_engine` fixture sets a test-only
+  password on each via `ALTER ROLE ... PASSWORD ...` before any role-scoped test runs.
+- **`psql`'s `-f` and psycopg's `.execute()` both run a whole multi-statement SQL file as one call** (libpq's
+  simple query protocol, not the extended/parameterized one) — confirmed by applying `grants.sql`, which
+  contains a `DO $$ ... $$` block and a multi-line `CREATE FUNCTION ... AS $$ ... $$` body, via
+  `psycopg.Connection.execute(open("deploy/grants.sql").read())` with `autocommit=True`. CI uses this instead of
+  shelling out to `psql`, specifically so applying grants doesn't depend on a Postgres client being preinstalled
+  on the runner.
 
 ## Sequencing constraints (spec §8)
 
