@@ -18,10 +18,15 @@ and, having been far larger than M1.1–M1.7, was split into its own sub-milesto
 Gate 7 (decomposition round-trip on a Mathlib sample) is also done — `LeanKernel/DecomposeFuzz.lean`, run
 periodically/manually at the gate's own named scale via `lake exe leankernel decompose-fuzz <seed> <count>` (not
 part of `kernel_tests`/every-commit CI — see the implementation notes below for why even a small slice doesn't
-fit CI's actual budget). Phase 1's remaining scope is gate 1's 10k-proof throughput
-report (blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1
-planning) and gate 9's prelude memory delta, not new modules. See "Implementation notes" below for load-bearing
-facts discovered while building all of the above. Read
+fit CI's actual budget). Gate 9 (prelude memory delta, R19's input) is also done —
+`packages/leanserv/src/lean_agent_serv/memory_probe.py`; measured result: a prelude's own declaration content
+costs on the order of ~2.4 KiB/declaration against an already-warm base (clean signal only above ~10,000
+declarations — smaller sizes are invisible against ~2 MiB of run-to-run RSS jitter in a ~1.5 GiB warm Mathlib
+worker), which is small next to the ~1.5 GiB the base import itself costs; see the implementation notes below for
+the full readout and what it means for R19. Phase 1's remaining scope is gate 1's 10k-proof throughput report,
+blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
+not new modules. See "Implementation notes" below for load-bearing facts discovered while building all of the
+above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -82,6 +87,17 @@ Two decisions drive nearly everything else in the design (spec §1):
   link standalone, reassembly links against the parent, no new axioms), printing a JSON `{sampleSize, passed,
   failures}` report and exiting nonzero if `failures` is non-empty. At the gate's own named scale (5,000-10,000),
   budget 20-35 minutes (measured: ~213ms/declaration locally). Run manually/periodically, not on every commit.
+- `memory_probe` (gate 9's periodic/manual validation run — not part of the automated test suite, for the same
+  "measurement, not a pass/fail assertion" reason as `decompose-fuzz`): `uv run python -m
+  lean_agent_serv.memory_probe --prelude-import <Module> [--prelude-import <Module> ...] [--base-import <Module>
+  ...] [--repeats N]` (base defaults to `Mathlib.Algebra.Group.Basic`) — for each `--prelude-import`, spawns a
+  paired `(base, base+prelude)` worker measurement `--repeats` times and reports the mean RSS delta. Needs a real
+  Postgres-free, Lean-toolchain-only setup, but note that a plain `lake build` in `packages/leankernel` does
+  *not* build the `LeanKernelTests.SyntheticPrelude{50,1000,10000}` fixtures used as example preludes -- they
+  aren't imported by anything `lake build`'s default targets reach, so `lake build LeanKernelTests` (the whole
+  library, not just its default target) is what actually compiles them before a run using them as
+  `--prelude-import`. See the implementation
+  notes below for the actual measured numbers and why `--repeats` (and a large enough prelude) matter.
 - `leanserv`'s `ReplWorker` and `LeanReplPool` (M1.8.2/M1.8.3, `packages/leanserv/src/lean_agent_serv/{repl,pool}.py`):
   `lake build` in `packages/leankernel` first (both spawn the real `leankernel serve` binary from that build,
   never a mock), then `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet,
@@ -738,6 +754,59 @@ or hand-authored data, not an end-to-end benchmark run against a real prover.
   the full pool/cache/API stack needs Postgres — `tests/leanserv/test_api.py` already exercises that stack for
   real; duplicating it here for a suite meant to run on every PR would add an unnecessary Postgres dependency to
   the one suite that should need the least infrastructure to run.
+
+## Implementation notes: gate 9 (prelude memory delta) facts
+
+These surfaced while building and running `packages/leanserv/src/lean_agent_serv/memory_probe.py`, spec's exit
+gate 9: "Prelude memory delta measured (R19 input)." R19: "Zygote fork may not be viable in Lean's threaded
+runtime | The multi-tenancy capacity argument rests on it. **[measure]** in Phase 1. If it fails, deployment
+shifts from shared nodes to per-tenant nodes." Gate 9's number is a direct input to that judgment call.
+
+- **`ReplWorker.pid` (the `lake` process) is the wrong thing to measure memory of — the real cost lives in the
+  `leankernel` child `lake exe`/`lake env` forks, confirmed the same way M1.8.2 found it for killing a worker.**
+  `memory_probe.py`'s `_process_group_rss_kib` sums RSS for `lake`'s own pid *and* any process whose `ppid`
+  matches it, via a plain `ps -A -o pid=,ppid=,rss=` listing filtered in Python — not `ps`'s own process-group
+  selection flags, which differ in meaning between BSD `ps` (macOS) and Linux's procps, where a raw `pid,ppid,rss`
+  column listing is consistently supported on both.
+- **A single measurement of a warm ~1.5 GiB Mathlib worker's RSS varies by roughly ±1-2 MiB run to run, on its
+  own, with no prelude involved at all** — confirmed empirically by measuring the same `Mathlib.Algebra.Group.
+  Basic`-only base repeatedly: 1,567,968 / 1,569,744 / 1,570,112 KiB across three back-to-back spawns. This is
+  ordinary allocator/GC-timing jitter in a long-running warm process, not a bug in the measurement code, but it
+  has a real consequence: **a prelude smaller than a few thousand declarations is invisible against this noise
+  floor.** Measuring 50-, 1,000-declaration synthetic preludes (`LeanKernelTests/SyntheticPrelude{50,1000}.lean`)
+  produced deltas that varied in *sign* across repeats (from -2016 to +1952 KiB) — not a real per-declaration
+  signal, just noise. Only at 10,000 declarations did the signal (mean +24,341 KiB, tight range +23,744 to
+  +25,264 across 3 repeats) clear the noise floor by a comfortable margin.
+- **Measured per-declaration cost, for the simplest possible declaration (a `decide`-provable `Nat` fact with no
+  Mathlib content of its own): ~2.4 KiB/declaration** (24,341 KiB / 10,000, averaged over 3 paired repeats — see
+  `SyntheticPrelude10000.lean`). This is a **floor, not a general estimate** — real project-local Lean libraries
+  with actual mathematical content (larger terms, more complex types, deeper proof terms) would cost more per
+  declaration than this synthetic minimum, which was deliberately built to isolate declaration-count cost from
+  additional transitive-import cost (see the synthetic prelude files' own docstrings for why they need no
+  Mathlib import of their own).
+- **What this means for R19**: a prelude's own declaration content is cheap relative to the base import (~1.5
+  GiB for `Mathlib.Algebra.Group.Basic` alone; spec's own worker memory cap is 12 GiB) — even a substantial
+  project-local library (thousands of declarations) costs low-to-mid single-digit MiB, a small fraction of a
+  worker's budget. The real capacity constraint spec's own architecture note already names ("a prelude-bearing
+  worker occupies a full slot") is **slot multiplication**, not prelude content size: every distinct
+  base-env-plus-prelude combination needs its *own* ~1.5+ GiB warm process regardless of how small that
+  prelude's own content is, and that -- not per-declaration memory cost -- is what actually pressures the
+  ~5-base-env/~21-worker capacity spec's header-fragmentation note describes. This doesn't resolve R19 on its
+  own (whether the zygote fork's copy-on-write sharing is worth building is still a real design question), but it
+  does narrow *why* it would matter: for slot count under fragmentation, not for prelude memory pressure per se.
+- **`measure_prelude_deltas` pairs a fresh base measurement with each prelude measurement in the same round,
+  rather than reusing one base measurement across an entire session.** Given the noise finding above, reusing a
+  single base value across many later comparisons would conflate real signal with whatever the system's overall
+  memory/scheduling state happened to be at one arbitrary earlier moment — pairing each round's own base against
+  that round's own prelude measurement is what let the 10,000-declaration signal actually separate from noise
+  with only 3 repeats.
+- **`tests/leanserv/test_memory_probe.py` tests the tool's correctness, not any specific RSS number** — that a
+  real spawned worker's process-group RSS is properly summed across `lake` and its `leankernel` child (confirmed
+  by comparing against `lake`'s own pid alone, not merely asserting a positive number), that
+  `measure_prelude_deltas` computes `delta_kib` correctly and respects `--repeats`. All five tests use `Init`-only
+  imports to stay fast; they say nothing about the actual measured numbers above, which came from a separate,
+  deliberately Mathlib-based, manually-run measurement — exactly the kind of thing gate 9 asks for a report on,
+  not an assertion suite to pass.
 
 ## Sequencing constraints (spec §8)
 

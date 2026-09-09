@@ -120,6 +120,15 @@ class ReplWorker:
     def is_alive(self) -> bool:
         return self._process.returncode is None
 
+    @property
+    def pid(self) -> int:
+        """The `lake` process's own pid (also its process group id -- see `spawn`'s
+        `start_new_session` note). Exposed for callers that need to inspect the OS process
+        directly (e.g. `memory_probe.py`'s RSS measurement, spec gate 9) rather than reaching
+        into `_process` from outside the class.
+        """
+        return self._process.pid
+
     def _kill(self) -> None:
         """Signal the whole process group `spawn` placed this worker in, not just the immediate
         `lake` child -- see `spawn`'s `start_new_session` note for why killing only `lake` leaves
