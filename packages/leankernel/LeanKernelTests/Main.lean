@@ -3,6 +3,7 @@ import LeanKernel.Audit
 import LeanKernel.Seal
 import LeanKernel.Link
 import LeanKernel.Replay
+import LeanKernel.Sorries
 import LeanKernelTests.AuditFixtures
 import LeanKernelTests.Goals
 
@@ -301,6 +302,92 @@ unsafe def gate4WithReplayChecks : IO (Array Check) := do
 unsafe def replayChecks : IO (Array Check) := do
   return #[← replayPositiveCheck, ← replayCatchesBogusConstantCheck] ++ (← gate4WithReplayChecks)
 
+/--
+Full round-trip: run `decompose`, then confirm its output is actually *usable* -- declare stub
+children with their real extracted types (as axioms; their own proof doesn't matter for this
+check) directly via `Kernel.Environment.addDecl`, sidestepping pretty-printing entirely, then
+elaborate the reassembly text against that environment and check it produces no errors. This is
+the honest way to verify decompose's two outputs agree with each other: the lemma *types* and the
+reassembly *text* were produced somewhat independently (one from `abstractSorry`'s returned
+`Expr`, the other from splicing argument names as text), so only actually elaborating the
+reassembly against real declarations of those exact types proves they match.
+-/
+unsafe def decomposeRoundTripOf (source : String) : IO (LeanKernel.Decomposition × Bool) := do
+  let decomp ← LeanKernel.decompose source
+  enableInitializersExecution
+  -- The reassembly text still carries its own `import` line (spliced from the original source),
+  -- so it must go through the same header-parsing route `decompose` itself uses -- not
+  -- `Lean.Elab.process`, which expects an already-imported base and no header of its own.
+  let inputCtx := Parser.mkInputContext decomp.reassembly "<decompose-roundtrip>"
+  let (header, parserState, headerMessages) ← Parser.parseHeader inputCtx
+  let (env, headerMessages) ← Lean.Elab.processHeader header {} headerMessages inputCtx
+  -- `Lean.addDecl` (elaborator-level), not the raw kernel bypass Link.lean uses: that path goes
+  -- through `Environment.ofKernelEnv`, which is documented as degrading the environment (drops
+  -- notation/elaborator extensions) -- fine for auditing, fatal here, since processing the rest
+  -- of the reassembly needs full elaborator support.
+  --
+  -- `levelParams` is derived from `ty` via `collectLevelParams`, not hardcoded `[]`: a lemma
+  -- abstracted from a goal with a `Type*` binder has `abstractSorry`'s generalized level
+  -- parameter baked into `ty` as a bare `Level.param`, and declaring it with `levelParams := []`
+  -- produces "invalid reference to undefined universe level parameter" -- confirmed empirically
+  -- on the real-Mathlib instance-implicit case below, which is exactly the class of case spec's
+  -- Appendix C warns only surfaces on real Mathlib-dependent goals. `Decomposition.lemmas` only
+  -- carries `(name, type)` (matching spec), so any real caller declaring one of these lemmas --
+  -- not just this test -- needs to do the same derivation.
+  let addStubs : CoreM Unit := decomp.lemmas.forM fun (name, ty) => do
+    let levelParams := (Lean.collectLevelParams {} ty).params.toList
+    Lean.addDecl (Declaration.axiomDecl { name, levelParams, type := ty, isUnsafe := false })
+  let (_, coreState) ← addStubs.toIO mkCoreCtx { env }
+  let frontendState ← Lean.Elab.IO.processCommands inputCtx parserState
+    (Lean.Elab.Command.mkState coreState.env headerMessages {})
+  let messages := frontendState.commandState.messages
+  if messages.hasErrors then
+    -- Kept unconditionally (not just while developing this test): a reassembly failure is
+    -- otherwise a bare `false` with no way to tell why from the test output alone.
+    IO.eprintln s!"decomposeRoundTripOf: reassembly failed to elaborate:\n{decomp.reassembly}"
+    for (name, ty) in decomp.lemmas do
+      let tyText ← ((Meta.ppExpr ty).run').toIO mkCoreCtx { env }
+      IO.eprintln s!"  lemma {name} : {tyText.1}"
+    for m in messages.toArray do
+      IO.eprintln s!"  error: {← m.toString}"
+  return (decomp, !messages.hasErrors)
+
+unsafe def decomposeChecks : IO (Array Check) := do
+  -- No local context to abstract: the goal itself is the whole statement.
+  let (noCtx, noCtxOk) ← decomposeRoundTripOf
+    "import Init\ntheorem parent1 : (1 : Nat) + 1 = 2 ∧ (2 : Nat) + 2 = 4 := by\n  \
+     constructor\n  · sorry\n  · sorry"
+  -- A local context (a hypothesis) that must be captured and correctly reapplied.
+  let (withCtx, withCtxOk) ← decomposeRoundTripOf
+    "import Init\ntheorem parent2 (n : Nat) (h : n > 0) : n + 1 > 1 := by\n  sorry"
+
+  -- Real Mathlib content with an *anonymous* instance-implicit binder -- spec's Appendix C names
+  -- this exact shape as only surfacing on real Mathlib-dependent goals, unlike the two synthetic
+  -- cases above. `[Group G]` with no bound name is the normal Mathlib style, which is precisely
+  -- what makes it a real test: Lean must auto-generate an inaccessible name for it.
+  let (withInstance, withInstanceOk) ← decomposeRoundTripOf
+    "import Mathlib.Algebra.Group.Defs\n\
+     theorem group_test {G : Type*} [Group G] (a b : G) : a * b * b⁻¹ = a := by sorry"
+
+  return #[
+    { name := "decompose/no local context: extracts both sorries",
+      expected := true, actual := noCtx.lemmas.size == 2 },
+    { name := "decompose/no local context: reassembly round-trips against stub children",
+      expected := true, actual := noCtxOk },
+
+    { name := "decompose/with local context: extracts the one sorry",
+      expected := true, actual := withCtx.lemmas.size == 1 },
+    { name := "decompose/with local context: abstracted type is a function (hypotheses captured)",
+      expected := true, actual := withCtx.lemmas.all fun (_, ty) => ty.isForall },
+    { name := "decompose/with local context: reassembly round-trips against stub children",
+      expected := true, actual := withCtxOk },
+
+    { name := "decompose/anonymous instance-implicit (real Mathlib): extracts the sorry",
+      expected := true, actual := withInstance.lemmas.size == 1 },
+    { name := "decompose/anonymous instance-implicit (real Mathlib): reassembly round-trips",
+      expected := true, actual := withInstanceOk }
+  ]
+
 end LeanKernelTests
 
 unsafe def main : IO UInt32 := do
@@ -310,7 +397,8 @@ unsafe def main : IO UInt32 := do
   let sealResults ← LeanKernelTests.sealChecks
   let linkResults ← LeanKernelTests.linkChecks
   let replayResults ← LeanKernelTests.replayChecks
-  let checks := auditResults ++ sealResults ++ linkResults ++ replayResults
+  let decomposeResults ← LeanKernelTests.decomposeChecks
+  let checks := auditResults ++ sealResults ++ linkResults ++ replayResults ++ decomposeResults
   let mut failures := 0
   for c in checks do
     if c.passed then
