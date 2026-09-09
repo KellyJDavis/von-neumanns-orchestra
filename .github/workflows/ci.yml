@@ -93,10 +93,11 @@ jobs:
         with:
           lake-package-directory: packages/leankernel
           test: true
-      # tests/leanserv/ spawns the real `leankernel serve` binary this job just built (M1.8.1) --
-      # never a mock, per CLAUDE.md. It lives in this job, not the `python` job, specifically so
-      # the Lean toolchain + Mathlib setup (and its cache) stays in one place rather than being
-      # duplicated into a job that otherwise has no reason to need it. `lean-action` leaves
+      # tests/leanserv/ and tests/eval/ (M1.9's reverify.py/internal suite) both spawn real Lean
+      # processes built by this job (M1.8.1) -- never a mock, per CLAUDE.md. They live in this
+      # job, not the `python` job, specifically so the Lean toolchain + Mathlib setup (and its
+      # cache) stays in one place rather than being duplicated into a job that otherwise has no
+      # reason to need it. `lean-action` leaves
       # `elan`/`lake` on PATH for the steps below via the same mechanism it uses internally.
       - uses: astral-sh/setup-uv@v5
         with:
@@ -111,4 +112,4 @@ jobs:
           with psycopg.connect('postgresql://postgres:postgres@localhost:5432/leanagent', autocommit=True) as conn:
               conn.execute(open('deploy/grants.sql').read())
           "
-      - run: uv run pytest tests/leanserv
+      - run: uv run pytest tests/leanserv tests/eval
