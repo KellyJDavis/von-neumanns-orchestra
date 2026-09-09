@@ -8,6 +8,25 @@ on:
 jobs:
   python:
     runs-on: ubuntu-latest
+    # tests/db/ needs a real PostgreSQL instance (never a mock, per CLAUDE.md) -- this service
+    # is why. Without it, tests/db/ would skip gracefully rather than fail (see its own
+    # connectivity check), which would silently stop testing the schema in CI.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: leanagent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/leanagent
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/leanagent
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -18,6 +37,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy --strict packages
+      - run: uv run alembic upgrade head
       - run: uv run pytest
 
   plugin-boundary:
