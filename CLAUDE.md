@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Phase 0 (foundations) is complete and committed: `uv` workspace with stub packages, the `leankernel` Lake package
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
 `docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), M1.3
-(Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), and M1.6 (privilege model +
-`mark_proved`) are implemented and tested; see "Implementation notes" below for load-bearing facts discovered
-while building them. Read
+(Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), M1.6 (privilege model +
+`mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested; see "Implementation notes"
+below for load-bearing facts discovered while building them. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -327,6 +327,30 @@ applying migrations against a real Postgres 16 instance and round-tripping every
   `psycopg.Connection.execute(open("deploy/grants.sql").read())` with `autocommit=True`. CI uses this instead of
   shelling out to `psql`, specifically so applying grants doesn't depend on a Postgres client being preinstalled
   on the runner.
+
+## Implementation notes: blob store facts
+
+These surfaced while building M1.7 (`packages/core/src/lean_agent_core/{blobs,protocols}.py`), a pure-filesystem
+content-addressed store with no Postgres dependency — tested with `tmp_path`, not a live database.
+
+- **The `BlobStore` protocol (spec Appendix A) takes no session and no `tenant_id`** — `put`/`get`/`exists` only
+  ever see raw bytes and a digest. Tenant-scoped visibility and the `blob` table row itself are therefore a
+  concern for whichever higher-level caller uploads content (e.g. an eventual `/v1/blobs` endpoint), not for the
+  store. `protocols.py` only defines `BlobStore` so far; the other Appendix A protocols (`LeanService`,
+  `ModelBackend`, `Policy`, `ToolClient`, `Sink`) are left out until something actually implements or consumes
+  them, since adding them now would be speculative surface area with no way to check the shape is right.
+- **`store_or_inline`'s spec §5.3 64 KiB threshold is inclusive of the boundary itself** — data of exactly
+  `INLINE_THRESHOLD` bytes returns `Inline`, not `BlobRef`; only content strictly *above* the threshold is
+  written to the store. Tested explicitly at the boundary (`INLINE_THRESHOLD` bytes and `INLINE_THRESHOLD + 1`
+  bytes), not just with clearly-small/clearly-large samples, since an off-by-one here would silently put oversized
+  content into a `bytea` column instead of the CAS.
+- **No async file I/O library was added.** `LocalBlobStore` wraps ordinary synchronous `Path` calls in
+  `asyncio.to_thread` rather than depending on `aiofiles`, since local-disk I/O is fast enough that a dedicated
+  async-file dependency isn't worth it just to satisfy the `BlobStore` protocol's `async` methods.
+- **No new test-only async infra was added either.** The workspace has no `pytest-asyncio` (or similar) dependency
+  — `tests/db/test_schema.py` already exercises the async-capable ORM through a synchronous driver/session rather
+  than async tests. `tests/test_blobs.py` follows the same minimal-dependency approach: plain sync `def test_...`
+  functions drive the async `LocalBlobStore`/`store_or_inline` API via `asyncio.run(...)`.
 
 ## Sequencing constraints (spec §8)
 
