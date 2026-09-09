@@ -2,6 +2,7 @@ import Lean
 import LeanKernel.Audit
 import LeanKernel.Seal
 import LeanKernel.Link
+import LeanKernel.Replay
 import LeanKernelTests.AuditFixtures
 import LeanKernelTests.Goals
 
@@ -143,6 +144,32 @@ unsafe def linkOf (source : String) (goal entry : Name) (allow : Array Name) :
   ((LeanKernel.link goal entry expectedModuleIdx allow).run').toIO' mkCoreCtx
     { env := commandState.env, messages := commandState.messages }
 
+/--
+Like `linkOf`, but also replays the session's development against the environment produced by
+header-processing alone (i.e. before any agent command ran) -- exactly the fresh, import-only
+base Replay is supposed to check against. This is the "gate 4 with replay enabled" follow-up:
+M1.2 proved Link's own forced options work regardless of ambient poisoning; this proves the two
+mechanisms are genuinely independent and agree, and specifically that `Environment.replay`'s own
+verification does not depend on -- and cannot be fooled by -- whatever ambient options (e.g. a
+poisoned `debug.skipKernelTC`) were active when the agent's development was elaborated, since
+`Environment.replay` uses its own hardcoded checking options, never the session's.
+-/
+unsafe def linkAndReplayOf (source : String) (goal entry : Name) (allow : Array Name) :
+    IO (LeanKernel.LinkReport × LeanKernel.ReplayReport) := do
+  enableInitializersExecution
+  let inputCtx := Parser.mkInputContext source "<link-replay-test>"
+  let (header, parserState, messages) ← Parser.parseHeader inputCtx
+  let (envAfterHeader, messages) ← Lean.Elab.processHeader header {} messages inputCtx
+  let some expectedModuleIdx := envAfterHeader.getModuleIdxFor? goal
+    | throw <| IO.userError s!"test setup error: {goal} was not importable from the header alone"
+  let frontendState ← Lean.Elab.IO.processCommands inputCtx parserState
+    (Lean.Elab.Command.mkState envAfterHeader messages {})
+  let commandState := frontendState.commandState
+  let linkReport ← ((LeanKernel.link goal entry expectedModuleIdx allow).run').toIO' mkCoreCtx
+    { env := commandState.env, messages := commandState.messages }
+  let replayReport ← LeanKernel.replay envAfterHeader commandState.env
+  return (linkReport, replayReport)
+
 unsafe def linkChecks : IO (Array Check) := do
   let goalAddZero := `LeanKernelTests.Goals.G_add_zero
   let goalPoly := `LeanKernelTests.Goals.G_poly
@@ -197,6 +224,83 @@ unsafe def linkChecks : IO (Array Check) := do
       expected := false, actual := weakPoisoned.ok }
   ]
 
+/--
+Positive/plumbing check: a genuinely new, legitimately-checked declaration, elaborated on top of
+a freshly-imported base, replays successfully -- confirming `LeanKernel.replay`'s own
+new-vs-base delta computation finds it and that a normal declaration survives independent
+kernel re-verification.
+-/
+unsafe def replayPositiveCheck : IO Check := do
+  enableInitializersExecution
+  let baseEnv ← importModules #[{ module := `Init }] {} (loadExts := true)
+  let (env, _messages) ← Lean.Elab.process "def foo : Nat := 5" baseEnv {}
+  let report ← LeanKernel.replay baseEnv env
+  return { name := "replay/legitimate new declaration: replays successfully",
+            expected := true, actual := report.ok && report.checkedCount > 0 }
+
+/--
+Replay's actual value proposition, tested directly against the primitive it wraps
+(`Lean.Environment.replay`): a `ConstantInfo` that *claims* a type its value does not have --
+exactly what a metaprogram bypassing normal declaration-adding machinery would produce (spec
+§4.3's "environment hacking") -- is rejected by the kernel regardless of what it claims about
+itself. This is deliberately not routed through `LeanKernel.replay`'s own delta computation: a
+raw `Kernel.Environment` cannot be hand-constructed from outside `Lean` (its constructor is
+private), so there is no way to get a hand-fabricated bogus `ConstantInfo` into an `Environment`
+value except through the exact mechanism this test exercises directly. That is itself a good
+sign, not a gap in the test: it means there is no public API surface for smuggling an unchecked
+constant into an environment in the first place.
+-/
+unsafe def replayCatchesBogusConstantCheck : IO Check := do
+  enableInitializersExecution
+  let baseEnv ← importModules #[{ module := `Init }] {} (loadExts := true)
+  -- `True.intro : True`, not `False` -- kernel type-checking must reject this outright.
+  let bogus : ConstantInfo := .defnInfo {
+    name := `bad
+    levelParams := []
+    type := mkConst `False
+    value := mkConst `True.intro
+    hints := .opaque
+    safety := .safe
+  }
+  let ok ← try
+    discard <| Environment.replay (({} : Std.HashMap Name ConstantInfo).insert `bad bogus) baseEnv
+    pure true
+  catch _ =>
+    pure false
+  return { name := "replay/bogus constant with mismatched type: rejected",
+            expected := false, actual := ok }
+
+/-- Gate 4, revisited now that Replay exists (M1.2 tested it with replay trivially "disabled",
+since Replay didn't exist yet): a legitimate proof has Link and Replay independently agree, and
+a proof that Link correctly rejects via its own forced options is *also* correctly judged
+kernel-sound *on its own terms* by Replay, despite the ambient session having
+`debug.skipKernelTC` poisoned when it was elaborated -- because Replay never looks at the
+session's options at all. Link and Replay check different things (entry-matches-goal vs.
+everything-new-is-kernel-sound) and neither depends on the other, or on the ambient session
+state, to be correct. -/
+unsafe def gate4WithReplayChecks : IO (Array Check) := do
+  let goalAddZero := `LeanKernelTests.Goals.G_add_zero
+  let (defeqLink, defeqReplay) ← linkAndReplayOf
+    "import LeanKernelTests.Goals\nabbrev Zero' : Nat := 0\ndef sol_ok : ∀ n : Nat, n + Zero' = n := fun n => rfl"
+    goalAddZero `sol_ok LeanKernel.defaultAllowlist
+  let (weakLink, weakReplay) ← linkAndReplayOf
+    "import LeanKernelTests.Goals\nset_option debug.skipKernelTC true\n\
+     def sol_weak2 : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩"
+    goalAddZero `sol_weak2 LeanKernel.defaultAllowlist
+  return #[
+    { name := "gate4+replay/legitimate proof: link and replay both agree it's fine",
+      expected := true, actual := defeqLink.ok && defeqReplay.ok },
+    { name := "gate4+replay/link rejects the entry-goal mismatch despite poisoned options",
+      expected := false, actual := weakLink.ok },
+    { name := "gate4+replay/replay independently judges the poisoned session's own \
+      declarations kernel-sound (it checks soundness, not entry-goal matching, and is not \
+      itself fooled by the poisoned option)",
+      expected := true, actual := weakReplay.ok }
+  ]
+
+unsafe def replayChecks : IO (Array Check) := do
+  return #[← replayPositiveCheck, ← replayCatchesBogusConstantCheck] ++ (← gate4WithReplayChecks)
+
 end LeanKernelTests
 
 unsafe def main : IO UInt32 := do
@@ -205,7 +309,8 @@ unsafe def main : IO UInt32 := do
     (fun env => LeanKernelTests.auditChecks env)
   let sealResults ← LeanKernelTests.sealChecks
   let linkResults ← LeanKernelTests.linkChecks
-  let checks := auditResults ++ sealResults ++ linkResults
+  let replayResults ← LeanKernelTests.replayChecks
+  let checks := auditResults ++ sealResults ++ linkResults ++ replayResults
   let mut failures := 0
   for c in checks do
     if c.passed then
