@@ -9,150 +9,30 @@ Local dev / CI setup is the same as `test_schema.py` (Postgres 16, migrations ap
     psql postgresql://postgres:postgres@localhost:5432/leanagent -f deploy/grants.sql
 CI applies it via psycopg instead (see .github/workflows/ci.yml), so it doesn't depend on a
 Postgres client being preinstalled on the runner.
+
+`admin_engine`/`app_database_url`/`leanserv_database_url`/`sealed_obligation` live in
+`conftest.py` now -- this file was their only user until M1.8.4's test_cache.py/test_verdicts.py
+needed the same setup.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
-from collections.abc import Iterator
-from typing import NamedTuple
 
 import pytest
+from conftest import SealedObligation
 from lean_agent_core.enums import VerdictKind
 from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.exc import DBAPIError, OperationalError
-
-ADMIN_DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/leanagent",
-)
-# Test-only credentials for the two application roles `grants.sql` creates. Never used outside
-# this suite; production credential management is out of scope here (see grants.sql itself,
-# which deliberately creates the roles with no password at all).
-_APP_PASSWORD = "app_test_password"
-_LEANSERV_PASSWORD = "leanserv_test_password"
-
-
-def _role_url(role: str, password: str) -> str:
-    base = ADMIN_DATABASE_URL.rsplit("@", 1)[1]  # "host:port/db"
-    driver = ADMIN_DATABASE_URL.split("://", 1)[0]
-    return f"{driver}://{role}:{password}@{base}"
-
-
-APP_DATABASE_URL = _role_url("app", _APP_PASSWORD)
-LEANSERV_DATABASE_URL = _role_url("leanserv", _LEANSERV_PASSWORD)
-
-
-@pytest.fixture(scope="session")
-def admin_engine() -> Iterator[Engine]:
-    eng = create_engine(ADMIN_DATABASE_URL)
-    try:
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except OperationalError as e:
-        pytest.skip(f"Postgres not reachable at {ADMIN_DATABASE_URL!r} ({e.__class__.__name__})")
-
-    # Give the two roles a password so this suite can connect as them over TCP; grants.sql
-    # itself deliberately leaves them password-less (real deployments manage credentials
-    # separately, e.g. via a secrets manager, not a checked-in SQL file).
-    with eng.connect() as conn:
-        exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'app'")).first()
-        if exists is None:
-            pytest.skip(
-                "Roles 'app'/'leanserv' don't exist -- run `psql \"$DATABASE_URL\" -f "
-                "deploy/grants.sql` against this database first."
-            )
-        conn.execute(text(f"ALTER ROLE app PASSWORD '{_APP_PASSWORD}'"))
-        conn.execute(text(f"ALTER ROLE leanserv PASSWORD '{_LEANSERV_PASSWORD}'"))
-        conn.commit()
-
-    yield eng
-    eng.dispose()
-
-
-def _digest(label: str) -> bytes:
-    return f"digest-{label}-{uuid.uuid4()}".encode()
-
-
-class _SealedObligation(NamedTuple):
-    id: uuid.UUID
-    run_id: uuid.UUID
-    sealed_olean_sha: bytes
-
-
-@pytest.fixture
-def sealed_obligation(admin_engine: Engine) -> Iterator[_SealedObligation]:
-    """A genuinely committed obligation + run + base_env, cleaned up explicitly afterward.
-
-    Unlike `test_schema.py`'s fixtures, this data must be visible to entirely separate
-    connections opened as `app`/`leanserv` -- other roles' connections can never see another
-    transaction's *uncommitted* work (ordinary MVCC visibility), so the "wrap the test in a
-    transaction and roll it back" pattern used there cannot be reused here. Confirmed empirically:
-    the first version of this fixture used exactly that pattern and every role-scoped test failed
-    with a foreign-key violation, because the row it referenced was never actually committed.
-    """
-    base_env_digest = _digest("base")
-    run_id = uuid.uuid4()
-    obligation_id = uuid.uuid4()
-    sealed_olean_sha = _digest("sealed")
-
-    with admin_engine.connect() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO base_env (digest, recipe, toolchain_rev, mathlib_rev) "
-                "VALUES (:digest, '{}', 'v4.33.1', 'deadbeef')"
-            ),
-            {"digest": base_env_digest},
-        )
-        conn.execute(
-            text(
-                "INSERT INTO run (id, tenant_id, base_env_digest, status, manifest, "
-                "manifest_hash) VALUES (:id, :tenant, :base_env, 'running', '{}', :mh)"
-            ),
-            {
-                "id": run_id,
-                "tenant": uuid.uuid4(),
-                "base_env": base_env_digest,
-                "mh": _digest("manifest"),
-            },
-        )
-        conn.execute(
-            text(
-                "INSERT INTO obligation (id, run_id, base_env_digest, goal_digest, "
-                "sealed_olean_sha, goal_src, decl_name) "
-                "VALUES (:id, :run_id, :base_env, :goal_digest, :sealed, 'theorem foo : True "
-                ":= trivial', 'foo')"
-            ),
-            {
-                "id": obligation_id,
-                "run_id": run_id,
-                "base_env": base_env_digest,
-                "goal_digest": _digest("goal"),
-                "sealed": sealed_olean_sha,
-            },
-        )
-        conn.commit()
-
-    yield _SealedObligation(id=obligation_id, run_id=run_id, sealed_olean_sha=sealed_olean_sha)
-
-    with admin_engine.connect() as conn:
-        # Cascades to obligation, attempt, verdict, obligation_edge (all ON DELETE CASCADE from
-        # run/obligation); base_env has no such cascade from either, so it needs its own delete.
-        conn.execute(text("DELETE FROM run WHERE id = :id"), {"id": run_id})
-        conn.execute(
-            text("DELETE FROM base_env WHERE digest = :digest"), {"digest": base_env_digest}
-        )
-        conn.commit()
+from sqlalchemy.exc import DBAPIError
 
 
 def test_app_cannot_update_status_directly(
-    admin_engine: Engine, sealed_obligation: _SealedObligation
+    admin_engine: Engine, app_database_url: str, sealed_obligation: SealedObligation
 ) -> None:
     """Gate 8: status bypass refused. `app` has no table-level UPDATE on `obligation` and
     `status` is not in its permitted-column grant -- so this must fail at the database, not
     merely be something the application layer chooses not to do."""
-    app_engine = create_engine(APP_DATABASE_URL)
+    app_engine = create_engine(app_database_url)
     try:
         with app_engine.connect() as conn, pytest.raises(DBAPIError, match="permission denied"):
             conn.execute(
@@ -164,10 +44,10 @@ def test_app_cannot_update_status_directly(
 
 
 def test_app_can_update_permitted_columns(
-    admin_engine: Engine, sealed_obligation: _SealedObligation
+    admin_engine: Engine, app_database_url: str, sealed_obligation: SealedObligation
 ) -> None:
     """Gate 8: permitted-column update allowed. `priority` is explicitly granted."""
-    app_engine = create_engine(APP_DATABASE_URL)
+    app_engine = create_engine(app_database_url)
     try:
         with app_engine.connect() as conn:
             conn.execute(
@@ -187,13 +67,13 @@ def test_app_can_update_permitted_columns(
 
 
 def test_app_cannot_insert_verdict(
-    admin_engine: Engine, sealed_obligation: _SealedObligation
+    admin_engine: Engine, app_database_url: str, sealed_obligation: SealedObligation
 ) -> None:
     """Gate 8: worker (app) INSERT INTO verdict refused -- leanserv is the only writer of
     verdicts (spec §5.1, §6.2). Uses a real attempt row (inserted as `app`, which *is* permitted
     to insert attempts) so the verdict insert fails on its own merits, not because the attempt
     it references doesn't exist."""
-    with create_engine(APP_DATABASE_URL).connect() as conn:
+    with create_engine(app_database_url).connect() as conn:
         attempt_id = conn.execute(
             text(
                 "INSERT INTO attempt (id, obligation_id, run_id, policy_id, policy_config_hash) "
@@ -215,11 +95,14 @@ def test_app_cannot_insert_verdict(
 
 
 def test_leanserv_can_insert_verdict(
-    admin_engine: Engine, sealed_obligation: _SealedObligation
+    admin_engine: Engine,
+    app_database_url: str,
+    leanserv_database_url: str,
+    sealed_obligation: SealedObligation,
 ) -> None:
     """Complement to the above: leanserv is explicitly granted INSERT on verdict, and must
     actually be able to use it, not just have app correctly denied."""
-    with create_engine(APP_DATABASE_URL).connect() as conn:
+    with create_engine(app_database_url).connect() as conn:
         attempt_id = conn.execute(
             text(
                 "INSERT INTO attempt (id, obligation_id, run_id, policy_id, policy_config_hash) "
@@ -229,7 +112,7 @@ def test_leanserv_can_insert_verdict(
         ).scalar_one()
         conn.commit()
 
-    leanserv_engine = create_engine(LEANSERV_DATABASE_URL)
+    leanserv_engine = create_engine(leanserv_database_url)
     try:
         with leanserv_engine.connect() as conn:
             conn.execute(
@@ -252,12 +135,17 @@ def test_leanserv_can_insert_verdict(
 
 
 def _insert_attempt_and_verdict(
-    obligation_id: uuid.UUID, run_id: uuid.UUID, *, satisfies_predicate: bool
+    app_database_url: str,
+    leanserv_database_url: str,
+    obligation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    *,
+    satisfies_predicate: bool,
 ) -> uuid.UUID:
     """Insert an attempt (as `app`) and its verdict (as `leanserv`), returning the attempt id.
     `satisfies_predicate` controls whether the verdict actually meets `mark_proved`'s acceptance
     predicate (all three ok flags true, kind='proved', sealed_olean_sha_observed matches)."""
-    with create_engine(APP_DATABASE_URL).connect() as app_conn:
+    with create_engine(app_database_url).connect() as app_conn:
         attempt_id: uuid.UUID = app_conn.execute(
             text(
                 "INSERT INTO attempt (id, obligation_id, run_id, policy_id, policy_config_hash) "
@@ -267,7 +155,7 @@ def _insert_attempt_and_verdict(
         ).scalar_one()
         app_conn.commit()
 
-    with create_engine(LEANSERV_DATABASE_URL).connect() as leanserv_conn:
+    with create_engine(leanserv_database_url).connect() as leanserv_conn:
         if satisfies_predicate:
             leanserv_conn.execute(
                 text(
@@ -293,12 +181,19 @@ def _insert_attempt_and_verdict(
 
 
 def test_mark_proved_rejects_unsatisfied_predicate(
-    admin_engine: Engine, sealed_obligation: _SealedObligation
+    admin_engine: Engine,
+    app_database_url: str,
+    leanserv_database_url: str,
+    sealed_obligation: SealedObligation,
 ) -> None:
     attempt_id = _insert_attempt_and_verdict(
-        sealed_obligation.id, sealed_obligation.run_id, satisfies_predicate=False
+        app_database_url,
+        leanserv_database_url,
+        sealed_obligation.id,
+        sealed_obligation.run_id,
+        satisfies_predicate=False,
     )
-    app_engine = create_engine(APP_DATABASE_URL)
+    app_engine = create_engine(app_database_url)
     try:
         with (
             app_engine.connect() as conn,
@@ -313,16 +208,23 @@ def test_mark_proved_rejects_unsatisfied_predicate(
 
 
 def test_mark_proved_succeeds_and_is_idempotent(
-    admin_engine: Engine, sealed_obligation: _SealedObligation
+    admin_engine: Engine,
+    app_database_url: str,
+    leanserv_database_url: str,
+    sealed_obligation: SealedObligation,
 ) -> None:
     """Gate 8: repeated mark_proved idempotent. Also exercises that `app` -- which cannot UPDATE
     obligation.status directly (see test_app_cannot_update_status_directly) -- can still reach
     'proved' through this one sanctioned path, because SECURITY DEFINER runs it with the
     function owner's privileges, not the caller's."""
     attempt_id = _insert_attempt_and_verdict(
-        sealed_obligation.id, sealed_obligation.run_id, satisfies_predicate=True
+        app_database_url,
+        leanserv_database_url,
+        sealed_obligation.id,
+        sealed_obligation.run_id,
+        satisfies_predicate=True,
     )
-    app_engine = create_engine(APP_DATABASE_URL)
+    app_engine = create_engine(app_database_url)
     try:
         with app_engine.connect() as conn:
             conn.execute(

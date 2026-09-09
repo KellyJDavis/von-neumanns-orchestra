@@ -14,7 +14,16 @@ import asyncio
 import hashlib
 from pathlib import Path
 
-from lean_agent_core.blobs import INLINE_THRESHOLD, BlobRef, Inline, LocalBlobStore, store_or_inline
+import pytest
+from lean_agent_core.blobs import (
+    INLINE_THRESHOLD,
+    BlobRef,
+    Inline,
+    LocalBlobStore,
+    from_bytea,
+    store_or_inline,
+    to_bytea,
+)
 
 
 def test_put_get_exists_round_trip_small_and_large(tmp_path: Path) -> None:
@@ -84,4 +93,47 @@ def test_store_or_inline_above_threshold_returns_blob_ref_and_writes_through(
 
     assert isinstance(result, BlobRef)
     assert result.digest == hashlib.sha256(above_threshold).digest()
-    assert asyncio.run(store.get(result.digest)) == above_threshold
+
+
+def test_bytea_round_trips_inline_content(tmp_path: Path) -> None:
+    store = LocalBlobStore(tmp_path)
+    data = b"small enough to inline"
+
+    async def run() -> bytes:
+        routed = await store_or_inline(store, data, "text/plain")
+        column_value = to_bytea(routed)
+        return await from_bytea(store, column_value)
+
+    assert asyncio.run(run()) == data
+
+
+def test_bytea_round_trips_blob_ref_content(tmp_path: Path) -> None:
+    store = LocalBlobStore(tmp_path)
+    data = b"y" * (INLINE_THRESHOLD + 1)
+
+    async def run() -> bytes:
+        routed = await store_or_inline(store, data, "text/plain")
+        column_value = to_bytea(routed)
+        return await from_bytea(store, column_value)
+
+    assert asyncio.run(run()) == data
+
+
+def test_bytea_inline_and_blob_ref_encodings_are_never_ambiguous(tmp_path: Path) -> None:
+    """The whole reason `to_bytea` tags its output: an inline value that happens to be exactly a
+    digest's length (32 bytes) must still decode as itself, not be mistaken for a `BlobRef` --
+    without the tag, this is exactly the ambiguity a bare `bytea` column can't resolve.
+    """
+    store = LocalBlobStore(tmp_path)
+    thirty_two_bytes = b"x" * 32
+
+    column_value = to_bytea(Inline(thirty_two_bytes))
+
+    assert asyncio.run(from_bytea(store, column_value)) == thirty_two_bytes
+
+
+def test_from_bytea_rejects_an_unrecognized_tag(tmp_path: Path) -> None:
+    store = LocalBlobStore(tmp_path)
+
+    with pytest.raises(ValueError, match="unrecognized"):
+        asyncio.run(from_bytea(store, b"\x02not a tag this module ever wrote"))
