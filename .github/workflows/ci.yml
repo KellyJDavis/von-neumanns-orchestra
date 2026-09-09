@@ -38,3 +38,4 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           lake-package-directory: packages/leankernel
+          test: true
