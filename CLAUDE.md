@@ -600,6 +600,30 @@ tested through a real `FastAPI` app against a real spawned Lean process and a re
   ordinary `client.post(...)`/`client.get(...)` calls inside a plain sync `def test_...` function work directly —
   simpler than the `asyncio.run(...)`-per-test pattern `test_repl.py`/`test_pool.py`/`test_cache.py` all use for
   their own directly-async APIs.
+- **A pool constructed outside `TestClient` and torn down afterward via a separate `asyncio.run(pool.aclose())`
+  silently leaked every worker process — found only by checking `ps aux` immediately after a full test run, not
+  by anything failing.** `TestClient` runs the whole app — every route handler's `await`s, and therefore every
+  `ReplWorker` subprocess `pool.py` spawned — on its own internal event loop/portal. Calling
+  `pool.aclose()` afterward from a *different* loop hits `asyncio.subprocess`'s version of the "Future attached
+  to a different loop" error M1.8.4 already found for asyncpg — except here `LeanReplPool.aclose()`'s
+  `asyncio.gather(..., return_exceptions=True)` swallows the error silently, so `_kill()` never actually ran and
+  every worker kept running, undetected, until Python's own garbage collection eventually closed their pipes
+  (confirmed empirically: they died on their own within ~15 seconds, not immediately, and not via anything this
+  codebase's own cleanup code did). **Fix**: `create_app` now closes `pool` itself, via FastAPI's `lifespan`
+  parameter — `lifespan` runs on ASGI shutdown, which `TestClient.__exit__` triggers on the *same* loop the app
+  (and its workers) ran on the whole time. `engine.dispose()` (the database engine, disposed separately by
+  whatever constructed it) does *not* need the same fix — confirmed empirically by checking Postgres's own
+  connection count before and after, which returns to baseline either way; `AsyncEngine.dispose()` mainly closes
+  idle pooled connections rather than interacting with an in-flight Task/Future tied to the old loop, which is
+  the specific shape of operation that breaks across a loop boundary.
+- **This also fixed a latent bug in `ReplWorker._kill`/`close` that the cross-loop issue above was masking.**
+  `_kill` used to early-return if `self._process.returncode` (the direct `lake` child) was already set, skipping
+  `os.killpg` entirely — but a POSIX process group survives as long as *any* member does, independent of whether
+  the original leader (`lake`) has already exited, so this early return could leave an orphaned `leankernel`
+  grandchild alive even when `_kill` *was* correctly reached. `close()`'s graceful path only ever awaited
+  `self._process.wait()` (the direct child), which can return before the grandchild has actually finished exiting
+  on its own. Both are fixed the same way: `_kill` always calls `os.killpg` (catching `ProcessLookupError` as the
+  only genuine no-op case), and `close()` calls `_kill()` unconditionally at the end, not only on its timeout path.
 
 ## Implementation notes: eval harness facts
 

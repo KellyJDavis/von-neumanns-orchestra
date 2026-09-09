@@ -12,8 +12,9 @@ step once `Serve.lean` grows a `link` request kind to go with it.
 
 `create_app` is a factory, not a module-level `app` object: `pool`/`cache`/`base_env_sessionmaker`
 are real, expensive, stateful resources (a process pool, a database connection pool) that a test
-or a real entry point must construct and own the lifecycle of -- this module never constructs
-them itself.
+or a real entry point must construct -- this module never constructs them itself. It does,
+however, own shutting `pool` down, via FastAPI's own `lifespan` -- see `create_app`'s own note on
+why that has to happen there rather than in whatever code called `create_app`.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import cast
 
 from fastapi import FastAPI, HTTPException
@@ -274,7 +277,28 @@ def create_app(
     cache: VerificationCacheStore,
     base_env_sessionmaker: async_sessionmaker[AsyncSession],
 ) -> FastAPI:
-    app = FastAPI(title="leanserv", description="Internal Lean Execution Service (spec §6.2)")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Closing `pool` here, on ASGI shutdown, rather than leaving it to whatever code
+        # constructed the app (a test fixture, a real entry point) is not optional plumbing: an
+        # ASGI server (uvicorn, or `TestClient`'s own internal portal) runs the whole app -- every
+        # route handler's `await`s, and therefore every `ReplWorker` subprocess `pool` spawned --
+        # on *its own* event loop. Closing the pool afterward from a *different* loop (e.g. a
+        # caller's own separate `asyncio.run(pool.aclose())`) hits `asyncio.subprocess`'s version
+        # of the "Future attached to a different loop" error M1.8.4 already found for asyncpg --
+        # and `LeanReplPool.aclose()`'s `asyncio.gather(..., return_exceptions=True)` swallows it
+        # silently, so every worker was actually left running, not killed. Confirmed empirically:
+        # this was a real, reproducible leak (`ps aux` showing live `leankernel` processes for
+        # several seconds after a full `tests/leanserv/test_api.py` run had already exited) before
+        # moving cleanup into `lifespan`, which runs in the same loop the workers were spawned in.
+        yield
+        await pool.aclose()
+
+    app = FastAPI(
+        title="leanserv",
+        description="Internal Lean Execution Service (spec §6.2)",
+        lifespan=lifespan,
+    )
 
     @app.post("/v1/check", response_model=CheckResponse)
     async def check(req: CheckRequest) -> CheckResponse:

@@ -86,7 +86,11 @@ def client(
     with TestClient(app) as c:
         yield c
 
-    asyncio.run(pool.aclose())
+    # Not `asyncio.run(pool.aclose())` here: `create_app`'s own `lifespan` already closed `pool`
+    # during `TestClient`'s `__exit__` above, in the same event loop the workers were spawned in
+    # (see api.py's `lifespan` docstring for why a separate loop here would silently leak every
+    # worker). `engine.dispose()` from a different loop than the one that used it is still fine
+    # empirically (confirmed: Postgres's own connection count returns to baseline either way).
     asyncio.run(engine.dispose())
 
 
