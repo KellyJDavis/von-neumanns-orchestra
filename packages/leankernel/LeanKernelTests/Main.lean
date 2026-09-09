@@ -1,7 +1,9 @@
 import Lean
 import LeanKernel.Audit
 import LeanKernel.Seal
+import LeanKernel.Link
 import LeanKernelTests.AuditFixtures
+import LeanKernelTests.Goals
 
 /-!
 Test runner for `LeanKernel`. Covers spec §4.4 gates 2 and 3 (Audit) and §4.1's seal-failure
@@ -116,6 +118,85 @@ unsafe def sealChecks : IO (Array Check) := do
       expected := true, actual := sorryInType.diagnostics.size == 1 }
   ]
 
+/--
+Elaborate `source` -- which must `import LeanKernelTests.Goals` (a genuinely *compiled* module,
+not something defined inline; see `Goals.lean`'s docstring for why that's required) -- and link
+`entry` against `goal` within it.
+
+`expectedModuleIdx` is read from the environment produced by header-processing alone, *before*
+any of the agent's own commands run. That mirrors production: the caller (leanserv) knows which
+module a goal was sealed into at the time sealing happened, and Link's job is to confirm the
+name still resolves there *later*, after the agent's submission has had a chance to run -- not to
+discover the expected module from scratch each time, which would defeat the check entirely.
+-/
+unsafe def linkOf (source : String) (goal entry : Name) (allow : Array Name) :
+    IO LeanKernel.LinkReport := do
+  enableInitializersExecution
+  let inputCtx := Parser.mkInputContext source "<link-test>"
+  let (header, parserState, messages) ← Parser.parseHeader inputCtx
+  let (envAfterHeader, messages) ← Lean.Elab.processHeader header {} messages inputCtx
+  let some expectedModuleIdx := envAfterHeader.getModuleIdxFor? goal
+    | throw <| IO.userError s!"test setup error: {goal} was not importable from the header alone"
+  let frontendState ← Lean.Elab.IO.processCommands inputCtx parserState
+    (Lean.Elab.Command.mkState envAfterHeader messages {})
+  let commandState := frontendState.commandState
+  ((LeanKernel.link goal entry expectedModuleIdx allow).run').toIO' mkCoreCtx
+    { env := commandState.env, messages := commandState.messages }
+
+unsafe def linkChecks : IO (Array Check) := do
+  let goalAddZero := `LeanKernelTests.Goals.G_add_zero
+  let goalPoly := `LeanKernelTests.Goals.G_poly
+
+  -- Gate 6: a universe-polymorphic, data-producing (`isProp = false`) goal links at matching
+  -- arity, exercising the `defnDecl` branch (as opposed to `G_add_zero`'s `thmDecl` branch).
+  -- `G_poly.{u} : Sort u := PUnit.{u}` -- G_poly's *value* is `PUnit.{u}`, a type, since it is
+  -- itself an element of `Sort u`. Solving it means producing an inhabitant of that type (i.e.
+  -- of `PUnit.{u}`, once `G_poly.{u}` is unfolded), not another `Sort`-valued definition shaped
+  -- like the goal itself -- an earlier version of this fixture made exactly that mistake and
+  -- failed kernel type-checking for a reason that had nothing to do with `Link`.
+  let polyOk ← linkOf
+    "import LeanKernelTests.Goals\ndef sol_poly.{v} : PUnit.{v} := PUnit.unit"
+    goalPoly `sol_poly LeanKernel.defaultAllowlist
+  -- Gate 6: arity mismatch (goal has one universe param, this entry has zero) is rejected.
+  let polyMono ← linkOf
+    "import LeanKernelTests.Goals\ndef sol_poly_mono : Sort 1 := PUnit.{1}"
+    goalPoly `sol_poly_mono LeanKernel.defaultAllowlist
+
+  -- Gate 5: textually different but defeq -- the entry's statement goes through an `abbrev`
+  -- indirection (`Zero'` unfolds reducibly to `0`) that the goal's own statement never mentions.
+  let defeq ← linkOf
+    "import LeanKernelTests.Goals\nabbrev Zero' : Nat := 0\ndef sol_ok : ∀ n : Nat, n + Zero' = n := fun n => rfl"
+    goalAddZero `sol_ok LeanKernel.defaultAllowlist
+  -- Gate 5: a strictly weaker statement (existential instead of universal) does not link --
+  -- rejected by kernel type-checking of the constructed declaration itself, not by inspection.
+  let weak ← linkOf
+    "import LeanKernelTests.Goals\ndef sol_weak : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩"
+    goalAddZero `sol_weak LeanKernel.defaultAllowlist
+  -- Gate 4: the same weakened entry, but with the ambient session's own options poisoned via
+  -- `set_option debug.skipKernelTC true` before the entry is declared. Link must still reject
+  -- it, because it builds its own `Options.empty`-based `opts` rather than reading `getOptions`
+  -- -- proving Link's own defense holds independently of replay (not yet implemented; replay is
+  -- trivially "disabled" here, matching what this gate specifically asks to isolate).
+  let weakPoisoned ← linkOf
+    "import LeanKernelTests.Goals\nset_option debug.skipKernelTC true\n\
+     def sol_weak2 : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩"
+    goalAddZero `sol_weak2 LeanKernel.defaultAllowlist
+
+  return #[
+    { name := "link/poly: matching arity links", expected := true, actual := polyOk.ok },
+    { name := "link/poly: mismatched arity fails", expected := false, actual := polyMono.ok },
+    { name := "link/poly: mismatched-arity diagnostic mentions arity",
+      expected := true, actual := polyMono.diagnostics.any fun d => (d.splitOn "arity").length > 1 },
+
+    { name := "link/defeq-via-abbrev: links", expected := true, actual := defeq.ok },
+    { name := "link/weakened mutant: fails", expected := false, actual := weak.ok },
+    { name := "link/weakened mutant: has diagnostics", expected := true,
+      actual := !weak.diagnostics.isEmpty },
+
+    { name := "link/weakened mutant with debug.skipKernelTC poisoned: still fails",
+      expected := false, actual := weakPoisoned.ok }
+  ]
+
 end LeanKernelTests
 
 unsafe def main : IO UInt32 := do
@@ -123,7 +204,8 @@ unsafe def main : IO UInt32 := do
   let auditResults ← withImportModules #[{ module := `LeanKernelTests.AuditFixtures }] {}
     (fun env => LeanKernelTests.auditChecks env)
   let sealResults ← LeanKernelTests.sealChecks
-  let checks := auditResults ++ sealResults
+  let linkResults ← LeanKernelTests.linkChecks
+  let checks := auditResults ++ sealResults ++ linkResults
   let mut failures := 0
   for c in checks do
     if c.passed then
