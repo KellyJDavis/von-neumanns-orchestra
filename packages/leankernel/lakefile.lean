@@ -13,6 +13,7 @@ lean_lib «LeanKernel» where
 
 lean_exe «leankernel» where
   root := `LeanKernel.Main
+  supportInterpreter := true
 
 lean_lib «LeanKernelTests» where
   globs := #[.submodules `LeanKernelTests]
