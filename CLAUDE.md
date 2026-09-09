@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Phase 0 (foundations) is complete and committed: `uv` workspace with stub packages, the `leankernel` Lake package
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
-`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit) is implemented and
-tested; see "Implementation notes" below for load-bearing facts discovered while building it. Read
+`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit) and M1.2 (Link) are
+implemented and tested; see "Implementation notes" below for load-bearing facts discovered while building them.
+Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -82,13 +83,17 @@ deploy/              Dockerfiles, compose.yaml, grants.sql (privilege model, tes
 
 Every `packages/*` entry is independently publishable under Apache-2.0 with DCO.
 
-**Deviation from the spec's literal layout**: `leankernel`'s own unit tests (`AuditFixtures.lean`, `Main.lean`
-driving the `kernel_tests` executable) live under `packages/leankernel/LeanKernelTests/`, not the top-level
-`tests/kernel/` the spec's tree sketch implies. Reason: `tests/kernel/` as a separate Lake package would need its
-own `require mathlib`, duplicating a second multi-GB fetch/build of a dependency `packages/leankernel` already
-resolves — co-locating tests inside the package that owns them avoids that for zero real cost, since the fixtures
-are Mathlib-free anyway (see below). Reserve top-level `tests/kernel/` for adversarial developments that
+**Deviation from the spec's literal layout**: `leankernel`'s own unit tests (`AuditFixtures.lean`, `Goals.lean`,
+`Main.lean` driving the `kernel_tests` executable) live under `packages/leankernel/LeanKernelTests/`, not the
+top-level `tests/kernel/` the spec's tree sketch implies. Reason: `tests/kernel/` as a separate Lake package would
+need its own `require mathlib`, duplicating a second multi-GB fetch/build of a dependency `packages/leankernel`
+already resolves — co-locating tests inside the package that owns them avoids that for zero real cost, since the
+fixtures are Mathlib-free anyway (see below). Reserve top-level `tests/kernel/` for adversarial developments that
 genuinely need to sit outside any single package (e.g. gate 7's stratified Mathlib sample in M1.4).
+
+`Goals.lean` specifically must stay a *genuinely compiled* module (part of the normal `LeanKernelTests` lean_lib
+build), not something defined inline in a test's dynamically-elaborated source string — see the Link-testing note
+below for why that distinction is load-bearing, not incidental.
 
 ## Architecture notes that require reading multiple sections to piece together
 
@@ -148,10 +153,10 @@ agreement, not single-kernel acceptance.
 
 ## Implementation notes: Lean-runtime facts that will recur
 
-These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`) by testing directly
-against the real v4.33.1 toolchain rather than assuming from memory. They are load-bearing for M1.2/M1.3 (Link,
-Replay) and especially M1.8 (`leanserv`), which needs this exact capability — elaborating arbitrary fresh source
-from a compiled process — in production, not just in tests.
+These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`) and M1.2
+(`LeanKernel/Link.lean`) by testing directly against the real v4.33.1 toolchain rather than assuming from memory.
+They are load-bearing for M1.3 (Replay) and especially M1.8 (`leanserv`), which needs this exact capability —
+elaborating arbitrary fresh source from a compiled process — in production, not just in tests.
 
 - **`lean4checker` is deprecated**: merged into Lean itself as `leanchecker`, built into every toolchain since
   v4.28.0 (`lake env leanchecker`, or `--fresh` to replay into a fresh environment). Don't add it as a Lake
@@ -180,6 +185,26 @@ from a compiled process — in production, not just in tests.
   `set_option autoImplicit false` does not change this). Those options are still forced per spec §4.1, but don't
   expect them to be what causes "a remaining universe metavariable is an admission failure" — in practice that
   case manifests as an ordinary elaboration error, already covered by the message-log check above.
+- **`getModuleIdxFor?` only ever returns `some` for a constant that came from a *different, already-compiled*
+  module** — "async constants are always from the current module" (the doc comment's own words), meaning anything
+  defined inline in the module currently being elaborated always returns `none`. This is why `Link.lean`'s test
+  fixtures (`LeanKernelTests/Goals.lean`) must be a genuinely separate, normally-compiled module rather than
+  something defined inline in the dynamically-elaborated test source — an inline "goal" can never satisfy Link's
+  shadow-detection check, since it would never be "imported" in the first place. In production this means Link's
+  shadow check is only meaningful once a sealed goal bundle has actually been compiled and imported for real, not
+  while it's still an in-session-only declaration in the warm REPL that sealed it.
+- **Lean itself refuses to redeclare an already-declared name** ("has already been declared", confirmed
+  empirically), even across separate commands processed against the same accumulating environment. So Link's
+  `expectedModuleIdx` check is not primarily defending against an agent redeclaring the goal mid-session — Lean's
+  own elaborator already blocks that outright, before Link would ever run. The check's real value is against
+  *infrastructure* resolving the goal's name to the wrong module in the first place (a stale cached bundle, a
+  search-path ordering bug) — worth knowing so the check isn't miscast as an adversarial-agent mitigation when
+  writing future tests or docs around it.
+- **A "data-producing" (non-`Prop`) sealed goal's *value* is the type to inhabit, not another type-former to
+  restate.** For `def G_poly.{u} : Sort u := PUnit.{u}`, a valid entry is `def sol.{v} : PUnit.{v} := PUnit.unit`
+  — something whose own type unfolds to `G_poly`'s value — *not* another `Sort v := PUnit.{v}`-shaped definition
+  mirroring the goal's own shape. Got this wrong on the first pass (mirrored the goal instead of inhabiting it),
+  and the kernel's "declaration type mismatch" error names the mismatch precisely if it happens again.
 
 ## Sequencing constraints (spec §8)
 
