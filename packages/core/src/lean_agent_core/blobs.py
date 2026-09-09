@@ -9,6 +9,11 @@ Postgres or the `blob` table at all: the protocol they implement (Appendix A) ta
 and no `tenant_id`, so tenant-scoped visibility bookkeeping is a concern for whatever higher-level
 caller creates a `blob` row (e.g. an eventual `/v1/blobs` upload endpoint), not for the store
 itself.
+
+`store_or_inline` decides *which* of inline-or-CAS a value gets; `to_bytea`/`from_bytea` (added
+in M1.8.4, the first real caller) are the encode/decode pair that makes writing and reading a
+blob-suffixed column actually round-trip -- see their own docstrings for why a bare `bytea`
+column can't tell the two cases apart on its own.
 """
 
 from __future__ import annotations
@@ -97,3 +102,40 @@ async def store_or_inline(
         return Inline(data)
     digest = await store.put(data, media_type)
     return BlobRef(digest)
+
+
+# A blob-suffixed `bytea` column (`verdict.messages_blob`, `verification_cache.messages_blob`,
+# `obligation.proof_blob`, ...) holds *either* inline content or a CAS digest depending on size --
+# but the column itself is just `bytea`, with nothing else recording which case a given row is.
+# `Inline`/`BlobRef` disambiguate this in memory, right after `store_or_inline` runs, but that
+# distinction is lost the moment either gets written to the same untyped column -- a 32-byte
+# inline value would be indistinguishable from a digest by length alone. `to_bytea`/`from_bytea`
+# fix this with a one-byte tag prefixed onto the column's actual bytes, so the encoding is
+# self-describing without needing a schema change (a second column, or widening the digest to a
+# fixed recognizable length) for something this cheap to solve entirely within the existing type.
+_INLINE_TAG = b"\x00"
+_BLOB_REF_TAG = b"\x01"
+
+
+def to_bytea(routed: Inline | BlobRef) -> bytes:
+    """Serialize a `store_or_inline` result into the actual bytes a blob-suffixed column should
+    store. The one-byte tag this prepends is why a column populated this way must always be read
+    back through `from_bytea`, never compared or used directly -- see the module-level note above
+    on why the tag exists at all.
+    """
+    if isinstance(routed, Inline):
+        return _INLINE_TAG + routed.data
+    return _BLOB_REF_TAG + routed.digest
+
+
+async def from_bytea(store: BlobStore, column_value: bytes) -> bytes:
+    """Inverse of `to_bytea`: recover the original content from a blob-suffixed column's stored
+    bytes, following the digest through `store` if `to_bytea` didn't inline it. Raises `ValueError`
+    on a tag byte this module never wrote -- there is no way to safely guess.
+    """
+    tag, payload = column_value[:1], column_value[1:]
+    if tag == _INLINE_TAG:
+        return payload
+    if tag == _BLOB_REF_TAG:
+        return await store.get(payload)
+    raise ValueError(f"unrecognized blob-column tag byte {tag!r}")
