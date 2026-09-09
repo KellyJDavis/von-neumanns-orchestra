@@ -5,7 +5,6 @@ import LeanKernel.Link
 import LeanKernel.Replay
 import LeanKernel.Sorries
 import LeanKernel.Serve
-import LeanKernel.DecomposeFuzz
 import LeanKernelTests.AuditFixtures
 import LeanKernelTests.Goals
 
@@ -430,41 +429,6 @@ unsafe def serveChecks : IO (Array Check) := do
       expected := true, actual := !malformed.ok && malformed.id == none }
   ]
 
-/--
-Phase 1 gate 7, at a scale the fast per-commit loop can afford: a fixed seed against a real
-Mathlib import makes this deterministic (the same 5 declarations, every run), so a genuine
-regression always reproduces rather than only sometimes showing up depending on which random
-declarations happened to be drawn that run. The gate's own named scale (5,000-10,000
-declarations) is a separate, periodic/manual run via `lake exe leankernel decompose-fuzz <seed>
-<count>`.
-
-Kept deliberately small (5, not the 30 an earlier version of this test used) after CI itself
-measured the real cost, not an assumption from local timing: ~213ms/declaration locally, but
-CI's `lean` job -- running the exact same 30-sample check -- exceeded `lean-action`'s own ~120s
-per-step budget for its `lake test` step with no completion at all (confirmed via the run's own
-timestamped log: the test binary finished *building* at 14:24:25 and produced no further output
-before being cancelled at 14:26:16, meaning the CI runner is considerably slower than this was
-measured on, not merely somewhat slower). 5 declarations leaves ample headroom under that budget
-even at several times the locally-measured per-declaration cost, while still exercising the
-mechanism -- against real Mathlib content -- on every commit.
--/
-unsafe def decomposeFuzzChecks : IO (Array Check) := do
-  let (report, missingNameResult) ← withImportModules #[{ module := `Mathlib.Algebra.Group.Basic }] {} fun env => do
-    let report ← LeanKernel.runDecomposeFuzz env 42 5
-    -- Confirm the failure path itself is real, not merely unexercised optimistic code: a name
-    -- that doesn't exist must be reported as a genuine failure, not silently skipped or passed.
-    let missingNameResult ← (LeanKernel.decomposeFuzzOne `LeanKernelTests.DoesNotExist)
-      |>.run'.toIO' { fileName := "<gate7>", fileMap := default } { env }
-    return (report, missingNameResult)
-  return #[
-    { name := s!"decompose-fuzz/{report.sampleSize} real Mathlib theorems: all round-trip \
-      (children link standalone, reassembly links against the parent, no new axioms)",
-      expected := true, actual := report.failures.isEmpty },
-    { name := "decompose-fuzz/a nonexistent name is genuinely reported as a failure",
-      expected := true, actual := !missingNameResult.ok && !missingNameResult.diagnostics.isEmpty }
-  ] ++ report.failures.map fun f =>
-    { name := s!"decompose-fuzz/{f.name}: {f.diagnostics}", expected := true, actual := false }
-
 end LeanKernelTests
 
 unsafe def main : IO UInt32 := do
@@ -476,9 +440,8 @@ unsafe def main : IO UInt32 := do
   let replayResults ← LeanKernelTests.replayChecks
   let decomposeResults ← LeanKernelTests.decomposeChecks
   let serveResults ← LeanKernelTests.serveChecks
-  let decomposeFuzzResults ← LeanKernelTests.decomposeFuzzChecks
   let checks := auditResults ++ sealResults ++ linkResults ++ replayResults ++ decomposeResults
-    ++ serveResults ++ decomposeFuzzResults
+    ++ serveResults
   let mut failures := 0
   for c in checks do
     if c.passed then

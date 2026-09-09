@@ -15,9 +15,10 @@ and, having been far larger than M1.1–M1.7, was split into its own sub-milesto
 `/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are deliberately not built yet; see
 `api.py`'s own module docstring and the implementation notes below for why). M1.9 (eval harness skeleton --
 `packages/eval`: `score.py`, `reverify.py`, `contamination.py`, the internal regression suite) is also complete.
-Gate 7 (decomposition round-trip on a Mathlib sample) is also done — `LeanKernel/DecomposeFuzz.lean`, exercised
-both on every commit at small scale (`kernel_tests`) and, periodically/manually, at the gate's own named scale via
-`lake exe leankernel decompose-fuzz <seed> <count>`. Phase 1's remaining scope is gate 1's 10k-proof throughput
+Gate 7 (decomposition round-trip on a Mathlib sample) is also done — `LeanKernel/DecomposeFuzz.lean`, run
+periodically/manually at the gate's own named scale via `lake exe leankernel decompose-fuzz <seed> <count>` (not
+part of `kernel_tests`/every-commit CI — see the implementation notes below for why even a small slice doesn't
+fit CI's actual budget). Phase 1's remaining scope is gate 1's 10k-proof throughput
 report (blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1
 planning) and gate 9's prelude memory delta, not new modules. See "Implementation notes" below for load-bearing
 facts discovered while building all of the above. Read
@@ -74,14 +75,13 @@ Two decisions drive nearly everything else in the design (spec §1):
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
   its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` — and
   read one JSON response line per request from stdout. Closing stdin exits it with code 0.
-- `leankernel decompose-fuzz` (gate 7's periodic/manual validation run): `lake exe leankernel decompose-fuzz
-  <seed> <count> [<import>...]` (imports default to `Mathlib` if none given) — samples `<count>` real theorems
-  from the imported modules and round-trip-checks each (spec's gate 7: children link standalone, reassembly
-  links against the parent, no new axioms), printing a JSON `{sampleSize, passed, failures}` report and exiting
-  nonzero if `failures` is non-empty. At the gate's own named scale (5,000-10,000), budget 20-35 minutes
-  (measured: ~213ms/declaration locally -- CI is considerably slower, see the implementation note below). A
-  small (5-declaration), fixed-seed slice runs on every `lake test` instead, as `kernel_tests`' own
-  `decomposeFuzzChecks`.
+- `leankernel decompose-fuzz` (gate 7's periodic/manual validation run — **not** part of `kernel_tests`/`lake
+  test`; see the implementation note below on why even a small per-commit slice doesn't fit CI's actual budget):
+  `lake exe leankernel decompose-fuzz <seed> <count> [<import>...]` (imports default to `Mathlib` if none given)
+  — samples `<count>` real theorems from the imported modules and round-trip-checks each (spec's gate 7: children
+  link standalone, reassembly links against the parent, no new axioms), printing a JSON `{sampleSize, passed,
+  failures}` report and exiting nonzero if `failures` is non-empty. At the gate's own named scale (5,000-10,000),
+  budget 20-35 minutes (measured: ~213ms/declaration locally). Run manually/periodically, not on every commit.
 - `leanserv`'s `ReplWorker` and `LeanReplPool` (M1.8.2/M1.8.3, `packages/leanserv/src/lean_agent_serv/{repl,pool}.py`):
   `lake build` in `packages/leankernel` first (both spawn the real `leankernel serve` binary from that build,
   never a mock), then `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet,
@@ -391,21 +391,27 @@ in production, not just in tests.
   declarations was essentially all in `decomposeFuzzOne` itself. This is why the gate's own named scale
   (5,000-10,000) is treated as a periodic/manual run (~20-35 minutes) rather than something the fast per-commit
   loop pays for — not a cost worth trying to engineer away for a check that only needs to run occasionally.
-- **The local per-declaration timing above does not transfer to CI, and the fast per-commit slice's sample count
-  was sized against CI's own measured behavior, not local timing.** The first version of `kernel_tests`' gate-7
-  check used 30 declarations — comfortably fast locally (the whole `kernel_tests` binary ran in ~27s) — but CI's
-  `lean` job failed twice with "The operation was canceled.": `leanprover/lean-action`'s own step trace showed
-  `outcome=cancelled`, `duration_ms=119899` for the `lake test` step, with the build finishing and then *zero*
-  further output before cancellation (`kernel_tests` collects every category's checks before printing any of
-  them, so no output during that window doesn't localize which check was slow — but gate-7's check is both the
-  newest and, per the timing note above, the most expensive addition). `lean-action`'s own source (`action.yml`,
-  its shell scripts) has no configurable or hardcoded timeout for this step, so the ~120s ceiling is coming from
-  somewhere in GitHub's own infrastructure, not from anything this repository or `lean-action` itself sets — a
-  genuine "verify against the real target, not just a local proxy for it" case, since CI's actual hardware is
-  evidently considerably slower per-declaration than the machine gate 7 was first measured on. **Fix**: cut the
-  per-commit sample from 30 to 5, which leaves comfortable headroom even at several times the locally-measured
-  per-declaration cost, while still exercising the mechanism against real content every commit. If this ever
-  needs to grow again, re-measure against an actual CI run first, not just local timing.
+- **Gate 7 does not run in `kernel_tests`/`lake test` at all, even at a small sample size — CI's `lean` job has
+  almost no spare budget for anything Mathlib-dependent beyond what M1.4's own decompose test already costs, and
+  the constraint turned out to be a fixed wall-clock cap on the whole workflow run, not a per-check cost problem
+  to size around.** First attempt added a 30-declaration slice to `kernel_tests` — comfortably fast locally (the
+  whole binary ran in ~27s) — but CI's `lean` job failed twice with "The operation was canceled." Reducing the
+  slice to 5 declarations did *not* fix it (still cancelled, now partway through a *faster* test run). Checking
+  the run's own metadata (`gh api .../actions/runs/<id>/timing` and `.../actions/runs/<id>` for
+  `created_at`/`updated_at`) showed why: the run's total wall-clock, from trigger to cancellation, was **exactly**
+  180,000ms both times — the cancellation is a fixed cap on the whole workflow run, arriving at the same absolute
+  moment regardless of which job is still in progress when it hits. `python`/`plugin-boundary` escape it because
+  they finish in under a minute; the `lean` job's own *setup* (elan, restoring the `.lake` actions-cache,
+  downloading Mathlib's own object cache — ~8,690 files) alone consumes on the order of 90-115s of that fixed
+  180s budget before the test step even starts, leaving a genuinely narrow window for `lake test` itself — one
+  M1.4's pre-existing Mathlib-dependent check apparently just fit inside, and gate 7's addition, at any sample
+  size tried, did not. `leanprover/lean-action`'s own source (`action.yml`, its shell scripts) has no
+  configurable or hardcoded timeout for the test step, so the 180s figure is not something this repository's
+  `ci.yml` set or can raise with a `timeout-minutes` change — it caps the whole run before a per-step timeout
+  would even apply. **Fix**: removed gate 7 from `kernel_tests` entirely; `lake exe leankernel decompose-fuzz` is
+  its only exercise mechanism, run manually/periodically, exactly as originally designed before a per-commit
+  slice was added on top. If a per-commit slice is wanted again later, it needs headroom measured against an
+  actual CI run's *remaining* budget after setup, not against local timing or an assumed step-level timeout.
 
 ## Implementation notes: database facts that will recur
 
