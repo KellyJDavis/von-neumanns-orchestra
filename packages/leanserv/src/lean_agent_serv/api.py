@@ -1,35 +1,42 @@
 """Internal FastAPI surface for `leanserv` (spec §6.2): `/v1/check`, `/v1/check_batch`,
-`/v1/seal`, `/v1/health` -- wiring `pool.py` (M1.8.3), `cache.py`, and `verdicts.py` (M1.8.4)
-together into the HTTP API spec's own worker-model table describes.
+`/v1/seal`, `/v1/link`, `/v1/health` -- wiring `pool.py` (M1.8.3), `cache.py`, and `verdicts.py`
+(M1.8.4) together into the HTTP API spec's own worker-model table describes.
 
-Scope note -- `/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are
-**not** built here. `LeanKernel.Serve`'s wire protocol knows `check` and `seal` and nothing else
-yet: it has no link/replay/decompose request shape to dispatch an HTTP route to, and a route with
-nothing real underneath it is exactly the half-finished surface this project avoids. `/v1/link` is
-the endpoint that most wants `VerdictWriter` as a caller (spec: "then replay and audit; writes the
-verdict row") -- it stays unwired for the same reason, and is the natural next step once
-`Serve.lean` grows a `link` request kind to go with it (M2.1.2).
+`/v1/link` is where this module becomes the *only* writer of `verdict` rows (spec §5.5/§6.4):
+workers request a check and observe the outcome, never transcribing it themselves, and
+`deploy/grants.sql` enforces that at the database.
 
-`create_app` is a factory, not a module-level `app` object: `pool`/`cache`/`base_env_sessionmaker`
-are real, expensive, stateful resources (a process pool, a database connection pool) that a test
-or a real entry point must construct -- this module never constructs them itself. It does,
-however, own shutting `pool` down, via FastAPI's own `lifespan` -- see `create_app`'s own note on
-why that has to happen there rather than in whatever code called `create_app`.
+Scope note -- `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are **not** built here.
+`LeanKernel.Serve`'s wire protocol knows `check`, `seal` and `link` and nothing else yet: there is
+no standalone replay or decompose request shape to dispatch an HTTP route to, and a route with
+nothing real underneath it is exactly the half-finished surface this project avoids. Standalone
+`/v1/replay` has no caller either -- `/v1/link` already replays as part of the acceptance path,
+which is what spec §4.3 actually asks for.
+
+`create_app` is a factory, not a module-level `app` object: `pool`/`cache`/`verdict_writer`/
+`base_env_sessionmaker` are real, expensive, stateful resources (a process pool, a database
+connection pool) that a test or a real entry point must construct -- this module never constructs
+them itself. It does, however, own shutting `pool` down, via FastAPI's own `lifespan` -- see
+`create_app`'s own note on why that has to happen there rather than in whatever code called
+`create_app`.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import cast
 
 from fastapi import FastAPI, HTTPException
 from lean_agent_core.digests import compute_bundle_digest, compute_goal_digest
 from lean_agent_core.enums import VerdictKind
-from lean_agent_core.orm import BaseEnv
+from lean_agent_core.orm import BaseEnv, Obligation, Run
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,11 +45,13 @@ from lean_agent_serv.cache import CachedCheck, VerificationCacheStore, compute_c
 from lean_agent_serv.pool import LeanReplPool
 from lean_agent_serv.repl import (
     DEFAULT_TIMEOUT_MS,
+    LinkResult,
     ReplCrashed,
     ReplTimeout,
     ReplWorker,
     SealGoal,
 )
+from lean_agent_serv.verdicts import VerdictInput, VerdictWriter
 
 
 class CheckRequest(BaseModel):
@@ -124,6 +133,54 @@ class SealResponse(BaseModel):
     bundle_source: str
     bundle_digest: str
     elapsed_ms: int
+
+
+class LinkRequest(BaseModel):
+    """Spec §6.2's `LinkRequest`. `bundle_sha` names the sealed bundle: spec §4.1 generates it as
+    `LeanAgent/Goals/Bundle_<digest>.lean`, so the digest is also the module name the worker
+    imports (`_bundle_module_name`) -- there is no separate module field, and no way for a caller
+    to point the worker at a bundle other than the one it named.
+
+    `paranoid` (spec's multi-kernel replay) is accepted and must be `False`. This distribution
+    ships one kernel implementation, and spec §4.3 is explicit that independence across
+    *implementations* is the only thing multi-kernel replay buys -- so honouring the flag today
+    would mean replaying twice through the same kernel and reporting two agreeing "kernels", which
+    is worse than not offering it.
+    """
+
+    attempt_id: uuid.UUID
+    obligation_id: uuid.UUID
+    base_env_digest: str
+    bundle_sha: str
+    goal: str
+    entry: str
+    development: str
+    paranoid: bool = False
+    timeout_ms: int = DEFAULT_TIMEOUT_MS
+
+
+class LinkResponse(BaseModel):
+    """Spec §6.2's `LinkResponse`, plus `diagnostics`.
+
+    `link_ok` is the kernel's verdict on the constructed declaration alone; `axiom_audit_ok` is
+    §4.4's separate question about the trust base. A `sorry`-backed proof is the case that makes
+    the split worth having: it links (the term really does have the goal's type) and fails the
+    audit, and reporting that as a link failure would describe it wrongly.
+
+    `kernels_agreeing` is always empty until multi-kernel replay exists -- an empty list means "no
+    multi-kernel agreement was established", which is the truth, rather than naming the single
+    kernel that ran and implying corroboration that did not happen.
+    """
+
+    kind: VerdictKind
+    link_ok: bool
+    replay_ok: bool
+    axiom_audit_ok: bool
+    axioms: list[str]
+    kernels_agreeing: list[str]
+    elapsed_ms: int
+    cache_hit: bool
+    diagnostics: list[str]
 
 
 class HealthResponse(BaseModel):
@@ -386,9 +443,229 @@ async def _run_seal(
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class _ResolvedObligation:
+    sealed_olean_sha: bytes
+    axiom_allowlist: tuple[str, ...]
+
+
+async def _resolve_obligation(
+    session_factory: async_sessionmaker[AsyncSession], obligation_id: uuid.UUID
+) -> _ResolvedObligation | None:
+    """The obligation's own sealed-bundle digest, and its run's axiom allowlist (spec §4.4).
+
+    The allowlist is read here rather than taken from the request for the same reason `verdict`
+    rows are written here rather than by workers (spec §5.5/§6.4): the run decides what axioms are
+    permitted, and a caller that could pass its own allowlist could permit `sorryAx` for a run that
+    forbids it. `run.allow_sorry` is folded in as `sorryAx` because that is exactly what the column
+    means -- `auditAxioms` itself applies no special case for `sorry`, by design.
+    """
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                select(Obligation.sealed_olean_sha, Run.axiom_allowlist, Run.allow_sorry)
+                .join(Run, Run.id == Obligation.run_id)
+                .where(Obligation.id == obligation_id)
+            )
+        ).one_or_none()
+    if row is None:
+        return None
+    sealed_olean_sha, allowlist, allow_sorry = row
+    axioms = tuple(allowlist) + (("sorryAx",) if allow_sorry else ())
+    return _ResolvedObligation(sealed_olean_sha=sealed_olean_sha, axiom_allowlist=axioms)
+
+
+#: Spec §4.1 names the generated bundle file `LeanAgent/Goals/Bundle_<digest>.lean`. That single
+#: convention fixes both the module name a worker imports and, under `bundle_root`, the path its
+#: compiled `.olean` sits at -- the two must agree, and `test_api.py` pins them together by
+#: asserting the worker resolved the goal from exactly the path computed here.
+_BUNDLE_NAMESPACE = ("LeanAgent", "Goals")
+
+
+def _bundle_module_name(bundle_sha: str) -> str:
+    """Deriving the module from the digest rather than accepting a module name keeps the sealed
+    artifact content-addressed end to end: a caller can only ask to link against the bundle whose
+    digest it names."""
+    return ".".join((*_BUNDLE_NAMESPACE, f"Bundle_{bundle_sha}"))
+
+
+def _bundle_olean_path(bundle_root: Path, bundle_sha: str) -> Path:
+    return bundle_root.joinpath(*_BUNDLE_NAMESPACE, f"Bundle_{bundle_sha}.olean")
+
+
+def _sha256_file(path: str) -> bytes | None:
+    """`verdict.sealed_olean_sha_observed` -- the digest of the `.olean` the worker reports it
+    actually resolved the sealed goal from, not one the caller supplied. `mark_proved` refuses to
+    promote an obligation unless this equals `obligation.sealed_olean_sha` (see
+    `deploy/grants.sql`), which is spec's seal-integrity check; recording an unverified value here
+    would defeat it silently.
+
+    Reads the path the *worker* named, which is correct only because workers are local
+    subprocesses today. A future remote-worker deployment has to move this hashing into the worker
+    itself -- the path would otherwise be meaningless on this side, or, worse, resolve to a
+    different file with the same name.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return hashlib.file_digest(handle, "sha256").digest()
+    except OSError:
+        return None
+
+
+async def _run_link(
+    pool: LeanReplPool,
+    verdict_writer: VerdictWriter,
+    base_env_sessionmaker: async_sessionmaker[AsyncSession],
+    req: LinkRequest,
+) -> LinkResponse:
+    """Spec §6.2: "§4.2, then replay and audit; writes the `verdict` row"."""
+    if req.paranoid:
+        raise HTTPException(
+            status_code=400,
+            detail="paranoid (multi-kernel) replay is not available: this distribution ships one "
+            "kernel implementation, and replaying twice through it would establish nothing",
+        )
+    base_env_digest = _parse_digest(req.base_env_digest)
+    base_env = await _resolve_base_env(base_env_sessionmaker, base_env_digest)
+    if base_env is None:
+        raise HTTPException(
+            status_code=404, detail=f"no base_env with digest {req.base_env_digest!r}"
+        )
+    obligation = await _resolve_obligation(base_env_sessionmaker, req.obligation_id)
+    if obligation is None:
+        raise HTTPException(status_code=404, detail=f"no obligation {req.obligation_id}")
+
+    # Checked before a worker is acquired, not left to fail during `importModules`. A worker
+    # spawned for a bundle that does not exist dies on startup, which `ReplWorker` correctly
+    # classifies as a crash -- but `infra_error` means "retry may help", and no number of retries
+    # will materialize a bundle nobody built. It also costs a pool slot and possibly an LRU
+    # eviction to learn nothing. Confirmed empirically: without this the response was
+    # `infra_error` with the diagnostic "stdout closed (process exited) while awaiting response".
+    if pool.bundle_root is None:
+        raise HTTPException(
+            status_code=404,
+            detail="this leanserv has no bundle_root configured, so no sealed bundle can be "
+            "imported and nothing can be linked against",
+        )
+    if not _bundle_olean_path(pool.bundle_root, req.bundle_sha).exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"bundle {req.bundle_sha} is not materialized under {pool.bundle_root} -- "
+            "its .olean must be built out of band before it can be linked against",
+        )
+    bundle_module = _bundle_module_name(req.bundle_sha)
+    # A distinct pool key from the plain `/v1/check` one for the same base env: this worker's
+    # imports include the bundle, and `LeanReplPool.acquire` requires a key's imports to be stable
+    # for its whole lifetime. That means one warm slot per (base env, bundle) pair, which is the
+    # cost spec §6.2 already names for preludes ("a prelude-bearing worker occupies a full slot")
+    # and gate 9 measured -- not an accident of this keying.
+    pool_key = f"{req.base_env_digest}+{bundle_module}"
+    imports = (*base_env.imports, bundle_module)
+
+    started = time.monotonic()
+    async with pool.worker(pool_key, imports) as worker:
+        try:
+            result = await worker.link(
+                goal=req.goal,
+                entry=req.entry,
+                development=req.development,
+                allow_axioms=obligation.axiom_allowlist,
+                timeout_ms=req.timeout_ms,
+            )
+        except ReplTimeout as exc:
+            # Spec §4.3 is explicit: "A replay timeout is not an acceptance: it yields
+            # verdict_kind = 'timeout', replay_ok = false, and the obligation stays open."
+            return await _write_link_verdict(
+                verdict_writer,
+                req,
+                base_env,
+                kind=VerdictKind.TIMEOUT,
+                result=None,
+                diagnostics=[str(exc)],
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+        except ReplCrashed as exc:
+            # A verdict row is still written, and `attempt_id` is `verdict`'s primary key, so this
+            # attempt can never receive another one. That is the intended shape: retrying means a
+            # *new* attempt row, and `infra_error` is a first-class verdict kind precisely so a
+            # crash is recorded as what it was rather than silently retried into a proof failure.
+            return await _write_link_verdict(
+                verdict_writer,
+                req,
+                base_env,
+                kind=VerdictKind.INFRA_ERROR,
+                result=None,
+                diagnostics=[str(exc)],
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+
+    kind = VerdictKind.PROVED if result.ok and result.axiom_audit_ok else VerdictKind.ERRORS
+    return await _write_link_verdict(
+        verdict_writer,
+        req,
+        base_env,
+        kind=kind,
+        result=result,
+        diagnostics=list(result.diagnostics),
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+async def _write_link_verdict(
+    verdict_writer: VerdictWriter,
+    req: LinkRequest,
+    base_env: _ResolvedBaseEnv,
+    *,
+    kind: VerdictKind,
+    result: LinkResult | None,
+    diagnostics: list[str],
+    elapsed_ms: int,
+) -> LinkResponse:
+    """Write the one `verdict` row this request produces, then answer with the same facts.
+
+    `result is None` is the infra path (timeout or crash): every acceptance flag is false and no
+    digest was observed, because nothing was actually judged. Spec's own principle -- an infra
+    failure is not evidence about the content -- is why those flags must be false rather than
+    absent or carried over from some earlier attempt.
+    """
+    observed = (
+        _sha256_file(result.goal_olean_path)
+        if result is not None and result.goal_olean_path is not None
+        else None
+    )
+    await verdict_writer.write(
+        VerdictInput(
+            attempt_id=req.attempt_id,
+            obligation_id=req.obligation_id,
+            kind=kind,
+            link_ok=result.link_ok if result else False,
+            replay_ok=result.replay_ok if result else False,
+            axiom_audit_ok=result.axiom_audit_ok if result else False,
+            sealed_olean_sha_observed=observed,
+            axioms=result.axioms if result else None,
+            elapsed_ms=elapsed_ms,
+            toolchain_rev=base_env.toolchain_rev,
+            mathlib_rev=base_env.mathlib_rev,
+            messages=json.dumps(diagnostics).encode() if diagnostics else None,
+        )
+    )
+    return LinkResponse(
+        kind=kind,
+        link_ok=result.link_ok if result else False,
+        replay_ok=result.replay_ok if result else False,
+        axiom_audit_ok=result.axiom_audit_ok if result else False,
+        axioms=list(result.axioms) if result else [],
+        kernels_agreeing=[],
+        elapsed_ms=elapsed_ms,
+        cache_hit=False,
+        diagnostics=diagnostics,
+    )
+
+
 def create_app(
     pool: LeanReplPool,
     cache: VerificationCacheStore,
+    verdict_writer: VerdictWriter,
     base_env_sessionmaker: async_sessionmaker[AsyncSession],
 ) -> FastAPI:
     @asynccontextmanager
@@ -425,6 +702,10 @@ def create_app(
     @app.post("/v1/seal", response_model=SealResponse)
     async def seal(req: SealRequest) -> SealResponse:
         return await _run_seal(pool, base_env_sessionmaker, req)
+
+    @app.post("/v1/link", response_model=LinkResponse)
+    async def link(req: LinkRequest) -> LinkResponse:
+        return await _run_link(pool, verdict_writer, base_env_sessionmaker, req)
 
     @app.get("/v1/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

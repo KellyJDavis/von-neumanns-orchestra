@@ -43,6 +43,13 @@ class PoolConfig:
 
     max_total_workers: int
     warm_per_base_env: int = 4
+    #: Root directory holding materialized sealed goal bundles (spec §4.1's
+    #: `LeanAgent/Goals/Bundle_<digest>.lean`), prepended to every worker's `LEAN_PATH`. Deployment
+    #: configuration, not something the pool derives: whatever writes those `.olean`s out of band
+    #: (M2.7's materialization) and whatever runs `leanserv` have to agree on one directory, and
+    #: only the deployment knows it. `None` means no bundles are importable, which is fine for
+    #: `check`-only workloads and makes every `link` fail honestly rather than mysteriously.
+    bundle_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,15 @@ class LeanReplPool:
         self._lock = asyncio.Lock()
         self._hits = 0
         self._misses = 0
+
+    @property
+    def bundle_root(self) -> Path | None:
+        """Where materialized sealed bundles live (`PoolConfig.bundle_root`), exposed so a caller
+        can check that the bundle it is about to ask for actually exists. Without that check, a
+        missing bundle only surfaces as the worker dying during `importModules` -- a real crash,
+        but one whose taxonomy (`infra_error`, retryable) is exactly wrong for a bundle that will
+        never appear no matter how many times it is retried."""
+        return self._config.bundle_root
 
     @property
     def total_workers(self) -> int:
@@ -107,7 +123,9 @@ class LeanReplPool:
             self._misses += 1
             if self.total_workers >= self._config.max_total_workers:
                 await self._evict_one_locked(exclude_key=base_env_key)
-            worker = await ReplWorker.spawn(self._lake_project_dir, imports)
+            worker = await ReplWorker.spawn(
+                self._lake_project_dir, imports, extra_lean_path=self._config.bundle_root
+            )
             self._busy[base_env_key].add(worker)
             return worker
 
