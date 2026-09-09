@@ -38,6 +38,17 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy --strict packages
       - run: uv run alembic upgrade head
+      - name: Apply deploy/grants.sql
+        # Via psycopg rather than the `psql` binary, so this doesn't depend on a Postgres client
+        # being preinstalled on the runner. autocommit + a single multi-statement execute is
+        # equivalent to `psql -f`: libpq's simple query protocol runs a semicolon-separated
+        # script as-is, which is what grants.sql's DO block and CREATE FUNCTION body both need.
+        run: |
+          uv run python -c "
+          import psycopg
+          with psycopg.connect('postgresql://postgres:postgres@localhost:5432/leanagent', autocommit=True) as conn:
+              conn.execute(open('deploy/grants.sql').read())
+          "
       - run: uv run pytest
 
   plugin-boundary:
