@@ -434,20 +434,31 @@ in production, not just in tests.
 - **Gate 7 does not run in `kernel_tests`/`lake test` at all, even at a small sample size.** First attempt added a
   30-declaration slice — comfortably fast locally (the whole binary ran in ~27s) — but CI's `lean` job failed
   twice with "The operation was canceled." Reducing the slice to 5 declarations did *not* fix it (still
-  cancelled, now partway through a *faster* test run). The removal stands on its own cost grounds: gate 7 is a
+  cancelled, now partway through a *faster* test run), which was the clue that the constraint was never time:
+  see the memory finding below, which the gate-7 symptom matches exactly (a Mathlib-bearing environment added to
+  an already near-the-limit suite). The removal stands on its own cost grounds regardless: gate 7 is a
   periodic/manual run by design (see the ~213ms/declaration note above), and `lake exe leankernel decompose-fuzz`
   is its only exercise mechanism.
-- **What cancels that job is *not* a fixed 180s workflow cap, contrary to what this file previously recorded —
-  do not size CI work against that number.** The original diagnosis came from both cancelled runs measuring
-  ~180,000ms from trigger to cancellation, which looked like an exact fixed cap. Re-checked later against more
-  runs and it does not hold: the `lean` job on `main` has since completed **successfully at 266s**, and one of
-  the two cancelled gate-7 runs was itself cancelled at 260s, not 180s. So the cancellations are unexplained
-  rather than budget-explained, and there is real headroom past 180s. Two lessons, both of which cost real time
-  here: a coincidence across *two* samples is not a law (the second run's ~180s was what made the first look
-  exact), and a "cap" hypothesis is only worth acting on once a run has been observed to *exceed* it and fail —
-  check `gh run list --json databaseId,conclusion` plus each run's job `started_at`/`completed_at` before
-  concluding anything about CI budgets. `leanprover/lean-action`'s own source has no timeout of its own, which is
-  still true and still means `timeout-minutes` in `ci.yml` is not what governs this.
+- **What cancels that job is memory, not time — the `lean` job's runner gets killed when
+  `kernel_tests`' peak footprint approaches the runner's 16 GiB.** Two earlier diagnoses were both
+  wrong and are recorded here so they are not re-derived: it is *not* a fixed 180s workflow cap (the `lean` job
+  has since completed successfully at 266s, and one of the cancelled gate-7 runs was cancelled at 260s), and it
+  is not a per-check *time* cost to size around. The signature that gave it away, on M2.1.2's first CI run:
+  `##[error]The runner has received a shutdown signal ... Process completed with exit code 143` — SIGTERM to the
+  whole runner mid-`lake test`, which surfaces in the UI as the generic "The operation was canceled."
+  Measuring locally (`lake env /usr/bin/time -l ./.lake/build/bin/kernel_tests`) showed **20.9 GiB peak RSS**
+  against a 16 GiB runner. **Root cause**: `LeanKernelTests/Goals.lean` carried a gratuitous `import Lean` — two
+  ordinary `def`s that need nothing from it — so every test elaborating against that module loaded a whole extra
+  copy of Lean's environment. Changing it to `import Init` took the suite to **9.5 GiB**, a 2.2x cut, with all 60
+  checks still passing. Generalizes: **a test fixture's `import` line is a memory decision, not just a
+  dependency declaration**, because each `importModules`/`processHeader` call in this suite materializes a live
+  environment, and several are alive at once. Prefer `import Init` in any fixture that does not genuinely need
+  more — it is also the more faithful fixture, since a real sealed bundle imports its base environment, never
+  `Lean`. When a CI job is killed rather than failing, check peak memory before reaching for timeouts:
+  `gh api repos/<owner>/<repo>/actions/jobs/<id>/logs` shows the exit code and signal, and
+  `/usr/bin/time -l` (macOS) or `/usr/bin/time -v` (Linux) reproduces the footprint locally.
+  `leanprover/lean-action`'s own source has no timeout of its own, which is still true and still means
+  `timeout-minutes` in `ci.yml` is not what governs this.
 
 ## Implementation notes: database facts that will recur
 
