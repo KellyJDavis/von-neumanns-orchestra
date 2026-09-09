@@ -79,8 +79,9 @@ Two decisions drive nearly everything else in the design (spec §1):
   from the imported modules and round-trip-checks each (spec's gate 7: children link standalone, reassembly
   links against the parent, no new axioms), printing a JSON `{sampleSize, passed, failures}` report and exiting
   nonzero if `failures` is non-empty. At the gate's own named scale (5,000-10,000), budget 20-35 minutes
-  (measured: ~213ms/declaration). A small (30-declaration), fixed-seed slice runs on every `lake test` instead,
-  as `kernel_tests`' own `decomposeFuzzChecks`.
+  (measured: ~213ms/declaration locally -- CI is considerably slower, see the implementation note below). A
+  small (5-declaration), fixed-seed slice runs on every `lake test` instead, as `kernel_tests`' own
+  `decomposeFuzzChecks`.
 - `leanserv`'s `ReplWorker` and `LeanReplPool` (M1.8.2/M1.8.3, `packages/leanserv/src/lean_agent_serv/{repl,pool}.py`):
   `lake build` in `packages/leankernel` first (both spawn the real `leankernel serve` binary from that build,
   never a mock), then `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet,
@@ -390,6 +391,21 @@ in production, not just in tests.
   declarations was essentially all in `decomposeFuzzOne` itself. This is why the gate's own named scale
   (5,000-10,000) is treated as a periodic/manual run (~20-35 minutes) rather than something the fast per-commit
   loop pays for — not a cost worth trying to engineer away for a check that only needs to run occasionally.
+- **The local per-declaration timing above does not transfer to CI, and the fast per-commit slice's sample count
+  was sized against CI's own measured behavior, not local timing.** The first version of `kernel_tests`' gate-7
+  check used 30 declarations — comfortably fast locally (the whole `kernel_tests` binary ran in ~27s) — but CI's
+  `lean` job failed twice with "The operation was canceled.": `leanprover/lean-action`'s own step trace showed
+  `outcome=cancelled`, `duration_ms=119899` for the `lake test` step, with the build finishing and then *zero*
+  further output before cancellation (`kernel_tests` collects every category's checks before printing any of
+  them, so no output during that window doesn't localize which check was slow — but gate-7's check is both the
+  newest and, per the timing note above, the most expensive addition). `lean-action`'s own source (`action.yml`,
+  its shell scripts) has no configurable or hardcoded timeout for this step, so the ~120s ceiling is coming from
+  somewhere in GitHub's own infrastructure, not from anything this repository or `lean-action` itself sets — a
+  genuine "verify against the real target, not just a local proxy for it" case, since CI's actual hardware is
+  evidently considerably slower per-declaration than the machine gate 7 was first measured on. **Fix**: cut the
+  per-commit sample from 30 to 5, which leaves comfortable headroom even at several times the locally-measured
+  per-declaration cost, while still exercising the mechanism against real content every commit. If this ever
+  needs to grow again, re-measure against an actual CI run first, not just local timing.
 
 ## Implementation notes: database facts that will recur
 
