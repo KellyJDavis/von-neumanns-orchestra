@@ -1,0 +1,37 @@
+[project]
+name = "lean-agent-workspace"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "hypothesis>=6.115",
+]
+
+[tool.uv.workspace]
+members = [
+    "packages/core",
+    "packages/leanserv",
+    "packages/models",
+    "packages/policies",
+    "packages/tools",
+    "packages/api",
+    "packages/eval",
+    "packages/cli",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["*.md"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

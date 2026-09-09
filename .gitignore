@@ -1,0 +1,28 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Lean / Lake
+.lake/
+*.olean
+*.ilean
+/packages/leankernel/lake-manifest.json.bak
+
+# Editors
+*.swp
+*.swo
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example

@@ -1,0 +1,27 @@
+# Base image: elan + the pinned Lean toolchain + Mathlib, with `lake exe cache get` warmed in.
+# leanserv's worker images (Dockerfile.serv) build FROM this so a warm REPL never pays cold
+# Mathlib elaboration (spec §4.1: ~78% of pipeline time cold vs <1% warm).
+
+FROM debian:bookworm-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ELAN_HOME=/opt/elan \
+    PATH=/opt/elan/bin:$PATH
+
+RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
+    | sh -s -- --default-toolchain none --no-modify-path -y
+
+WORKDIR /opt/mathlib
+COPY packages/leankernel/lean-toolchain packages/leankernel/lakefile.lean ./
+RUN elan toolchain install "$(cat lean-toolchain)" \
+    && elan default "$(cat lean-toolchain)"
+
+# lake update populates lake-manifest.json from the lakefile's pinned Mathlib revision, then
+# `lake exe cache get` pulls prebuilt .olean artifacts instead of elaborating Mathlib from source.
+RUN lake update mathlib \
+    && lake exe cache get
+
+WORKDIR /opt/goals
