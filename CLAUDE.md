@@ -8,8 +8,11 @@ Phase 0 (foundations) is complete and committed: `uv` workspace with stub packag
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
 `docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), M1.3
 (Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), M1.6 (privilege model +
-`mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested; see "Implementation notes"
-below for load-bearing facts discovered while building them. Read
+`mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is in
+progress and, being far larger than M1.1–M1.7, is split into its own sub-milestones rather than one PR:
+M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper), M1.8.3 (`pool.py` LRU),
+M1.8.4 (`cache.py` L0/L1 + `verdicts.py`), M1.8.5 (`api.py` FastAPI surface). See "Implementation notes" below
+for load-bearing facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -58,6 +61,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   and runs `kernel_tests`, the Audit/Seal test suite — this is what CI's `lean` job runs via `lean-action`'s
   `test: true`). Run `lake exe kernel_tests` directly for a single test run without going through `lake test`'s
   dependency check.
+- `leankernel serve` (M1.8.1, the persistent warm-environment process `leanserv`'s pool will spawn one of per
+  worker): `lake exe leankernel serve [<import>...]` (e.g. `serve Init` for a fast Mathlib-free session, or
+  `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
+  its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` — and
+  read one JSON response line per request from stdout. Closing stdin exits it with code 0.
 - Database (`packages/core`'s `lean_agent_core.orm`/`.schemas`, `migrations/`): start Postgres 16 with
   `docker compose -f deploy/compose.yaml up -d`, then apply migrations with
   `DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/leanagent uv run alembic upgrade head`,
@@ -179,9 +187,9 @@ agreement, not single-kernel acceptance.
 ## Implementation notes: Lean-runtime facts that will recur
 
 These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`), M1.2 (`Link.lean`), M1.3
-(`Replay.lean`), and M1.4 (`Infotree.lean`, `Sorries.lean`) by testing directly against the real v4.33.1 toolchain
-rather than assuming from memory. They are load-bearing for M1.8 (`leanserv`), which needs this exact capability —
-elaborating arbitrary fresh source from a compiled process — in production, not just in tests.
+(`Replay.lean`), M1.4 (`Infotree.lean`, `Sorries.lean`), and M1.8.1 (`Serve.lean`) by testing directly against the
+real v4.33.1 toolchain rather than assuming from memory. They are load-bearing for `leanserv`, which needs this
+exact capability — elaborating arbitrary fresh source from a compiled process — in production, not just in tests.
 
 - **`lean4checker` is deprecated**: merged into Lean itself as `leanchecker`, built into every toolchain since
   v4.28.0 (`lake env leanchecker`, or `--fresh` to replay into a fresh environment). Don't add it as a Lake
@@ -283,6 +291,36 @@ elaborating arbitrary fresh source from a compiled process — in production, no
   reproducibility, not just correctness: `@`-application reproduces the *exact* captured context deterministically
   rather than relying on typeclass search or unification to re-derive it, which is the more fragile alternative
   and was rejected for that reason, independent of whether it happened to also work.
+- **`Lean.Elab.process (input) (env) (opts) : IO (Environment × MessageLog)` elaborates `input` against an
+  already-imported `env` and returns a *new* environment, leaving `env` itself untouched** — confirmed by calling
+  it twice in a row against the same `baseEnv` with unrelated declarations and observing the second call's
+  `MessageLog` report an unknown-identifier error for the first call's declaration. This is exactly the isolation
+  `serve` needs (unrelated agent attempts checked against the same warm worker must never see each other's
+  declarations) and requires no scoping helper of its own — unlike `Link.lean`'s `withEnv`, there is nothing to
+  restore, since the base environment was never mutated in the first place.
+- **`importModules`, not `withImportModules`, is the correct call for an environment meant to outlive the call
+  that built it.** `withImportModules`'s own docstring says as much (frees compacted regions when its callback
+  returns), and M1.1 already paid for getting this wrong once (see below) — worth restating here because `serve`
+  is the first place the *particular* failure mode (a base environment meant to survive for a whole process
+  lifetime, not just one callback) actually arises in production code rather than a test.
+- **`IO.FS.Handle.getLine` returns `""` only at genuine EOF, never for an actual empty input line** (which still
+  carries the trailing newline `getLine` strips) — confirmed against the primitive's own docstring, not assumed.
+  This is what makes a bare `while` loop reading `stdin.getLine` until empty a correct EOF-driven server loop
+  rather than one that would misfire on a blank request line.
+- **Output must be flushed after every response line, not just written.** `IO.FS.Stream.putStrLn` only appends to
+  a buffer; a caller on the other end of a pipe blocking on its own `readline()` would hang indefinitely on a
+  response `serve` has already computed but not yet handed to the OS. `runServe` calls `stdout.flush` after every
+  response for exactly this reason — confirmed necessary, not defensive-only, by testing over a real OS pipe
+  (`printf ... | lake exe leankernel serve ...`), not just by reasoning about buffering in the abstract.
+- **`String.trim` is deprecated in v4.33.1 in favor of `String.trimAscii`, which returns a `String.Slice`, not a
+  `String`** — the compiler catches this immediately (a genuine type mismatch, not merely a style lint), and the
+  fix is `.trimAscii.toString`, not switching back to the deprecated function.
+- **A dotted CLI module name (e.g. `Mathlib.Algebra.Group.Defs`) is safest built by hand
+  (`(s.splitOn ".").foldl Name.mkStr Name.anonymous`) rather than via an assumed `String → Name` stdlib helper.**
+  A `Slice.toName` exists but its own docstring example (`"a.b".toSlice.toName` naming `a.b`, distinct from the
+  escaped `«a.b»`) wasn't confirmed to compose the same way for a multi-component dotted path without directly
+  reading its implementation; the fold is three lines, has no ambiguity to check, and is exactly what a module
+  path already means structurally.
 
 ## Implementation notes: database facts that will recur
 

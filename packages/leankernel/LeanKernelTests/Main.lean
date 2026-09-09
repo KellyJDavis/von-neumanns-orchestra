@@ -4,6 +4,7 @@ import LeanKernel.Seal
 import LeanKernel.Link
 import LeanKernel.Replay
 import LeanKernel.Sorries
+import LeanKernel.Serve
 import LeanKernelTests.AuditFixtures
 import LeanKernelTests.Goals
 
@@ -388,6 +389,46 @@ unsafe def decomposeChecks : IO (Array Check) := do
       expected := true, actual := withInstanceOk }
   ]
 
+/--
+M1.8.1's `serve` dispatch logic (`LeanKernel.checkAgainst`/`handleLine`), tested directly against
+the pure functions rather than through the actual stdin/stdout loop -- the loop itself was
+verified empirically by hand (spawning `lake exe leankernel serve` and piping real JSON at it,
+including against a real Mathlib-derived base environment; see CLAUDE.md), since a genuine
+process/pipe round-trip isn't naturally exercised by `kernel_tests`' direct-call style the way
+`Serve.lean`'s own request handling is.
+-/
+unsafe def serveChecks : IO (Array Check) := do
+  enableInitializersExecution
+  let baseEnv ← importModules #[{ module := `Init }] {} (loadExts := true)
+
+  let clean ← LeanKernel.checkAgainst baseEnv "def foo : Nat := 5"
+  let typeError ← LeanKernel.checkAgainst baseEnv "def bad : Nat := true"
+  -- Isolation: a declaration from one `checkAgainst` call must never be visible to another,
+  -- since unrelated agent attempts are checked against the very same warm `baseEnv` in sequence
+  -- and must not be able to see each other's names.
+  let isolated ← LeanKernel.checkAgainst baseEnv "def usesFoo : Nat := foo"
+
+  -- A literal JSON string, not `toJson` on a `CheckRequest` value: production never serializes a
+  -- `CheckRequest` from the Lean side (Python sends the line; `serve` only ever decodes one), so
+  -- `CheckRequest` derives `FromJson` only -- adding `ToJson` would be surface area with no real
+  -- caller, purely to make this one test line more convenient.
+  let validRequest ← LeanKernel.handleLine baseEnv
+    "{\"id\": \"req-1\", \"body\": \"def bar : Nat := 6\"}"
+  let malformed ← LeanKernel.handleLine baseEnv "not json at all"
+
+  return #[
+    { name := "serve/clean check: ok with no diagnostics",
+      expected := true, actual := clean.ok && clean.diagnostics.isEmpty },
+    { name := "serve/type-error check: fails with a diagnostic",
+      expected := true, actual := !typeError.ok && !typeError.diagnostics.isEmpty },
+    { name := "serve/isolation: an earlier call's declaration is not visible to a later one",
+      expected := true, actual := !isolated.ok },
+    { name := "serve/handleLine: valid request echoes its id back and succeeds",
+      expected := true, actual := validRequest.ok && validRequest.id == some "req-1" },
+    { name := "serve/handleLine: malformed JSON has no id and fails",
+      expected := true, actual := !malformed.ok && malformed.id == none }
+  ]
+
 end LeanKernelTests
 
 unsafe def main : IO UInt32 := do
@@ -398,7 +439,9 @@ unsafe def main : IO UInt32 := do
   let linkResults ← LeanKernelTests.linkChecks
   let replayResults ← LeanKernelTests.replayChecks
   let decomposeResults ← LeanKernelTests.decomposeChecks
+  let serveResults ← LeanKernelTests.serveChecks
   let checks := auditResults ++ sealResults ++ linkResults ++ replayResults ++ decomposeResults
+    ++ serveResults
   let mut failures := 0
   for c in checks do
     if c.passed then
