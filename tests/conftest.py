@@ -1,6 +1,9 @@
-"""Shared fixtures for tests/db/ -- extracted from test_privileges.py (M1.6) once a third test
-file (M1.8.4's test_cache.py/test_verdicts.py) needed the same admin-engine-plus-role-password
-setup, rather than each file growing its own copy.
+"""Shared Postgres fixtures, usable from any test directory -- extracted from test_privileges.py
+(M1.6) into tests/db/conftest.py once a third test file (M1.8.4's test_cache.py/test_verdicts.py)
+needed the same admin-engine-plus-role-password setup, then promoted here (top-level, an ancestor
+of every tests/* directory) once M1.8.5's tests/leanserv/test_api.py needed the same fixtures
+from *outside* tests/db/ -- a sibling directory's conftest.py isn't visible to pytest's fixture
+lookup, only an ancestor's is.
 
 Tests here run against a live PostgreSQL, never a mock (see CLAUDE.md) -- `admin_engine` skips
 gracefully (not a fake pass) if Postgres isn't reachable, or if `deploy/grants.sql` hasn't been

@@ -8,11 +8,12 @@ Phase 0 (foundations) is complete and committed: `uv` workspace with stub packag
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
 `docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), M1.3
 (Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), M1.6 (privilege model +
-`mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is in
-progress and, being far larger than M1.1–M1.7, is split into its own sub-milestones rather than one PR:
-M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper — done), M1.8.3 (`pool.py` LRU —
-done), M1.8.4 (`cache.py` L0/L1 + `verdicts.py` — done), M1.8.5 (`api.py` FastAPI surface). See "Implementation
-notes" below
+`mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is complete
+and, having been far larger than M1.1–M1.7, was split into its own sub-milestones rather than one PR: M1.8.1
+(`leankernel serve`), M1.8.2 (Python `repl.py` process wrapper), M1.8.3 (`pool.py` LRU), M1.8.4 (`cache.py` L0/L1 +
+`verdicts.py`), M1.8.5 (`api.py` FastAPI surface: `/v1/check`, `/v1/check_batch`, `/v1/health` — `/v1/seal`,
+`/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are deliberately not built yet; see
+`api.py`'s own module docstring and the implementation notes below for why). See "Implementation notes" below
 for load-bearing facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
@@ -96,7 +97,14 @@ Two decisions drive nearly everything else in the design (spec §1):
   connect as the real `leanserv` role), so their tests live under `tests/db/` (`test_cache.py`/`test_verdicts.py`),
   not `tests/leanserv/` — no Lean process involved at all. `admin_engine`/`app_database_url`/
   `leanserv_database_url`/`leanserv_async_database_url`/`sealed_obligation` are shared fixtures in
-  `tests/db/conftest.py`; run with `uv run pytest tests/db`.
+  `tests/conftest.py` (top-level, an ancestor of every `tests/*` directory — see M1.8.5's note below on why it
+  isn't `tests/db/conftest.py` anymore); run with `uv run pytest tests/db`.
+- `leanserv`'s FastAPI surface (M1.8.5, `packages/leanserv/src/lean_agent_serv/api.py`): needs *both* the built
+  `leankernel` exe and a live Postgres with `deploy/grants.sql` applied at once, so its tests
+  (`tests/leanserv/test_api.py`) live alongside `test_repl.py`/`test_pool.py` rather than under `tests/db/`. CI's
+  `lean` job grew a Postgres service container specifically for this (see `.github/workflows/ci.yml`); locally,
+  `lake build` in `packages/leankernel`, then a reachable Postgres with migrations + grants applied, then
+  `uv run pytest tests/leanserv`.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -526,12 +534,65 @@ real caller of M1.7's `store_or_inline` — tested against a live Postgres, conn
   `VerdictWriter.write`, in contrast, deliberately does **not** do this — `verdict.attempt_id` being the primary
   key with no conflict handling is intentional (spec: at most one verdict per attempt, ever), so a second write
   for the same attempt must surface as a genuine `IntegrityError`, not be quietly absorbed.
-- **`sealed_obligation` (and the admin-engine/role-URL fixtures under it) moved from `test_privileges.py` into
-  `tests/db/conftest.py`** once a third and fourth file (`test_cache.py`, `test_verdicts.py`) needed the exact
-  same genuinely-committed-obligation fixture data. Plain (non-fixture) names from a directory's `conftest.py`
-  are importable from sibling test files in that same directory via a normal `from conftest import ...` — pytest's
-  default "prepend" import mode adds each test file's own directory to `sys.path`, confirmed empirically by
-  running the suite after the move, not assumed from pytest's documentation alone.
+- **`sealed_obligation` (and the admin-engine/role-URL fixtures under it) moved from `test_privileges.py` into a
+  shared `conftest.py`** once a third and fourth file (`test_cache.py`, `test_verdicts.py`) needed the exact same
+  genuinely-committed-obligation fixture data. Plain (non-fixture) names from a `conftest.py` are importable via a
+  normal `from conftest import ...` from any test file whose own directory pytest has added to `sys.path` (its
+  default "prepend" import mode does this per test file) — confirmed empirically by running the suite after the
+  move, not assumed from pytest's documentation alone. This `conftest.py` moved a second time in M1.8.5, from
+  `tests/db/` to top-level `tests/` — see that milestone's own note below for why a sibling directory wasn't
+  enough once a fourth consumer needed it from outside `tests/db/` entirely.
+
+## Implementation notes: FastAPI surface facts
+
+These surfaced while building M1.8.5 (`packages/leanserv/src/lean_agent_serv/api.py`), the last `leanserv`
+sub-milestone — wiring `pool.py`/`cache.py`/`verdicts.py` behind `/v1/check`, `/v1/check_batch`, `/v1/health`,
+tested through a real `FastAPI` app against a real spawned Lean process and a real Postgres, never mocked.
+
+- **`/v1/seal`, `/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are not built.**
+  `LeanKernel.Serve`'s wire protocol (M1.8.1) only ever understood one request kind, `check` — there is no
+  seal/link/replay/decompose request shape on the Lean side for an HTTP route to dispatch to, and a route with
+  nothing real underneath it is exactly the half-finished surface this project avoids. `/v1/link` is the one that
+  most wants `VerdictWriter` (M1.8.4) as a caller (spec: "then replay and audit; writes the verdict row") and is
+  the natural next step once `Serve.lean` grows a `link` request kind to go with it — not part of this milestone.
+- **A bare `check`'s outcome is classified with the same `VerdictKind` enum a proof verdict uses**, not a
+  separate ok/not-ok shape: `ok=True` (clean elaboration) is `PROVED`, a genuine elaboration error is `ERRORS`, a
+  `ReplTimeout` is `TIMEOUT`, and any `ReplCrashed` (`ReplExited`/`ReplProtocolError`) is `INFRA_ERROR` — one more
+  application of spec's own "infra_error is a distinct, unbudgeted outcome from a proof failure" principle, this
+  time one layer down from the obligation state machine to a single check. `REFUTED` and `OOM` are never produced
+  here: refutation isn't what a bare check does, and nothing in this module's crash taxonomy can reliably tell an
+  OOM kill apart from any other external kill.
+- **`INFRA_ERROR` results are never written to the cache; `TIMEOUT` results are, deliberately.** A crash is not
+  informative about the checked content (the same body might succeed cleanly on healthy infra next time), so
+  caching it would poison future attempts against transient infrastructure trouble. A timeout, by contrast, is
+  exactly one of the `verdict_kind` values spec's own `verification_cache` schema stores — treated as a
+  reproducible property of content-plus-environment, not a fluke, and cached like any other outcome.
+- **A cache hit skips the `base_env` database lookup entirely, not just the Lean check.** `compute_cache_key`
+  only needs the raw digest bytes (spec's own formula: `sha256(base_env_digest ‖ sha256(source) ‖
+  canonical(options))`), so `_run_check`/`_run_check_batch` check the cache *before* resolving `base_env_digest`
+  to a recipe — the (comparatively expensive) database round trip to look up imports only happens on an actual
+  miss.
+- **`/v1/check_batch`'s shared-worker degradation needs no special-case code.** If the one worker acquired for a
+  batch crashes partway through, every subsequent item in the batch simply calls `ReplWorker.check` on an
+  already-dead worker, which (per M1.8.2) immediately raises `ReplExited` without attempting to use it — each
+  remaining item comes back `INFRA_ERROR` on its own, cheaply, rather than the batch aborting or silently
+  skipping the rest of the list.
+- **Diagnostics round-trip through the cache as a JSON array, not newline-joined text.** A Lean diagnostic
+  message can itself contain newlines, so storing `"\n".join(diagnostics)` and splitting on `"\n"` to read it
+  back would be lossy and ambiguous about where one message ends and the next begins. `CachedCheck.messages`
+  holds `json.dumps(list(diagnostics)).encode()` instead, decoded the same way on a hit.
+- **`tests/leanserv/test_api.py` needs both the Lean toolchain and a live Postgres at once** — the only test file
+  in the repo with that combination (`test_repl.py`/`test_pool.py` need only Lean; every `tests/db/` suite needs
+  only Postgres). Rather than adding the (expensive) Lean toolchain/Mathlib setup into the `python` CI job, a
+  Postgres service container (cheap) was added to the `lean` job instead — see `.github/workflows/ci.yml`. This
+  is also what forced the `conftest.py` holding `admin_engine`/etc. up from `tests/db/` to top-level `tests/`: a
+  sibling directory's `conftest.py` is invisible to pytest's fixture lookup, only an ancestor's is, and
+  `tests/leanserv/` and `tests/db/` are siblings, not one an ancestor of the other.
+- **FastAPI's `TestClient` needs no `asyncio.run` gymnastics at all**, unlike every other async module in this
+  package. It manages its own event loop/portal for its whole `with TestClient(app) as client:` context, so
+  ordinary `client.post(...)`/`client.get(...)` calls inside a plain sync `def test_...` function work directly —
+  simpler than the `asyncio.run(...)`-per-test pattern `test_repl.py`/`test_pool.py`/`test_cache.py` all use for
+  their own directly-async APIs.
 
 ## Sequencing constraints (spec §8)
 
