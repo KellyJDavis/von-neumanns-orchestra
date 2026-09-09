@@ -14,26 +14,12 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 from lean_agent_serv.memory_probe import (
     _process_group_rss_kib,
     measure_prelude_deltas,
     measure_worker_rss_kib,
 )
 from lean_agent_serv.repl import ReplWorker
-
-LEANKERNEL_DIR = Path(__file__).resolve().parents[2] / "packages" / "leankernel"
-LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
-
-
-@pytest.fixture(scope="session")
-def lake_project_dir() -> Path:
-    if not LEANKERNEL_EXE.exists():
-        pytest.skip(
-            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
-            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
-        )
-    return LEANKERNEL_DIR
 
 
 def test_process_group_rss_includes_this_process_itself() -> None:

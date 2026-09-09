@@ -4,8 +4,9 @@ and never hands out a worker known to be dead -- against real spawned `leankerne
 processes (M1.8.2), never mocked.
 
 Local dev / CI wiring matches `tests/leanserv/test_repl.py`: `lake build` in `packages/leankernel`
-first, then `uv run pytest tests/leanserv`; the `lake_project_dir` fixture skips gracefully if
-that build hasn't happened. No pytest-asyncio -- plain sync `def test_...` functions drive the
+first, then `uv run pytest tests/leanserv`; `tests/conftest.py`'s `lake_project_dir` fixture
+skips gracefully if that build hasn't happened (and fails instead in CI, which sets
+`LEANKERNEL_REQUIRED=1`). No pytest-asyncio -- plain sync `def test_...` functions drive the
 async `LeanReplPool` API via `asyncio.run`.
 """
 
@@ -17,19 +18,6 @@ from pathlib import Path
 import pytest
 from lean_agent_serv.pool import LeanReplPool, PoolConfig
 from lean_agent_serv.repl import ReplTimeout
-
-LEANKERNEL_DIR = Path(__file__).resolve().parents[2] / "packages" / "leankernel"
-LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
-
-
-@pytest.fixture(scope="session")
-def lake_project_dir() -> Path:
-    if not LEANKERNEL_EXE.exists():
-        pytest.skip(
-            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
-            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
-        )
-    return LEANKERNEL_DIR
 
 
 def test_acquire_reuses_released_worker(lake_project_dir: Path) -> None:

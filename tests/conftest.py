@@ -1,14 +1,17 @@
-"""Shared Postgres fixtures, usable from any test directory -- extracted from test_privileges.py
+"""Shared Postgres and Lean-toolchain fixtures, usable from any test directory -- extracted from
+test_privileges.py
 (M1.6) into tests/db/conftest.py once a third test file (M1.8.4's test_cache.py/test_verdicts.py)
 needed the same admin-engine-plus-role-password setup, then promoted here (top-level, an ancestor
 of every tests/* directory) once M1.8.5's tests/leanserv/test_api.py needed the same fixtures
 from *outside* tests/db/ -- a sibling directory's conftest.py isn't visible to pytest's fixture
 lookup, only an ancestor's is.
 
-Tests here run against a live PostgreSQL, never a mock (see CLAUDE.md) -- `admin_engine` skips
-gracefully (not a fake pass) if Postgres isn't reachable, or if `deploy/grants.sql` hasn't been
-applied yet, so a fresh local checkout fails honestly rather than opaquely. CI always provides
-both (see .github/workflows/ci.yml) specifically so these skips never trigger there.
+Tests here run against a live PostgreSQL and a real `leankernel` process, never a mock (see
+CLAUDE.md) -- `admin_engine` and `lake_project_dir` skip gracefully (not a fake pass) if their
+prerequisite isn't available, so a fresh local checkout fails honestly rather than opaquely. CI
+always provides both (see .github/workflows/ci.yml) specifically so these skips never trigger
+there -- and `LEANKERNEL_REQUIRED` makes that a checked claim rather than an assumed one; see
+`lake_project_dir`.
 """
 
 from __future__ import annotations
@@ -16,11 +19,43 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import NamedTuple
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
+
+LEANKERNEL_DIR = Path(__file__).resolve().parents[1] / "packages" / "leankernel"
+LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
+
+
+@pytest.fixture(scope="session")
+def lake_project_dir() -> Path:
+    """The Lake project every test that spawns a real Lean worker runs against.
+
+    Skips when the exe isn't built (Lean toolchain not set up, or `lake build` not yet run) rather
+    than failing every such test with the same opaque "file not found" -- the same
+    honesty-over-fake-pass convention `admin_engine`'s Postgres check uses.
+
+    `LEANKERNEL_REQUIRED=1` turns that skip into a hard failure, and CI's `lean` job sets it.
+    Without it the graceful skip is indistinguishable from a pass in aggregate output, which is
+    not hypothetical: `lean_exe leankernel` was not a `@[default_target]`, so CI's `lake build`
+    built the library and never linked the binary, and *every* test depending on this fixture
+    silently skipped in CI from M1.8.2 until M2.1.1 found it (`tests/leanserv tests/eval` ran in
+    2 seconds, which is what gave it away). The lakefile is fixed, and this is what stops the same
+    class of gap from going unnoticed again.
+    """
+    if not LEANKERNEL_EXE.exists():
+        message = (
+            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
+            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
+        )
+        if os.environ.get("LEANKERNEL_REQUIRED") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
+    return LEANKERNEL_DIR
+
 
 ADMIN_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",

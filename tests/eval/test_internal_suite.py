@@ -11,23 +11,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from lean_agent_core.enums import VerdictKind
 from lean_agent_eval.score import score_suite
 from lean_agent_eval.suites.internal import EXPECTED_OK, INTERNAL_SUITE, run_internal_suite
-
-LEANKERNEL_DIR = Path(__file__).resolve().parents[2] / "packages" / "leankernel"
-LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
-
-
-@pytest.fixture(scope="session")
-def lake_project_dir() -> Path:
-    if not LEANKERNEL_EXE.exists():
-        pytest.skip(
-            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
-            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
-        )
-    return LEANKERNEL_DIR
 
 
 def test_expected_ok_table_covers_every_suite_problem() -> None:

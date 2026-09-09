@@ -389,6 +389,13 @@ unsafe def decomposeChecks : IO (Array Check) := do
       expected := true, actual := withInstanceOk }
   ]
 
+/-- `handleLine` answers with already-serialized `Json` rather than one response type (different
+request kinds produce genuinely different payloads), so these read the two fields every kind's
+response shares. -/
+def jsonOk (json : Json) : Bool := (json.getObjValAs? Bool "ok").toOption.getD false
+
+def jsonId (json : Json) : Option String := (json.getObjValAs? String "id").toOption
+
 /--
 M1.8.1's `serve` dispatch logic (`LeanKernel.checkAgainst`/`handleLine`), tested directly against
 the pure functions rather than through the actual stdin/stdout loop -- the loop itself was
@@ -399,7 +406,8 @@ process/pipe round-trip isn't naturally exercised by `kernel_tests`' direct-call
 -/
 unsafe def serveChecks : IO (Array Check) := do
   enableInitializersExecution
-  let baseEnv ← importModules #[{ module := `Init }] {} (loadExts := true)
+  let imports : Array Name := #[`Init]
+  let baseEnv ← importModules (imports.map fun m => { module := m }) {} (loadExts := true)
 
   let clean ← LeanKernel.checkAgainst baseEnv "def foo : Nat := 5"
   let typeError ← LeanKernel.checkAgainst baseEnv "def bad : Nat := true"
@@ -412,9 +420,13 @@ unsafe def serveChecks : IO (Array Check) := do
   -- `CheckRequest` from the Lean side (Python sends the line; `serve` only ever decodes one), so
   -- `CheckRequest` derives `FromJson` only -- adding `ToJson` would be surface area with no real
   -- caller, purely to make this one test line more convenient.
-  let validRequest ← LeanKernel.handleLine baseEnv
+  let validRequest ← LeanKernel.handleLine baseEnv imports
     "{\"id\": \"req-1\", \"body\": \"def bar : Nat := 6\"}"
-  let malformed ← LeanKernel.handleLine baseEnv "not json at all"
+  let malformed ← LeanKernel.handleLine baseEnv imports "not json at all"
+  -- No `kind` field at all must still be a `check`: M1.8.1 shipped a single-kind protocol and its
+  -- request lines are still on the wire, so adding `seal` must not have invalidated them.
+  let unknownKind ← LeanKernel.handleLine baseEnv imports
+    "{\"id\": \"req-2\", \"kind\": \"nosuchkind\"}"
 
   return #[
     { name := "serve/clean check: ok with no diagnostics",
@@ -423,10 +435,92 @@ unsafe def serveChecks : IO (Array Check) := do
       expected := true, actual := !typeError.ok && !typeError.diagnostics.isEmpty },
     { name := "serve/isolation: an earlier call's declaration is not visible to a later one",
       expected := true, actual := !isolated.ok },
-    { name := "serve/handleLine: valid request echoes its id back and succeeds",
-      expected := true, actual := validRequest.ok && validRequest.id == some "req-1" },
+    { name := "serve/handleLine: kind-less request is still a check, echoing its id back",
+      expected := true, actual := jsonOk validRequest && jsonId validRequest == some "req-1" },
     { name := "serve/handleLine: malformed JSON has no id and fails",
-      expected := true, actual := !malformed.ok && malformed.id == none }
+      expected := true, actual := !jsonOk malformed && jsonId malformed == none },
+    { name := "serve/handleLine: an unknown kind fails but still correlates its id",
+      expected := true, actual := !jsonOk unknownKind && jsonId unknownKind == some "req-2" }
+  ]
+
+/-- M2.1.1's `/v1/seal` handler, against the same warm `Init`-only base environment the rest of
+`serveChecks` uses. `Init` rather than Mathlib deliberately: nothing here is about a goal's
+mathematical content, only about which goals seal, what the assembled bundle contains, and whether
+generated source can be escaped -- and CI's whole-workflow budget is tight (see CLAUDE.md). -/
+unsafe def sealServeChecks : IO (Array Check) := do
+  enableInitializersExecution
+  let imports : Array Name := #[`Init]
+  let baseEnv ← importModules (imports.map fun m => { module := m }) {} (loadExts := true)
+  -- `bundleOf`, not `seal`: `seal` is a reserved keyword in Lean v4.33.1 (the `seal`/`unseal`
+  -- commands), so it cannot be bound as an identifier at all.
+  let bundleOf (goals : Array LeanKernel.SealGoal) : IO LeanKernel.SealResponse :=
+    LeanKernel.sealBundle baseEnv imports { id := "s", goals }
+
+  -- One goal that seals and one that does not, in the same request: spec §6.1's "a submission
+  -- with ten goals of which one does not elaborate creates nine obligations and reports the
+  -- tenth" is only true if the goals are elaborated independently -- a single combined
+  -- elaboration would fail all three here, since `checkSealed` reads the message log as a whole.
+  let mixed ← bundleOf #[
+    { name := "G_fine", statement := "True" },
+    { name := "G_bad", statement := "SomeUndefinedThing" },
+    { name := "G_fine2", statement := "False" }]
+  -- A `sorry` in the *statement* elaborates with only a warning, so the message log alone would
+  -- accept it -- `checkSealed`'s zero-axiom check is what rejects it (M1.1's finding).
+  let sorried ← bundleOf #[{ name := "G_sorry", statement := "sorry" }]
+  -- Statement injection: closing the `def` and the namespace, then declaring something else.
+  let escapedNamespace ← bundleOf #[
+    { name := "G_esc",
+      statement := "True\nend LeanAgent.Goals\ndef Evil : Nat := 0\nnamespace LeanAgent.Goals" }]
+  -- Statement injection that stays *inside* the namespace -- still a declaration nobody sealed,
+  -- which is why the escape check is against the goal's own name, not `LeanAgent.Goals`.
+  let escapedInside ← bundleOf #[
+    { name := "G_in", statement := "True\ndef Helper : Nat := 0" }]
+  -- Name injection: `name` is spliced into generated source exactly as `statement` is.
+  let badName ← bundleOf #[{ name := "G : Nat := 0\ndef Evil2", statement := "True" }]
+  -- Each duplicate elaborates fine alone; it is the shared bundle that could not compile.
+  let duplicates ← bundleOf #[
+    { name := "G_dup", statement := "True" },
+    { name := "G_dup", statement := "False" },
+    { name := "G_uniq", statement := "Nat" }]
+  -- A `match` in the statement generates a real `LeanAgent.Goals.G_match.match_1` (confirmed
+  -- directly with `lake env lean`), so the escape check must accept auxiliaries *under* the
+  -- sealed name rather than demanding the elaboration introduce that one name exactly.
+  let auxiliary ← bundleOf #[
+    { name := "G_match", statement := "match (3 : Nat) with | 0 => True | _ + 1 => False" }]
+
+  let sealedNames (resp : LeanKernel.SealResponse) : Array Name :=
+    (resp.reports.filter (·.ok)).map (·.decl)
+  let bundleMentions (resp : LeanKernel.SealResponse) (needle : String) : Bool :=
+    (resp.bundleSource.splitOn needle).length > 1
+
+  return #[
+    { name := "seal/mixed bundle: the goals that elaborate seal, the one that does not is reported",
+      expected := true,
+      actual := !mixed.ok && sealedNames mixed ==
+        #[`LeanAgent.Goals.G_fine, `LeanAgent.Goals.G_fine2] },
+    { name := "seal/mixed bundle: the failed goal's own text is left out of the bundle",
+      expected := true,
+      actual := bundleMentions mixed "G_fine" && !bundleMentions mixed "SomeUndefinedThing" },
+    { name := "seal/bundle carries the import header and the forced options",
+      expected := true,
+      actual := bundleMentions mixed "import Init"
+        && bundleMentions mixed "set_option autoImplicit false"
+        && bundleMentions mixed "set_option relaxedAutoImplicit false" },
+    { name := "seal/`sorry` in a statement fails despite being only a warning",
+      expected := true, actual := !sorried.ok && (sealedNames sorried).isEmpty },
+    { name := "seal/a statement that declares outside the namespace fails",
+      expected := true,
+      actual := !escapedNamespace.ok && !bundleMentions escapedNamespace "Evil" },
+    { name := "seal/a statement that declares inside the namespace still fails",
+      expected := true,
+      actual := !escapedInside.ok && !bundleMentions escapedInside "Helper" },
+    { name := "seal/a name that is not a plain identifier is rejected before elaboration",
+      expected := true, actual := !badName.ok && !bundleMentions badName "Evil2" },
+    { name := "seal/duplicate names fail every goal using them, not just the later one",
+      expected := true,
+      actual := !duplicates.ok && sealedNames duplicates == #[`LeanAgent.Goals.G_uniq] },
+    { name := "seal/an auxiliary generated under the sealed name is not an escape",
+      expected := true, actual := auxiliary.ok }
   ]
 
 end LeanKernelTests
@@ -440,8 +534,9 @@ unsafe def main : IO UInt32 := do
   let replayResults ← LeanKernelTests.replayChecks
   let decomposeResults ← LeanKernelTests.decomposeChecks
   let serveResults ← LeanKernelTests.serveChecks
+  let sealServeResults ← LeanKernelTests.sealServeChecks
   let checks := auditResults ++ sealResults ++ linkResults ++ replayResults ++ decomposeResults
-    ++ serveResults
+    ++ serveResults ++ sealServeResults
   let mut failures := 0
   for c in checks do
     if c.passed then

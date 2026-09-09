@@ -1,5 +1,5 @@
-"""M1.8.5 exit criterion: the FastAPI surface (`/v1/check`, `/v1/check_batch`, `/v1/health`)
-wired to real infrastructure throughout -- a genuinely spawned `leankernel serve` process
+"""M1.8.5/M2.1.1 exit criterion: the FastAPI surface (`/v1/check`, `/v1/check_batch`, `/v1/seal`,
+`/v1/health`) wired to real infrastructure throughout -- a genuinely spawned `leankernel serve` process
 (M1.8.1/M1.8.2) via a real `LeanReplPool` (M1.8.3), and a live Postgres connected as the real
 `leanserv` role for the cache (M1.8.4) and the `base_env` lookup, never mocked.
 
@@ -17,6 +17,7 @@ style HTTP test -- no `asyncio.run` needed here at all, unlike `test_repl.py`/`t
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -29,19 +30,6 @@ from lean_agent_serv.cache import VerificationCacheStore
 from lean_agent_serv.pool import LeanReplPool, PoolConfig
 from sqlalchemy import Engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-LEANKERNEL_DIR = Path(__file__).resolve().parents[2] / "packages" / "leankernel"
-LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
-
-
-@pytest.fixture(scope="session")
-def lake_project_dir() -> Path:
-    if not LEANKERNEL_EXE.exists():
-        pytest.skip(
-            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
-            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
-        )
-    return LEANKERNEL_DIR
 
 
 @pytest.fixture
@@ -178,6 +166,117 @@ def test_check_batch_amortizes_and_mixes_hits_and_misses(
     assert results[0]["ok"] is True
     assert results[1]["cache_hit"] is False
     assert results[1]["ok"] is True
+
+
+def test_seal_creates_a_bundle_for_the_goals_that_elaborate(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """Spec §6.1's headline seal behaviour, end to end: a submission whose goals do not all
+    elaborate still seals the ones that do, and reports the one that does not."""
+    response = client.post(
+        "/v1/seal",
+        json={
+            "base_env_digest": registered_base_env,
+            "goals": [
+                {"name": "G_ok", "statement": "∀ n : Nat, n + 0 = n"},
+                {"name": "G_bad", "statement": "SomeUndefinedThing"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    ok_goal, bad_goal = body["goals"]
+
+    assert ok_goal["ok"] is True
+    assert ok_goal["decl_name"] == "LeanAgent.Goals.G_ok"
+    assert ok_goal["goal_src"] == "∀ n : Nat, n + 0 = n"
+    assert ok_goal["diagnostics"] == []
+
+    assert bad_goal["ok"] is False
+    assert bad_goal["diagnostics"]
+
+    # The bundle is compiled out of band with nothing re-verifying it, so the goal that failed to
+    # seal must not be in the source that gets compiled -- only the reports mention it.
+    assert "G_ok" in body["bundle_source"]
+    assert "SomeUndefinedThing" not in body["bundle_source"]
+    assert "import Init" in body["bundle_source"]
+    assert "set_option autoImplicit false" in body["bundle_source"]
+
+
+def test_seal_bundle_digest_addresses_the_returned_source(
+    client: TestClient, registered_base_env: str
+) -> None:
+    response = client.post(
+        "/v1/seal",
+        json={
+            "base_env_digest": registered_base_env,
+            "goals": [{"name": "G_digest", "statement": "True"}],
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True
+    assert body["bundle_digest"] == hashlib.sha256(body["bundle_source"].encode()).hexdigest()
+
+
+def test_seal_goal_digest_ignores_the_declaration_name(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """The same statement under two different names is the same goal. This is what makes spec
+    §5.2's cycle guard ("a child's `goal_digest` may not equal any ancestor's") able to fire at
+    all -- a digest that folded in the generated declaration name would be unique per obligation
+    and the guard would silently never match.
+    """
+    response = client.post(
+        "/v1/seal",
+        json={
+            "base_env_digest": registered_base_env,
+            "goals": [
+                {"name": "G_first", "statement": "∀ n : Nat, n + 0 = n"},
+                {"name": "G_second", "statement": "∀ n : Nat, n + 0 = n"},
+                {"name": "G_other", "statement": "True"},
+            ],
+        },
+    )
+    first, second, other = response.json()["goals"]
+    assert first["decl_name"] != second["decl_name"]
+    assert first["goal_digest"] == second["goal_digest"]
+    assert other["goal_digest"] != first["goal_digest"]
+
+
+def test_seal_rejects_a_statement_that_declares_anything_else(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """`statement` is spliced into generated source, so it is an injection site -- a statement
+    that closes the `def` early and appends its own commands must not end up in a bundle that is
+    supposed to be an environment the agent cannot influence (spec §1.1)."""
+    response = client.post(
+        "/v1/seal",
+        json={
+            "base_env_digest": registered_base_env,
+            "goals": [
+                {
+                    "name": "G_esc",
+                    "statement": (
+                        "True\nend LeanAgent.Goals\ndef Evil : Nat := 0\nnamespace LeanAgent.Goals"
+                    ),
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["goals"][0]["ok"] is False
+    assert "Evil" not in body["bundle_source"]
+
+
+def test_seal_unknown_base_env_is_404(client: TestClient) -> None:
+    response = client.post(
+        "/v1/seal",
+        json={"base_env_digest": "ab" * 32, "goals": [{"name": "G", "statement": "True"}]},
+    )
+    assert response.status_code == 404
 
 
 def test_health_reports_pool_shape(client: TestClient, registered_base_env: str) -> None:

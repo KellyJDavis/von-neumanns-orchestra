@@ -14,21 +14,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from lean_agent_eval.reverify import reverify_file
-
-LEANKERNEL_DIR = Path(__file__).resolve().parents[2] / "packages" / "leankernel"
-LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
-
-
-@pytest.fixture(scope="session")
-def lake_project_dir() -> Path:
-    if not LEANKERNEL_EXE.exists():
-        pytest.skip(
-            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
-            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
-        )
-    return LEANKERNEL_DIR
 
 
 def test_reverify_accepts_a_genuinely_valid_file(lake_project_dir: Path, tmp_path: Path) -> None:
