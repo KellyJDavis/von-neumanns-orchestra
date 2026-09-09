@@ -10,8 +10,8 @@ pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deplo
 (Replay), M1.4 (Sorries/Infotree decomposition), M1.5 (DDL, Alembic, Pydantic mirror), M1.6 (privilege model +
 `mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is in
 progress and, being far larger than M1.1–M1.7, is split into its own sub-milestones rather than one PR:
-M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper — done), M1.8.3 (`pool.py` LRU),
-M1.8.4 (`cache.py` L0/L1 + `verdicts.py`), M1.8.5 (`api.py` FastAPI surface). See "Implementation notes" below
+M1.8.1 (`leankernel serve` — done), M1.8.2 (Python `repl.py` process wrapper — done), M1.8.3 (`pool.py` LRU —
+done), M1.8.4 (`cache.py` L0/L1 + `verdicts.py`), M1.8.5 (`api.py` FastAPI surface). See "Implementation notes" below
 for load-bearing facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
@@ -66,11 +66,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
   its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` — and
   read one JSON response line per request from stdout. Closing stdin exits it with code 0.
-- `leanserv`'s `ReplWorker` (M1.8.2, `packages/leanserv/src/lean_agent_serv/repl.py`): `lake build` in
-  `packages/leankernel` first (it spawns the real `leankernel serve` binary from that build, never a mock), then
-  `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet, the same way
-  `tests/db/` skips if Postgres isn't reachable — CI's `lean` job builds it first specifically so the skip never
-  triggers there (see `.github/workflows/ci.yml`).
+- `leanserv`'s `ReplWorker` and `LeanReplPool` (M1.8.2/M1.8.3, `packages/leanserv/src/lean_agent_serv/{repl,pool}.py`):
+  `lake build` in `packages/leankernel` first (both spawn the real `leankernel serve` binary from that build,
+  never a mock), then `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet,
+  the same way `tests/db/` skips if Postgres isn't reachable — CI's `lean` job builds it first specifically so
+  the skip never triggers there (see `.github/workflows/ci.yml`).
 - Database (`packages/core`'s `lean_agent_core.orm`/`.schemas`, `migrations/`): start Postgres 16 with
   `docker compose -f deploy/compose.yaml up -d`, then apply migrations with
   `DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/leanagent uv run alembic upgrade head`,
@@ -450,6 +450,42 @@ time (one test hung for 67 seconds before its root cause was clear), which is ex
   the `python` job for a handful of tests. Local dev mirrors `tests/db/`'s Postgres-connectivity convention: the
   suite skips gracefully (not a fake pass) if `packages/leankernel`'s built exe isn't found, and CI always builds
   it first (via `lean-action`, before `tests/leanserv` runs) specifically so that skip never triggers there.
+
+## Implementation notes: pool facts
+
+These surfaced while building M1.8.3 (`packages/leanserv/src/lean_agent_serv/pool.py`), the base-env-keyed
+`LeanReplPool` over M1.8.2's `ReplWorker` — tested against real spawned processes throughout, including deliberately
+crashing one mid-test to confirm the pool's own bookkeeping reacts correctly, not just its happy path.
+
+- **Mutual exclusion is the pool's actual reason to exist, not merely reuse.** `LeanKernel.Serve`'s wire protocol
+  (M1.8.1) is strictly one request in, one response out, in order — sending two concurrent `check`s to the *same*
+  process desynchronizes it exactly the way M1.8.2's `ReplProtocolError` detects. `acquire`/`release` give each
+  in-flight check sole ownership of one worker for its duration; `warm_per_base_env` (not a single worker per
+  base env) is what lets concurrent requests against the *same* base env avoid serializing on one process.
+- **A worker's own `is_alive` is the only "should this be reused" signal `release` needs — no separate
+  success/failure flag has to be threaded through the pool.** `ReplWorker.is_alive` already reflects every crash
+  path M1.8.2 defines (timeout, exit, protocol desync), and an ordinary elaboration failure (`ok=False`, ownership
+  still intact) leaves a worker just as alive and reusable as a success. Confirmed by deliberately timing a
+  worker out mid-test, then releasing it: the pool's `idle_workers` count stayed at zero rather than re-admitting
+  a worker that had already been SIGKILLed.
+- **An idle worker can die between being released and being handed back out** (crashed on its own, or reaped by
+  something else) — `acquire`'s reuse loop checks `is_alive` on every candidate it pops from the idle list and
+  discards a dead one rather than handing it out, instead of trusting idle-list membership alone as proof of
+  liveness.
+- **LRU eviction only ever frees one slot per call, at base-env granularity, and is a deliberate no-op if nothing
+  is evictable** — it evicts one idle worker belonging to the single least-recently-used base env (excluding the
+  one currently being served), not an arbitrary count or the worker being requested. If every base env with idle
+  capacity is either the one being served or has no idle worker to give up, `acquire` simply spawns over the soft
+  `max_total_workers` cap rather than blocking forever waiting for room that will never appear — the cap is
+  enforced by eviction pressure, not as a hard invariant on `total_workers`.
+- **A `base_env_key`'s imports are validated for stability at every `acquire`, not just recorded once and
+  forgotten.** Two different recipes claiming the same key is a caller bug (violates the entire premise that a
+  base-env identity means one specific, stable environment) — `acquire` raises `ValueError` rather than silently
+  keeping whichever recipe it saw first or silently switching to the new one, either of which would hide the bug
+  instead of surfacing it immediately at the call that introduced the inconsistency.
+- **No `pytest-asyncio` dependency here either**, continuing the pattern from M1.7/M1.8.2: `tests/leanserv/
+  test_pool.py`'s `def test_...` functions are plain sync functions driving `LeanReplPool`'s async API via
+  `asyncio.run(...)`.
 
 ## Sequencing constraints (spec §8)
 
