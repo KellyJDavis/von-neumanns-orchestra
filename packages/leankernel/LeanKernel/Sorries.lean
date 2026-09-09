@@ -78,7 +78,22 @@ def abstractSorry (g : SorryGoal) : MetaM (Name × Expr × Expr) := do
   setMCtx result.mctx
 
   let fvarIds := revertedFVars
-  let levelParams := result.newParamNames.toList
+  -- `result.newParamNames` is only the level parameters *this* generalization step introduced
+  -- from metavariables -- it is not the child's full level-parameter list whenever `g.goalType`
+  -- already mentions a concrete `Level.param` directly (confirmed empirically: a goal built from
+  -- an already-compiled declaration's own type, as gate 7's decomposition-fuzz harness does, has
+  -- no level metavariables at all for this step to generalize, yet `result.expr` still legitimately
+  -- depends on that declaration's own universe parameter). A caller reusing only
+  -- `result.newParamNames` for the child's declared `levelParams` would under-declare it, and a
+  -- `reassemblyTerm` built from that same incomplete list -- as this used to do -- references the
+  -- child with too few level arguments, rejected by the kernel with "incorrect number of universe
+  -- levels parameters" the moment such a child is actually declared and applied. Deriving
+  -- `levelParams` from `Lean.collectLevelParams` on the abstracted type itself, the same way
+  -- `Sorries.lean`'s own `decompose` already tells *callers* of `Decomposition.lemmas` they must
+  -- (see its docstring), keeps this function's own returned `reassemblyTerm` consistent with
+  -- whatever declaration a correct caller builds from `result.expr` -- both are now derived the
+  -- same way, from the same expression.
+  let levelParams := (Lean.collectLevelParams {} result.expr).params.toList
   let reassemblyTerm := mkAppN (mkConst g.suggestedName (levelParams.map mkLevelParam))
     (fvarIds.map mkFVar)
   return (g.suggestedName, result.expr, reassemblyTerm)

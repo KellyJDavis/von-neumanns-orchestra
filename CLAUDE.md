@@ -14,10 +14,13 @@ and, having been far larger than M1.1–M1.7, was split into its own sub-milesto
 `verdicts.py`), M1.8.5 (`api.py` FastAPI surface: `/v1/check`, `/v1/check_batch`, `/v1/health` — `/v1/seal`,
 `/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are deliberately not built yet; see
 `api.py`'s own module docstring and the implementation notes below for why). M1.9 (eval harness skeleton --
-`packages/eval`: `score.py`, `reverify.py`, `contamination.py`, the internal regression suite) is also complete;
-Phase 1's remaining scope is exit-gate validation runs (gate 1's 10k-proof throughput report, gate 7's
-decomposition fuzz test at scale, gate 9's prelude memory delta) rather than new modules. See "Implementation
-notes" below for load-bearing facts discovered while building all of the above. Read
+`packages/eval`: `score.py`, `reverify.py`, `contamination.py`, the internal regression suite) is also complete.
+Gate 7 (decomposition round-trip on a Mathlib sample) is also done — `LeanKernel/DecomposeFuzz.lean`, exercised
+both on every commit at small scale (`kernel_tests`) and, periodically/manually, at the gate's own named scale via
+`lake exe leankernel decompose-fuzz <seed> <count>`. Phase 1's remaining scope is gate 1's 10k-proof throughput
+report (blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1
+planning) and gate 9's prelude memory delta, not new modules. See "Implementation notes" below for load-bearing
+facts discovered while building all of the above. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -71,6 +74,13 @@ Two decisions drive nearly everything else in the design (spec §1):
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
   its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` — and
   read one JSON response line per request from stdout. Closing stdin exits it with code 0.
+- `leankernel decompose-fuzz` (gate 7's periodic/manual validation run): `lake exe leankernel decompose-fuzz
+  <seed> <count> [<import>...]` (imports default to `Mathlib` if none given) — samples `<count>` real theorems
+  from the imported modules and round-trip-checks each (spec's gate 7: children link standalone, reassembly
+  links against the parent, no new axioms), printing a JSON `{sampleSize, passed, failures}` report and exiting
+  nonzero if `failures` is non-empty. At the gate's own named scale (5,000-10,000), budget 20-35 minutes
+  (measured: ~213ms/declaration). A small (30-declaration), fixed-seed slice runs on every `lake test` instead,
+  as `kernel_tests`' own `decomposeFuzzChecks`.
 - `leanserv`'s `ReplWorker` and `LeanReplPool` (M1.8.2/M1.8.3, `packages/leanserv/src/lean_agent_serv/{repl,pool}.py`):
   `lake build` in `packages/leankernel` first (both spawn the real `leankernel serve` binary from that build,
   never a mock), then `uv run pytest tests/leanserv`. The suite skips gracefully if that binary isn't built yet,
@@ -214,9 +224,10 @@ agreement, not single-kernel acceptance.
 ## Implementation notes: Lean-runtime facts that will recur
 
 These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`), M1.2 (`Link.lean`), M1.3
-(`Replay.lean`), M1.4 (`Infotree.lean`, `Sorries.lean`), and M1.8.1 (`Serve.lean`) by testing directly against the
-real v4.33.1 toolchain rather than assuming from memory. They are load-bearing for `leanserv`, which needs this
-exact capability — elaborating arbitrary fresh source from a compiled process — in production, not just in tests.
+(`Replay.lean`), M1.4 (`Infotree.lean`, `Sorries.lean`), M1.8.1 (`Serve.lean`), and gate 7 (`DecomposeFuzz.lean`)
+by testing directly against the real v4.33.1 toolchain rather than assuming from memory. They are load-bearing
+for `leanserv`, which needs this exact capability — elaborating arbitrary fresh source from a compiled process —
+in production, not just in tests.
 
 - **`lean4checker` is deprecated**: merged into Lean itself as `leanchecker`, built into every toolchain since
   v4.28.0 (`lake env leanchecker`, or `--fresh` to replay into a fresh environment). Don't add it as a Lake
@@ -348,6 +359,37 @@ exact capability — elaborating arbitrary fresh source from a compiled process 
   escaped `«a.b»`) wasn't confirmed to compose the same way for a multi-component dotted path without directly
   reading its implementation; the fold is three lines, has no ambiguity to check, and is exactly what a module
   path already means structurally.
+- **`abstractSorry` had a real bug, found only by running it against real Mathlib content instead of synthetic
+  test goals: its returned `reassemblyTerm` could reference the child with too few universe-level arguments.**
+  `abstractSorry` builds the reassembly call's level arguments from `result.newParamNames` — the level params
+  *its own* `levelMVarToParam` generalization step introduced from metavariables. That is not the same thing as
+  "every level parameter the abstracted type actually depends on" whenever the original goal already mentions a
+  *concrete* `Level.param` directly, with no metavariable for this step to generalize in the first place — exactly
+  what happens when the "goal" is an already-compiled declaration's own type (gate 7's decomposition-fuzz
+  harness), unlike M1.4's own synthetic test goals, which all introduced their universe polymorphism through a
+  fresh implicit binder that elaborates as a metavariable first. The mismatch surfaced as a kernel rejection
+  ("incorrect number of universe levels parameters") the moment such a child was actually declared and applied —
+  it would never have shown up testing only hand-written goals with metavariable-introduced universes, which is
+  exactly what M1.4's own suite did. **Fix**: derive `levelParams` (and therefore the reassembly term's level
+  arguments) from `Lean.collectLevelParams` on the abstracted type itself, the same way `Sorries.lean`'s own
+  `decompose` already told *callers* of `Decomposition.lemmas` they must (see the M1.4 note above) — the function
+  now derives its own internal level list the same way, so the two can never disagree again.
+- **`Environment.constants.fold` over a fully-loaded `Mathlib` import visits ~440,000 constants, in well under a
+  second** — most of them compiler-generated (equation lemmas, match auxiliaries, projections), not things a
+  person wrote. `Name.hasMacroScopes` alone does not filter these out (they're ordinary non-hygienic top-level
+  names); gate 7's own eligibility filter additionally requires `ConstantInfo.thmInfo` (excludes `def`s,
+  `instance`s, structure/projection auxiliaries) and a source module literally named `Mathlib...` (via
+  `getModuleIdxFor?`), which was enough in practice to draw genuine, person-written theorems at every sample size
+  tested (30 to 2,000).
+- **Per-declaration cost for gate 7's round-trip check is ~213ms, dominated by `collectAxioms`'s transitive
+  dependency walk (called twice per declaration), not by the kernel `addDecl` calls or by sampling itself.**
+  Measured directly: importing all of `Mathlib` took ~2.7s, computing and sampling from the ~440,000-entry
+  eligible pool took under 1ms combined (even the naive `O(count × pool.size)` `eraseIdx!`-based sampling — not
+  worth the added complexity of a swap-and-pop `O(1)` removal unless a future run at far larger scale actually
+  shows sampling itself as the bottleneck, which 2,000 real samples did not), and the remaining ~427s for 2,000
+  declarations was essentially all in `decomposeFuzzOne` itself. This is why the gate's own named scale
+  (5,000-10,000) is treated as a periodic/manual run (~20-35 minutes) rather than something the fast per-commit
+  loop pays for — not a cost worth trying to engineer away for a check that only needs to run occasionally.
 
 ## Implementation notes: database facts that will recur
 
