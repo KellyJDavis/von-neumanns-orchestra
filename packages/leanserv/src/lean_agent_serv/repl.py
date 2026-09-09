@@ -5,18 +5,24 @@ with LRU eviction; this module only knows how to run exactly one.
 Deliberately minimal request/response shape: `CheckResult` here is `(ok, diagnostics)`, not the
 full spec §6.2 `CheckRequest`/`CheckResult` (`base_env_digest`, `options`, `want`, ...). This
 worker is already scoped to one base env by which imports it was spawned with, and
-`LeanKernel.Serve`'s own wire protocol (M1.8.1) doesn't carry `options`/`want` yet either --
-adding either side now, with no caller that needs `CheckOptions` or infotree/axiom extraction,
-would be speculative surface area. Extend both together when a real caller needs more.
+`LeanKernel.Serve`'s own wire protocol doesn't carry `options`/`want` yet either -- adding either
+side now, with no caller that needs `CheckOptions` or infotree/axiom extraction, would be
+speculative surface area. Extend both together when a real caller needs more.
+
+Two request kinds so far: `check` (M1.8.1) and `seal` (M2.1.1). They share one pipe, one
+`_request` transport, and one crash taxonomy; `link`/`replay`/`decompose` join them as the
+milestones that drive them land.
 """
 
 from __future__ import annotations
 
 import asyncio
 import asyncio.subprocess
+import dataclasses
 import json
 import os
 import signal
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn, Self
@@ -70,6 +76,41 @@ class CheckResult:
 
     ok: bool
     diagnostics: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class SealGoal:
+    """One goal to seal (spec §4.1). `name` is the unqualified declaration name -- `Serve.lean`
+    puts it under `LeanAgent.Goals` and rejects anything that isn't a plain identifier."""
+
+    name: str
+    statement: str
+
+
+@dataclass(frozen=True)
+class SealedGoal:
+    """Per-goal seal outcome. `ok=False` is a `seal_failed` for *this goal only* (spec §4.1: "If
+    the statement does not elaborate, no obligation is created ... which is distinct from any
+    proof outcome") -- its siblings in the same request are unaffected.
+    """
+
+    decl: str
+    level_params: tuple[str, ...]
+    diagnostics: tuple[str, ...]
+    ok: bool
+
+
+@dataclass(frozen=True)
+class SealResult:
+    """`goals` is parallel to the request's own goals, so a caller can create obligations for the
+    entries that sealed and report the rest. `bundle_source` carries only the goals that *did*
+    seal -- it is spec §4.1's generated bundle file, compiled lazily out of band, and nothing
+    re-verifies it at that point.
+    """
+
+    ok: bool
+    goals: tuple[SealedGoal, ...]
+    bundle_source: str
 
 
 class ReplWorker:
@@ -176,10 +217,14 @@ class ReplWorker:
             message, returncode=self._process.returncode, stderr="\n".join(self._stderr_lines)
         )
 
-    async def check(self, body: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> CheckResult:
-        """Elaborate `body` against this worker's warm environment. Raises a `ReplCrashed`
-        subclass (never returns a `CheckResult`) if the worker stops being usable in the
-        process -- callers that want to keep working must spawn a replacement.
+    async def _request(self, payload: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+        """Send one request line and return the one response line's decoded object, correlated by
+        `id`. Every request kind shares this: `Serve.lean`'s protocol is one line in, exactly one
+        line out, in order, whatever the `kind` -- so the transport, the crash taxonomy, and the
+        id correlation are the same for all of them and only the payload shape differs.
+
+        `id` is assigned here rather than by the caller, so a caller can never accidentally reuse
+        one and turn a genuine desynchronization into a silently-accepted mismatched response.
         """
         if not self.is_alive:
             raise ReplExited(
@@ -192,7 +237,7 @@ class ReplWorker:
         stdin, stdout = self._process.stdin, self._process.stdout
         assert stdin is not None and stdout is not None
 
-        request_line = json.dumps({"id": request_id, "body": body}) + "\n"
+        request_line = json.dumps({**payload, "id": request_id}) + "\n"
         try:
             stdin.write(request_line.encode())
             await stdin.drain()
@@ -230,8 +275,48 @@ class ReplWorker:
                 f"{request_id!r} -- worker desynchronized",
             )
 
+        return response
+
+    async def check(self, body: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> CheckResult:
+        """Elaborate `body` against this worker's warm environment. Raises a `ReplCrashed`
+        subclass (never returns a `CheckResult`) if the worker stops being usable in the
+        process -- callers that want to keep working must spawn a replacement.
+
+        Sends no `kind` field. `Serve.lean` defaults a missing `kind` to `"check"`, and keeping
+        this request byte-identical to the one M1.8.1 shipped is what keeps that default a tested
+        path rather than an untested compatibility claim.
+        """
+        response = await self._request({"body": body}, timeout_ms)
         return CheckResult(
             ok=bool(response.get("ok")), diagnostics=tuple(response.get("diagnostics", []))
+        )
+
+    async def seal(
+        self, goals: Sequence[SealGoal], *, timeout_ms: int = DEFAULT_TIMEOUT_MS
+    ) -> SealResult:
+        """Seal `goals` as one bundle against this worker's warm environment (spec §4.1). Raises
+        a `ReplCrashed` subclass on the same conditions `check` does.
+
+        Nothing here waits on the build system: sealing is elaboration only, in the already-warm
+        worker, and the `.olean` for `bundle_source` is produced lazily out of band ("the hot path
+        never waits on the build system"). That is why this is a plain request on the same pipe as
+        `check` rather than anything that needs a Lake invocation of its own.
+        """
+        response = await self._request(
+            {"kind": "seal", "goals": [dataclasses.asdict(g) for g in goals]}, timeout_ms
+        )
+        return SealResult(
+            ok=bool(response.get("ok")),
+            goals=tuple(
+                SealedGoal(
+                    decl=str(report.get("decl", "")),
+                    level_params=tuple(report.get("levelParams", [])),
+                    diagnostics=tuple(report.get("diagnostics", [])),
+                    ok=bool(report.get("ok")),
+                )
+                for report in response.get("reports", [])
+            ),
+            bundle_source=str(response.get("bundleSource", "")),
         )
 
     async def close(self) -> None:

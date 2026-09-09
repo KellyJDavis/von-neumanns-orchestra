@@ -11,8 +11,8 @@ pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deplo
 `mark_proved`), and M1.7 (content-addressed blob store) are implemented and tested. M1.8 (`leanserv`) is complete
 and, having been far larger than M1.1–M1.7, was split into its own sub-milestones rather than one PR: M1.8.1
 (`leankernel serve`), M1.8.2 (Python `repl.py` process wrapper), M1.8.3 (`pool.py` LRU), M1.8.4 (`cache.py` L0/L1 +
-`verdicts.py`), M1.8.5 (`api.py` FastAPI surface: `/v1/check`, `/v1/check_batch`, `/v1/health` — `/v1/seal`,
-`/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are deliberately not built yet; see
+`verdicts.py`), M1.8.5 (`api.py` FastAPI surface: `/v1/check`, `/v1/check_batch`, `/v1/health` — `/v1/link`,
+`/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are deliberately not built yet; see
 `api.py`'s own module docstring and the implementation notes below for why). M1.9 (eval harness skeleton --
 `packages/eval`: `score.py`, `reverify.py`, `contamination.py`, the internal regression suite) is also complete.
 Gate 7 (decomposition round-trip on a Mathlib sample) is also done — `LeanKernel/DecomposeFuzz.lean`, run
@@ -23,7 +23,16 @@ fit CI's actual budget). Gate 9 (prelude memory delta, R19's input) is also done
 costs on the order of ~2.4 KiB/declaration against an already-warm base (clean signal only above ~10,000
 declarations — smaller sizes are invisible against ~2 MiB of run-to-run RSS jitter in a ~1.5 GiB warm Mathlib
 worker), which is small next to the ~1.5 GiB the base import itself costs; see the implementation notes below for
-the full readout and what it means for R19. Phase 1's remaining scope is gate 1's 10k-proof throughput report,
+the full readout and what it means for R19.
+
+Phase 2 (the "null agent" — zero model calls, closing miniF2F's easy tail deterministically) has begun. M2.1
+extends the acceptance path onto the wire, one request kind at a time: M2.1.1 (`/v1/seal` — `Serve.lean`'s `seal`
+kind, `ReplWorker.seal`, `POST /v1/seal`, `lean_agent_core.digests`) is done; M2.1.2 (`/v1/link`) and M2.1.3
+(`/v1/decompose`) follow, then M2.2 (state machine), M2.3 (scheduler), M2.4 (control loop), M2.5 (Policy/Action +
+SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
+its httpx client), M2.10 (miniF2F exit-gate validation).
+
+Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
 not new modules. See "Implementation notes" below for load-bearing facts discovered while building all of the
 above. Read
@@ -71,15 +80,18 @@ Two decisions drive nearly everything else in the design (spec §1):
 
 - Python: `uv sync --all-packages`, `uv run ruff check .`, `uv run ruff format --check .`,
   `uv run mypy --strict packages`, `uv run pytest` (all run from the repo root; mirrors `.github/workflows/ci.yml`).
-- Lean (`packages/leankernel`): `lake build` (builds `LeanKernel` + the `leankernel` exe), `lake test` (builds
-  and runs `kernel_tests`, the Audit/Seal test suite — this is what CI's `lean` job runs via `lean-action`'s
-  `test: true`). Run `lake exe kernel_tests` directly for a single test run without going through `lake test`'s
-  dependency check.
-- `leankernel serve` (M1.8.1, the persistent warm-environment process `leanserv`'s pool will spawn one of per
+- Lean (`packages/leankernel`): `lake build` (builds `LeanKernel` + links the `leankernel` exe — both are
+  `@[default_target]`, which the exe deliberately is; see the leanserv note on why), `lake test` (builds and runs
+  `kernel_tests`, the Audit/Seal test suite — this is what CI's `lean` job runs via `lean-action`'s `test: true`).
+  Run `lake exe kernel_tests` directly for a single test run without going through `lake test`'s dependency
+  check.
+- `leankernel serve` (M1.8.1/M2.1.1, the persistent warm-environment process `leanserv`'s pool spawns one of per
   worker): `lake exe leankernel serve [<import>...]` (e.g. `serve Init` for a fast Mathlib-free session, or
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
-  its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` — and
-  read one JSON response line per request from stdout. Closing stdin exits it with code 0.
+  its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` for a
+  `check`, or `printf '{"id":"1","kind":"seal","goals":[{"name":"G","statement":"True"}]}\n' | lake exe
+  leankernel serve Init` for a `seal` — and read one JSON response line per request from stdout. Closing stdin
+  exits it with code 0.
 - `leankernel decompose-fuzz` (gate 7's periodic/manual validation run — **not** part of `kernel_tests`/`lake
   test`; see the implementation note below on why even a small per-commit slice doesn't fit CI's actual budget):
   `lake exe leankernel decompose-fuzz <seed> <count> [<import>...]` (imports default to `Mathlib` if none given)
@@ -134,7 +146,9 @@ Two decisions drive nearly everything else in the design (spec §1):
   (`tests/leanserv/test_api.py`) live alongside `test_repl.py`/`test_pool.py` rather than under `tests/db/`. CI's
   `lean` job grew a Postgres service container specifically for this (see `.github/workflows/ci.yml`); locally,
   `lake build` in `packages/leankernel`, then a reachable Postgres with migrations + grants applied, then
-  `uv run pytest tests/leanserv`.
+  `uv run pytest tests/leanserv`. The `lake_project_dir` fixture every Lean-spawning suite uses lives in the same
+  top-level `tests/conftest.py`; it skips when the exe isn't built, unless `LEANKERNEL_REQUIRED=1` (which CI's
+  `lean` job sets) makes that a hard failure instead — see M2.1.1's note on why that guard exists.
 - `packages/eval` (M1.9, eval harness skeleton): `score.py`/`contamination.py` are pure logic (`uv run pytest
   tests/eval/test_score.py tests/eval/test_contamination.py`, no external infra); `reverify.py` and the internal
   regression suite (`suites/internal.py`) spawn real Lean processes, same `lake build` prerequisite and skip
@@ -407,27 +421,23 @@ in production, not just in tests.
   declarations was essentially all in `decomposeFuzzOne` itself. This is why the gate's own named scale
   (5,000-10,000) is treated as a periodic/manual run (~20-35 minutes) rather than something the fast per-commit
   loop pays for — not a cost worth trying to engineer away for a check that only needs to run occasionally.
-- **Gate 7 does not run in `kernel_tests`/`lake test` at all, even at a small sample size — CI's `lean` job has
-  almost no spare budget for anything Mathlib-dependent beyond what M1.4's own decompose test already costs, and
-  the constraint turned out to be a fixed wall-clock cap on the whole workflow run, not a per-check cost problem
-  to size around.** First attempt added a 30-declaration slice to `kernel_tests` — comfortably fast locally (the
-  whole binary ran in ~27s) — but CI's `lean` job failed twice with "The operation was canceled." Reducing the
-  slice to 5 declarations did *not* fix it (still cancelled, now partway through a *faster* test run). Checking
-  the run's own metadata (`gh api .../actions/runs/<id>/timing` and `.../actions/runs/<id>` for
-  `created_at`/`updated_at`) showed why: the run's total wall-clock, from trigger to cancellation, was **exactly**
-  180,000ms both times — the cancellation is a fixed cap on the whole workflow run, arriving at the same absolute
-  moment regardless of which job is still in progress when it hits. `python`/`plugin-boundary` escape it because
-  they finish in under a minute; the `lean` job's own *setup* (elan, restoring the `.lake` actions-cache,
-  downloading Mathlib's own object cache — ~8,690 files) alone consumes on the order of 90-115s of that fixed
-  180s budget before the test step even starts, leaving a genuinely narrow window for `lake test` itself — one
-  M1.4's pre-existing Mathlib-dependent check apparently just fit inside, and gate 7's addition, at any sample
-  size tried, did not. `leanprover/lean-action`'s own source (`action.yml`, its shell scripts) has no
-  configurable or hardcoded timeout for the test step, so the 180s figure is not something this repository's
-  `ci.yml` set or can raise with a `timeout-minutes` change — it caps the whole run before a per-step timeout
-  would even apply. **Fix**: removed gate 7 from `kernel_tests` entirely; `lake exe leankernel decompose-fuzz` is
-  its only exercise mechanism, run manually/periodically, exactly as originally designed before a per-commit
-  slice was added on top. If a per-commit slice is wanted again later, it needs headroom measured against an
-  actual CI run's *remaining* budget after setup, not against local timing or an assumed step-level timeout.
+- **Gate 7 does not run in `kernel_tests`/`lake test` at all, even at a small sample size.** First attempt added a
+  30-declaration slice — comfortably fast locally (the whole binary ran in ~27s) — but CI's `lean` job failed
+  twice with "The operation was canceled." Reducing the slice to 5 declarations did *not* fix it (still
+  cancelled, now partway through a *faster* test run). The removal stands on its own cost grounds: gate 7 is a
+  periodic/manual run by design (see the ~213ms/declaration note above), and `lake exe leankernel decompose-fuzz`
+  is its only exercise mechanism.
+- **What cancels that job is *not* a fixed 180s workflow cap, contrary to what this file previously recorded —
+  do not size CI work against that number.** The original diagnosis came from both cancelled runs measuring
+  ~180,000ms from trigger to cancellation, which looked like an exact fixed cap. Re-checked later against more
+  runs and it does not hold: the `lean` job on `main` has since completed **successfully at 266s**, and one of
+  the two cancelled gate-7 runs was itself cancelled at 260s, not 180s. So the cancellations are unexplained
+  rather than budget-explained, and there is real headroom past 180s. Two lessons, both of which cost real time
+  here: a coincidence across *two* samples is not a law (the second run's ~180s was what made the first look
+  exact), and a "cap" hypothesis is only worth acting on once a run has been observed to *exceed* it and fail —
+  check `gh run list --json databaseId,conclusion` plus each run's job `started_at`/`completed_at` before
+  concluding anything about CI budgets. `leanprover/lean-action`'s own source has no timeout of its own, which is
+  still true and still means `timeout-minutes` in `ci.yml` is not what governs this.
 
 ## Implementation notes: database facts that will recur
 
@@ -636,12 +646,12 @@ These surfaced while building M1.8.5 (`packages/leanserv/src/lean_agent_serv/api
 sub-milestone — wiring `pool.py`/`cache.py`/`verdicts.py` behind `/v1/check`, `/v1/check_batch`, `/v1/health`,
 tested through a real `FastAPI` app against a real spawned Lean process and a real Postgres, never mocked.
 
-- **`/v1/seal`, `/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are not built.**
-  `LeanKernel.Serve`'s wire protocol (M1.8.1) only ever understood one request kind, `check` — there is no
-  seal/link/replay/decompose request shape on the Lean side for an HTTP route to dispatch to, and a route with
+- **`/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are not built.**
+  `LeanKernel.Serve`'s wire protocol understands `check` (M1.8.1) and `seal` (M2.1.1) and nothing else — there is
+  no link/replay/decompose request shape on the Lean side for an HTTP route to dispatch to, and a route with
   nothing real underneath it is exactly the half-finished surface this project avoids. `/v1/link` is the one that
   most wants `VerdictWriter` (M1.8.4) as a caller (spec: "then replay and audit; writes the verdict row") and is
-  the natural next step once `Serve.lean` grows a `link` request kind to go with it — not part of this milestone.
+  the natural next step (M2.1.2) once `Serve.lean` grows a `link` request kind to go with it.
 - **A bare `check`'s outcome is classified with the same `VerdictKind` enum a proof verdict uses**, not a
   separate ok/not-ok shape: `ok=True` (clean elaboration) is `PROVED`, a genuine elaboration error is `ERRORS`, a
   `ReplTimeout` is `TIMEOUT`, and any `ReplCrashed` (`ReplExited`/`ReplProtocolError`) is `INFRA_ERROR` — one more
@@ -704,6 +714,75 @@ tested through a real `FastAPI` app against a real spawned Lean process and a re
   `self._process.wait()` (the direct child), which can return before the grandchild has actually finished exiting
   on its own. Both are fixed the same way: `_kill` always calls `os.killpg` (catching `ProcessLookupError` as the
   only genuine no-op case), and `close()` calls `_kill()` unconditionally at the end, not only on its timeout path.
+
+## Implementation notes: seal-on-the-wire facts (M2.1.1)
+
+These surfaced while building `/v1/seal` — `Serve.lean`'s `seal` request kind, `ReplWorker.seal`,
+`api.py`'s route, and `lean_agent_core/digests.py` — against the real v4.33.1 toolchain and a real Postgres.
+
+- **`lean_exe leankernel` was not a `@[default_target]`, so CI never linked the binary, and *every* Lean-dependent
+  Python test silently skipped there from M1.8.2 until this milestone.** `LeanKernel.Main` is inside the
+  `LeanKernel` lib's own glob, so its `.olean` was built and `lake build` reported success (11 jobs) — but the
+  linking step for `.lake/build/bin/leankernel` is a separate target, and CLAUDE.md's own "builds `LeanKernel` +
+  the `leankernel` exe" claim was simply wrong. The tell was in plain sight for four milestones: CI's
+  `uv run pytest tests/leanserv tests/eval` step completing in **2 seconds** (43 collected, ~30 skipped), which
+  nobody had reason to read because the job was green. **Two fixes, both needed**: the lakefile now marks the exe
+  a default target, and CI's `lean` job sets `LEANKERNEL_REQUIRED=1`, which turns `tests/conftest.py`'s
+  `lake_project_dir` skip into a hard failure. Generalizes past this one bug: a fixture that skips on a missing
+  prerequisite is honest locally and dangerous in CI, so any such fixture needs an environment-gated "here it is
+  mandatory" mode — and a green job proves nothing about tests that never ran, so check step *durations*, not just
+  conclusions, when a suite is supposed to be exercising real infrastructure.
+- **A goal bundle is elaborated one goal at a time, not as a single unit, and this is forced by `checkSealed`'s
+  own semantics.** `checkSealed` (M1.1) reads the *whole* message log's `hasErrors`, so one bad goal in a combined
+  elaboration marks every sibling failed — which would break exactly the behaviour spec §6.1 asks for ("a
+  submission with ten goals of which one does not elaborate creates nine obligations and reports the tenth").
+  Goals never reference each other, so per-goal elaboration costs only extra passes over an already-warm
+  environment and buys exact attribution.
+- **Both `name` and `statement` are spliced into generated source, so both are injection sites — defended
+  structurally, not textually.** After elaborating a goal, `sealGoal` compares the environment's new constants
+  against the base and rejects anything not under the goal's own declaration name. Confirmed empirically that all
+  three attacks this stops are real against v4.33.1: a statement closing the `def` and the namespace to declare
+  `Evil` outside; one declaring `Helper` *inside* `LeanAgent.Goals` (why the check is against the goal's own name,
+  not the namespace — a smuggled sibling could collide with a later goal); and a `name` carrying
+  `G : Nat := 0\ndef Evil2`, which `isValidGoalName`'s character allowlist rejects before elaboration even starts.
+- **The check must be a name *prefix*, not equality — Lean really does generate auxiliaries under the sealed
+  name.** A statement containing a `match` produces a genuine `LeanAgent.Goals.G_match.match_1` (verified directly
+  with `lake env lean` and `#check`), so an exact-match escape check would reject legitimate goals. `Name.isPrefixOf`
+  is reflexive, so the prefix form covers the plain case too.
+- **`bundleSource` contains only the goals that actually sealed.** The bundle is compiled lazily out of band with
+  nothing re-verifying it at that point (spec §4.1: "the hot path never waits on the build system"), so returning
+  the full requested set would hand that compile step the very source the seal just rejected — an injected
+  declaration would end up in the compiled `.olean` backing its innocent siblings. `reports`/`goals` stay parallel
+  to the request either way, so the caller can still report the failures. Every emitted bundle was checked by
+  actually compiling it with `lake env lean`, including the ones assembled after dropping goals.
+- **Duplicate goal names fail every goal using them, at seal time.** Each elaborates fine alone, but Lean refuses
+  to redeclare a name (M1.2's finding), so the shared bundle would not compile — and there is no principled way to
+  pick which duplicate is "the" goal. Catching it here keeps the failure attributable to a request, instead of
+  surfacing in an out-of-band compile with nothing to attribute it to.
+- **`obligation.goal_digest` deliberately excludes the declaration name.** `decl_name` is generated per
+  obligation, so folding it in would make every goal's digest unique and silently disable spec §5.2's cycle guard
+  ("a child's `goal_digest` may not equal any ancestor's") — the guard needs two spellings of the same goal to
+  *collide*. It digests statement source rather than an elaborated canonical form, which makes it sound but
+  incomplete for that guard (no false "same goal", but a cycle spelled two ways slips past to `run.max_depth`,
+  spec's unconditional backstop). Tightening it needs Lean-side canonicalization to exist first.
+- **`/v1/seal` is uncached, unlike `/v1/check`.** `verification_cache` is keyed by `verdict_kind` — it answers
+  "did this declaration check", not "what does this goal elaborate to" — and a `CachedCheck` has nowhere to carry
+  per-goal reports or bundle source. Sealing is also elaboration-only against an already-warm worker, i.e. the
+  cheap side of the very measurement that motivates warm workers (spec §4.1: cold ~78% of pipeline time, warm
+  under 1%), so there is little to win and a wrong-shaped cache entry to lose.
+- **A crashed worker is a 503, not a `SealResponse` with `ok=False`.** `seal_failed` is a statement about the
+  content ("the statement does not elaborate"); reporting an `infra_error` in its shape would tell the caller not
+  to create obligations for goals that were never actually judged — the same distinction spec draws everywhere
+  else, at the one place in this endpoint where it is easy to blur.
+- **The wire protocol's `kind` field defaults to `"check"` when absent, and `ReplWorker.check` deliberately keeps
+  sending no `kind` at all** — that keeps M1.8.1's exact request bytes a *tested* path rather than an asserted
+  compatibility claim. `handleLine` now returns already-serialized `Json` rather than one response type, since
+  `check` and `seal` answer with genuinely different payloads; they share `id`/`ok`/`diagnostics` so a caller can
+  always read the outcome without knowing which kind it asked for.
+- **`seal` is a reserved keyword in Lean v4.33.1** (the `seal`/`unseal` commands), so it cannot be bound as an
+  identifier — a `let seal := ...` in a test fails to parse with a confusing "unexpected token 'seal'". Also:
+  a structure instance broken across lines inside `#[{ ... }]` must have its continuation indented past the `{`'s
+  own line start, or the fields after the first are rejected with "unexpected identifier; expected '}'".
 
 ## Implementation notes: eval harness facts
 

@@ -4,8 +4,9 @@ timeout, exit, and protocol desync -- against a genuinely spawned process, never
 CLAUDE.md).
 
 Local dev: `lake build` in `packages/leankernel` first (M1.8.1's `serve` subcommand must exist),
-then `uv run pytest tests/leanserv`. CI builds `packages/leankernel` before this suite runs (see
-`.github/workflows/ci.yml`) specifically so the skip below never triggers there.
+then `uv run pytest tests/leanserv`. CI builds `packages/leankernel` before this suite runs and
+sets `LEANKERNEL_REQUIRED=1` so `tests/conftest.py`'s `lake_project_dir` fails rather than skips
+there (see `.github/workflows/ci.yml`).
 
 No pytest-asyncio dependency, matching `tests/test_blobs.py`'s M1.7 precedent: plain sync
 `def test_...` functions drive the async `ReplWorker` API via `asyncio.run`.
@@ -25,23 +26,8 @@ from lean_agent_serv.repl import (
     ReplProtocolError,
     ReplTimeout,
     ReplWorker,
+    SealGoal,
 )
-
-LEANKERNEL_DIR = Path(__file__).resolve().parents[2] / "packages" / "leankernel"
-LEANKERNEL_EXE = LEANKERNEL_DIR / ".lake" / "build" / "bin" / "leankernel"
-
-
-@pytest.fixture(scope="session")
-def lake_project_dir() -> Path:
-    # A missing built exe (Lean toolchain not set up, or `lake build` not yet run) skips
-    # gracefully rather than failing every test with the same opaque "file not found" -- the same
-    # honesty-over-fake-pass convention `tests/db/`'s Postgres-connectivity check uses.
-    if not LEANKERNEL_EXE.exists():
-        pytest.skip(
-            f"{LEANKERNEL_EXE} not built; run `lake build` in {LEANKERNEL_DIR} first. "
-            "CI always builds it before this suite runs (see .github/workflows/ci.yml)."
-        )
-    return LEANKERNEL_DIR
 
 
 def test_check_ok_and_type_error(lake_project_dir: Path) -> None:
@@ -71,6 +57,56 @@ def test_isolation_between_requests(lake_project_dir: Path) -> None:
             assert first.ok
             second = await worker.check("def usesFirst : Nat := onlyInFirst")
             assert not second.ok
+
+    asyncio.run(run())
+
+
+def test_seal_and_check_share_one_worker(lake_project_dir: Path) -> None:
+    """Both request kinds on the same warm process, interleaved. `seal` and `check` share one
+    pipe and one id counter, so a response landing on the wrong call would surface here as a
+    `ReplProtocolError` rather than as a quietly mismatched result.
+    """
+
+    async def run() -> None:
+        async with await ReplWorker.spawn(lake_project_dir, ("Init",)) as worker:
+            checked = await worker.check("def before_seal : Nat := 1")
+            assert checked.ok
+
+            sealed = await worker.seal(
+                [
+                    SealGoal(name="G_ok", statement="∀ n : Nat, n + 0 = n"),
+                    SealGoal(name="G_bad", statement="SomeUndefinedThing"),
+                ]
+            )
+            assert not sealed.ok
+            assert [g.ok for g in sealed.goals] == [True, False]
+            assert sealed.goals[0].decl == "LeanAgent.Goals.G_ok"
+            assert sealed.goals[1].diagnostics
+            assert "import Init" in sealed.bundle_source
+            assert "SomeUndefinedThing" not in sealed.bundle_source
+
+            after = await worker.check("def after_seal : Nat := 2")
+            assert after.ok
+            # Sealing is elaboration against `baseEnv`, not a mutation of it -- the goals it just
+            # sealed must be as invisible to a later request as any other request's declarations.
+            invisible = await worker.check("def usesGoal : Sort _ := LeanAgent.Goals.G_ok")
+            assert not invisible.ok
+
+    asyncio.run(run())
+
+
+def test_seal_reports_universe_parameters(lake_project_dir: Path) -> None:
+    """Spec §4.1: "Universe parameters are explicit at seal time" -- Link's arity check (M1.2)
+    consumes exactly these, so a data-producing goal must report the parameter Lean generalized
+    for it rather than an empty list.
+    """
+
+    async def run() -> None:
+        async with await ReplWorker.spawn(lake_project_dir, ("Init",)) as worker:
+            result = await worker.seal([SealGoal(name="G_poly", statement="PUnit")])
+            assert result.ok
+            (goal,) = result.goals
+            assert len(goal.level_params) == 1
 
     asyncio.run(run())
 

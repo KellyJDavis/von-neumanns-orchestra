@@ -87,6 +87,12 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/leanagent
       TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/leanagent
+      # Turns `tests/conftest.py`'s `lake_project_dir` skip into a hard failure. Set here and
+      # nowhere else: locally a missing `leankernel` exe should skip gracefully, but in the one
+      # job whose entire purpose is to have that binary, a skip is a silent hole -- which is
+      # exactly how every Lean-dependent Python test came to skip unnoticed in CI (see the
+      # lakefile's `@[default_target]` note).
+      LEANKERNEL_REQUIRED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1

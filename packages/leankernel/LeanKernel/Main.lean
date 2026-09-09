@@ -7,13 +7,11 @@ audit, decompose) land in Phase 1 alongside the modules they dispatch to. -/
 
 open Lean
 
-/-- A dotted module name (e.g. `Mathlib.Algebra.Group.Defs`) as a CLI argument, split on `.` and
-folded into the hierarchical `Name` `importModules` expects -- not relying on a `String → Name`
-stdlib helper, since none was confirmed to do exactly this without risking a different quoting
-convention (e.g. escaping reserved-word components as `«...»`, which a plain module path never
-needs). -/
-def parseModuleName (s : String) : Name :=
-  (s.splitOn ".").foldl Name.mkStr Name.anonymous
+/-- A dotted module name (e.g. `Mathlib.Algebra.Group.Defs`) as a CLI argument, in the
+hierarchical `Name` form `importModules` expects. Shares `Serve.lean`'s `dottedName` rather than
+re-splitting here: `serve`'s seal handler builds goal names from dotted text the same way, and two
+copies of this three-line fold would be two places to fix if the convention ever changes. -/
+abbrev parseModuleName : String → Name := LeanKernel.dottedName
 
 /-- Phase 1 exit gate 7's periodic/manual validation run (CLAUDE.md: "a periodic/manual exit-gate
 run rather than something `lake test` runs on every commit" -- at the gate's own named scale
