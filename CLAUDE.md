@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository state
 
-This repository currently contains only the engineering specification —
-[von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) — for a system not yet implemented. There
-is no `pyproject.toml`, no `packages/`, no Lean sources, and no tests. When code is scaffolded, it should follow
-the layout and stack fixed by the spec below rather than improvising a different structure; if you deviate,
-update the spec, don't let them drift apart.
-
-Read the spec in full before implementing anything — it isn't a proposal, it's what to build from. Section
-numbers below (§N) refer to sections of that file.
+Phase 0 (foundations) is complete and committed: `uv` workspace with stub packages, the `leankernel` Lake package
+pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
+`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit) is implemented and
+tested; see "Implementation notes" below for load-bearing facts discovered while building it. Read
+[von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
+further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
+file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
+the spec, don't let them drift apart.
 
 ## What this system is
 
@@ -48,9 +48,16 @@ Two decisions drive nearly everything else in the design (spec §1):
 - **Sandbox**: bubblewrap → gVisor → Firecracker, escalating with multi-tenancy
 - **Lint/types/test**: `ruff`, `mypy --strict`, `pytest`, `hypothesis`
 
-Once scaffolded, expect the standard commands to be `uv sync`, `uv run pytest`, `uv run ruff check`,
-`uv run mypy --strict`, and `lake build` inside `packages/leankernel`. `tests/db/` is meant to run against a
-real PostgreSQL instance, never a mock (spec §3) — don't introduce a mocked-DB test path.
+## Commands
+
+- Python: `uv sync --all-packages`, `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run mypy --strict packages`, `uv run pytest` (all run from the repo root; mirrors `.github/workflows/ci.yml`).
+- Lean (`packages/leankernel`): `lake build` (builds `LeanKernel` + the `leankernel` exe), `lake test` (builds
+  and runs `kernel_tests`, the Audit/Seal test suite — this is what CI's `lean` job runs via `lean-action`'s
+  `test: true`). Run `lake exe kernel_tests` directly for a single test run without going through `lake test`'s
+  dependency check.
+- `tests/db/` (once it exists) is meant to run against a real PostgreSQL instance, never a mock (spec §3) — don't
+  introduce a mocked-DB test path.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -74,6 +81,14 @@ deploy/              Dockerfiles, compose.yaml, grants.sql (privilege model, tes
 ```
 
 Every `packages/*` entry is independently publishable under Apache-2.0 with DCO.
+
+**Deviation from the spec's literal layout**: `leankernel`'s own unit tests (`AuditFixtures.lean`, `Main.lean`
+driving the `kernel_tests` executable) live under `packages/leankernel/LeanKernelTests/`, not the top-level
+`tests/kernel/` the spec's tree sketch implies. Reason: `tests/kernel/` as a separate Lake package would need its
+own `require mathlib`, duplicating a second multi-GB fetch/build of a dependency `packages/leankernel` already
+resolves — co-locating tests inside the package that owns them avoids that for zero real cost, since the fixtures
+are Mathlib-free anyway (see below). Reserve top-level `tests/kernel/` for adversarial developments that
+genuinely need to sit outside any single package (e.g. gate 7's stratified Mathlib sample in M1.4).
 
 ## Architecture notes that require reading multiple sections to piece together
 
@@ -130,6 +145,41 @@ pressure attacks the kernel implementation itself, not the theorem — this has 
 reference-counting/GMP bug. No single mitigation is sufficient; kernel disagreement is treated as a security
 incident with the trajectory preserved (never retried as flaky), and RL reward should key on multi-kernel
 agreement, not single-kernel acceptance.
+
+## Implementation notes: Lean-runtime facts that will recur
+
+These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`) by testing directly
+against the real v4.33.1 toolchain rather than assuming from memory. They are load-bearing for M1.2/M1.3 (Link,
+Replay) and especially M1.8 (`leanserv`), which needs this exact capability — elaborating arbitrary fresh source
+from a compiled process — in production, not just in tests.
+
+- **`lean4checker` is deprecated**: merged into Lean itself as `leanchecker`, built into every toolchain since
+  v4.28.0 (`lake env leanchecker`, or `--fresh` to replay into a fresh environment). Don't add it as a Lake
+  dependency; the spec predates this merge.
+- **A `lean_exe` that elaborates fresh source at runtime (not just pre-compiled modules) needs
+  `supportInterpreter := true`** in its lakefile target. Without it, parsing works (notation loads fine from
+  imported `.olean` data) but every builtin term elaborator silently reports "has not been implemented" —
+  builtin elaborator entries are native closures, not serializable data, and populating them requires the
+  interpreter. `leanprover-community/repl` sets this flag; it is easy to omit and the failure mode doesn't
+  obviously point at the cause.
+- **The correct pattern for elaborating a fresh source string** (confirmed against `leanprover-community/repl`'s
+  own `processInput`): call `enableInitializersExecution`, then `Parser.parseHeader` on the input to get its own
+  `import` line, then `Lean.Elab.processHeader`, then `Lean.Elab.IO.processCommands`. Do **not** use
+  `withImportModules` for this — it hardcodes `loadExts := false`, which is fine for inspecting already-compiled
+  constants (that's what `Audit.lean`'s tests use it for) but leaves notation/elaborator extensions unpopulated
+  for fresh elaboration. Also never return a raw `Environment` out of `withImportModules`'s callback — it frees
+  the environment's compacted regions the moment the callback returns, so anything held past that point segfaults
+  on use; do all such work *inside* the callback.
+- **Lean's error recovery is deceptive for seal-style validation**: a command that fails to elaborate (e.g. an
+  unknown identifier) still leaves a `#check`-able constant in the environment, backed by `sorryAx`. Existence in
+  the environment is *not* evidence that elaboration succeeded — check the message log's errors, and, as
+  `Seal.lean` does, also verify the declaration's axiom cone is empty (a `sorry` in the statement itself
+  elaborates with only a *warning*, not an error, so the error-log check alone would miss it).
+- **Top-level `def` universe generalization is unconditional**: Lean auto-generalizes a free universe
+  metavariable into an explicit level parameter regardless of `autoImplicit`/`relaxedAutoImplicit` (confirmed:
+  `set_option autoImplicit false` does not change this). Those options are still forced per spec §4.1, but don't
+  expect them to be what causes "a remaining universe metavariable is an admission failure" — in practice that
+  case manifests as an ordinary elaboration error, already covered by the message-log check above.
 
 ## Sequencing constraints (spec §8)
 
