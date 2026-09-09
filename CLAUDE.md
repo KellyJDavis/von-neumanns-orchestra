@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Phase 0 (foundations) is complete and committed: `uv` workspace with stub packages, the `leankernel` Lake package
 pinned to Mathlib v4.33.1, GitHub Actions CI, `deploy/Dockerfile.base`, a `deploy/grants.sql` role skeleton, and
-`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), and M1.3
-(Replay) are implemented and tested; see "Implementation notes" below for load-bearing facts discovered while
-building them. Read
+`docs/provenance.md`. Phase 1 (the acceptance path) is in progress — M1.1 (Seal + Audit), M1.2 (Link), M1.3
+(Replay), and M1.4 (Sorries/Infotree decomposition) are implemented and tested; see "Implementation notes" below
+for load-bearing facts discovered while building them. Read
 [von-neumanns-orchestra-spec-v1.md](von-neumanns-orchestra-spec-v1.md) in full before implementing anything
 further — it isn't a proposal, it's what to build from. Section numbers below (§N) refer to sections of that
 file. Follow the layout and stack it fixes rather than improvising a different structure; if you deviate, update
@@ -87,9 +87,16 @@ Every `packages/*` entry is independently publishable under Apache-2.0 with DCO.
 `Main.lean` driving the `kernel_tests` executable) live under `packages/leankernel/LeanKernelTests/`, not the
 top-level `tests/kernel/` the spec's tree sketch implies. Reason: `tests/kernel/` as a separate Lake package would
 need its own `require mathlib`, duplicating a second multi-GB fetch/build of a dependency `packages/leankernel`
-already resolves — co-locating tests inside the package that owns them avoids that for zero real cost, since the
-fixtures are Mathlib-free anyway (see below). Reserve top-level `tests/kernel/` for adversarial developments that
-genuinely need to sit outside any single package (e.g. gate 7's stratified Mathlib sample in M1.4).
+already resolves — co-locating tests inside the package that owns them avoids that for zero real cost. Reserve
+top-level `tests/kernel/` for adversarial developments that genuinely need to sit outside any single package (e.g.
+gate 7's stratified Mathlib sample, at the 5,000–10,000-declaration scale, as a periodic/manual exit-gate run
+rather than something `lake test` runs on every commit).
+
+Most of `kernel_tests` is deliberately Mathlib-free for speed, but M1.4's decomposition tests are the first
+exception: verifying the anonymous-instance-binder handling in `abstractSorry`/`decompose` genuinely needs a real
+Mathlib goal (`import Mathlib.Algebra.Group.Defs`; spec's own Appendix C names this as only surfacing on
+real Mathlib-dependent goals, and it did — see below). This is a deliberate, small, targeted exception (one
+lemma, one import), not a change to the general Mathlib-free policy for the rest of the suite.
 
 `Goals.lean` specifically must stay a *genuinely compiled* module (part of the normal `LeanKernelTests` lean_lib
 build), not something defined inline in a test's dynamically-elaborated source string — see the Link-testing note
@@ -153,10 +160,10 @@ agreement, not single-kernel acceptance.
 
 ## Implementation notes: Lean-runtime facts that will recur
 
-These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`), M1.2 (`Link.lean`), and
-M1.3 (`Replay.lean`) by testing directly against the real v4.33.1 toolchain rather than assuming from memory.
-They are load-bearing for M1.8 (`leanserv`), which needs this exact capability — elaborating arbitrary fresh
-source from a compiled process — in production, not just in tests.
+These surfaced while building M1.1 (`packages/leankernel/LeanKernel/{Audit,Seal}.lean`), M1.2 (`Link.lean`), M1.3
+(`Replay.lean`), and M1.4 (`Infotree.lean`, `Sorries.lean`) by testing directly against the real v4.33.1 toolchain
+rather than assuming from memory. They are load-bearing for M1.8 (`leanserv`), which needs this exact capability —
+elaborating arbitrary fresh source from a compiled process — in production, not just in tests.
 
 - **`lean4checker` is deprecated**: merged into Lean itself as `leanchecker`, built into every toolchain since
   v4.28.0 (`lake env leanchecker`, or `--fresh` to replay into a fresh environment). Don't add it as a Lake
@@ -224,6 +231,40 @@ source from a compiled process — in production, not just in tests.
   than trying to route a bogus constant through `LeanKernel.replay`'s own environment-diffing wrapper. There is no
   public API for smuggling an unchecked constant into an `Environment` in the first place — good to know before
   assuming a "realistic environment-hacking" test needs to look more elaborate than this.
+- **`abstractSorry` reuses `MVarId.revert` rather than hand-rolling binder abstraction** — the same mechanism the
+  `revert` tactic itself uses, via `collectForwardDeps` for dependency-correct ordering and `BinderInfo`
+  preservation for instance-implicits. This is a reuse-over-reinvent choice, same spirit as `Audit.lean` reusing
+  `collectAxioms`: spec §4.6 calls out binder ordering and instance-implicit re-binding as needing special
+  handling, and `revert` already handles both correctly because dependency-correct reverting is its entire job.
+- **`revert`'s own return value — the fvars it actually reverted — must be used for the reassembly application,
+  not `LocalContext.getFVarIds` recomputed independently.** A top-level `theorem` proved by tactic carries an
+  auxiliary "recursive reference to self" declaration in its raw local context (so the proof body could refer to
+  itself for well-founded recursion); `revert`'s `clearAuxDeclsInsteadOfRevert` correctly drops it, but
+  recomputing the argument list from `g.lctx.getFVarIds` afterward silently reintroduces it as a bogus extra
+  argument — confirmed empirically (`exact (sorry_1 parent1)`, applying the lemma to the theorem itself), and it
+  surfaced on the simplest possible synthetic test, not only on real Mathlib goals. `Sorries.lean`'s `decompose`
+  derives argument text from the reassembly term's own application spine specifically to make this impossible to
+  get wrong twice.
+- **`abstractSorry`'s returned type can carry a newly-generalized universe parameter that `Decomposition.lemmas`
+  has nowhere to record** (spec's own `Array (Name × Expr)` has no `levelParams` slot). Declaring the lemma with
+  `levelParams := []` produces "invalid reference to undefined universe level parameter" the moment the goal has
+  a `Type*` binder — confirmed on the real Mathlib instance-implicit test below. Any real caller of
+  `Decomposition.lemmas` (this project's own round-trip test included) must derive `levelParams` itself via
+  `Lean.collectLevelParams {} ty |>.params`, not assume `[]`.
+- **An anonymous instance binder (Mathlib's default style, e.g. `[Group G]`) gets a hygiene-mangled name with no
+  valid surface syntax at all** — not just an inaccessible-but-nameable identifier; splicing it verbatim is a
+  parse error, confirmed empirically. `decompose` detects this via `Name.hasMacroScopes` and splices `‹Type›`
+  (anonymous instance-lookup-by-type syntax) instead of the name — which must be pretty-printed with the sorry's
+  own `LocalContext` actually ambient (`withLCtx`), or a type like `Group G` prints its own fvar `G` as a raw
+  internal id instead of its display name.
+- **Reapplying captured arguments in reassembly must use `@`-prefixed (fully explicit) application, never plain
+  application.** A goal's implicit (`{G}`) and instance-implicit (`[Group G]`) parameters are exactly the ones
+  ordinary application auto-fills with fresh metavariables before consuming explicit arguments — so passing them
+  positionally without `@` shifts every subsequent argument into the wrong slot (confirmed empirically: `sorry_1
+  G ‹Group G› a b` elaborated as if `G` were the first *explicit* argument). This also matters for
+  reproducibility, not just correctness: `@`-application reproduces the *exact* captured context deterministically
+  rather than relying on typeclass search or unification to re-derive it, which is the more fragile alternative
+  and was rejected for that reason, independent of whether it happened to also work.
 
 ## Sequencing constraints (spec §8)
 
