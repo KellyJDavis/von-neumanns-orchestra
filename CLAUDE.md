@@ -29,8 +29,10 @@ Phase 2 (the "null agent" — zero model calls, closing miniF2F's easy tail dete
 extends the acceptance path onto the wire, one request kind at a time: M2.1.1 (`/v1/seal` — `Serve.lean`'s `seal`
 kind, `ReplWorker.seal`, `POST /v1/seal`, `lean_agent_core.digests`) and M2.1.2 (`/v1/link` — the whole
 acceptance path on one submission: link + replay + audit, writing the `verdict` row) and M2.1.3
-(`/v1/decompose` — `sorry` extraction into closed standalone statements) are done, completing M2.1;
-next is M2.2 (state machine), M2.3 (scheduler), M2.4 (control loop), M2.5 (Policy/Action +
+(`/v1/decompose` — `sorry` extraction into closed standalone statements) are done, completing M2.1.
+M2.2 (the obligation state machine — `lean_agent_core.state` plus the `SECURITY DEFINER` transition
+functions and cycle-guard trigger in `deploy/grants.sql`) is done; next is M2.3 (scheduler), M2.4
+(control loop), M2.5 (Policy/Action +
 SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
 its httpx client), M2.10 (miniF2F exit-gate validation).
 
@@ -138,11 +140,15 @@ Two decisions drive nearly everything else in the design (spec §1):
   then verify it with `alembic check` (should report no drift) and by actually applying it — autogenerate's
   output needs verification, not blind trust (see the enum-type finding below).
 - Privilege model (`deploy/grants.sql`, spec §5.5): after migrations, apply it with
-  `psql postgresql://postgres:postgres@localhost:5432/leanagent -f deploy/grants.sql` — note the plain
+  `psql postgresql://postgres:postgres@localhost:5432/leanagent -f deploy/grants.sql` — this file holds both
+  the role grants and every obligation-status transition function (M2.2), since the two are one design: `app`
+  cannot write `obligation.status`, so the functions are the only way it moves. Note the plain
   `postgresql://` URL, not `DATABASE_URL`'s `postgresql+asyncpg://` (psql/libpq don't understand the SQLAlchemy
   driver suffix). It's idempotent (safe to re-run). CI applies it via `psycopg` instead of the `psql` binary, so
   it doesn't depend on a Postgres client being preinstalled on the runner — see `.github/workflows/ci.yml`. Then
-  `tests/db/test_privileges.py` exercises it (gate 8) the same way `test_schema.py` exercises the schema.
+  `tests/db/test_privileges.py` exercises it (gate 8) the same way `test_schema.py` exercises the schema, and
+  `tests/db/test_state.py` (M2.2) exercises every transition function and the cycle-guard trigger as the real
+  `app` role.
 - `leanserv`'s `VerificationCacheStore` and `VerdictWriter` (M1.8.4, `packages/leanserv/src/lean_agent_serv/
   {cache,verdicts}.py`): both need a live Postgres with migrations *and* `deploy/grants.sql` applied (they
   connect as the real `leanserv` role), so their tests live under `tests/db/` (`test_cache.py`/`test_verdicts.py`),
@@ -504,6 +510,62 @@ applying migrations against a real Postgres 16 instance and round-tripping every
   `psycopg.Connection.execute(open("deploy/grants.sql").read())` with `autocommit=True`. CI uses this instead of
   shelling out to `psql`, specifically so applying grants doesn't depend on a Postgres client being preinstalled
   on the runner.
+
+## Implementation notes: obligation state machine facts (M2.2)
+
+These surfaced while building `lean_agent_core.state` and the transition functions in `deploy/grants.sql`,
+against a real PostgreSQL 16 driven as the real `app` role.
+
+- **Spec §6.4's claim SQL cannot run under spec §5.5's own grant list, and §5.5 wins.** §6.4 writes the claim as
+  a bare `UPDATE obligation o SET status = 'in_progress'`, but §5.5 grants `app` UPDATE on only
+  `(priority, spent_attempts, spent_tokens, spent_kernel_ms, updated_at)` — `status` is not among them, and a
+  direct update as `app` fails with "permission denied for table obligation" (confirmed against the live
+  database before designing anything on top of it). So **every** status transition is a `SECURITY DEFINER`
+  function, generalizing the pattern `mark_proved` already established, rather than the grants becoming broader.
+  The alternative — granting `UPDATE(status)` and adding a trigger rejecting the single value `'proved'` — was
+  rejected as a deny-list over values, which is the thing this codebase refuses everywhere a check decides
+  whether something is trusted.
+- **Each transition function re-derives its own precondition from committed rows.** `mark_failed` checks
+  `spent_attempts >= budget_attempts` itself; `mark_blocked` computes "every group has a dead child" itself;
+  `mark_decomposed` requires the group's edges to already exist. This is what makes them enforcement rather than
+  convenience, and it is the same principle as `verdict` being leanserv-only: a worker asks for a transition and
+  observes the outcome, never asserts that one is warranted.
+- **`release_obligation` takes a `p_charge` boolean instead of being two functions**, and does the charge in the
+  same statement as the status change. Two functions would duplicate the idempotence logic for no gain; charging
+  separately would leave a window where the obligation is `open` with the attempt uncharged, and the scheduler
+  can re-claim it there and overspend the budget. `infra_error` passes `false` — spec's first-class *unbudgeted*
+  outcome, where charging would let a flaky node quietly lower the reported pass rate.
+- **"Every group has a failed child" is not "a child failed", and the difference is the whole point of competing
+  decomposition groups.** A parent is blocked only when *no* group can still succeed (§4.5: "a failed reassembly
+  fails only that decomposition group, and proved children remain reusable by a competing group"). A parent with
+  no groups at all is explicitly *not* blocked — it is simply not decomposed — and treating "no groups" as "all
+  groups dead" would block every obligation the moment anything looked at it.
+- **A Python mirror of an enforcement boundary needs a test that holds it to the original, in both directions.**
+  `TRANSITIONS` exists so a control loop can decide *which* transition to ask for; `tests/db/test_state.py`
+  drives every legal pair against the real functions (must land where the table says) and every illegal pair
+  (must not change the status). Without the second half the table could be trimmed to nothing; without the first
+  it could be widened arbitrarily.
+- **The right property for an "illegal transition" test is "does not change the status", not "raises".** The
+  first version demanded an exception from every illegal pair and immediately failed on
+  `decomposed --decomposed-->`, which the SQL accepts as a deliberate no-op because competing groups arriving for
+  an already-decomposed parent are normal. Several transitions are no-ops rather than errors when they arrive
+  late or twice (a release from an attempt that lost the race to one that proved the obligation). Demanding an
+  exception encoded an assumption about the *implementation* where the test should have asserted the
+  *guarantee*.
+- **The cycle guard is a `BEFORE INSERT` trigger on `obligation_edge`, not an application check.** Spec asks for
+  it "in the same transaction that inserts an edge", which a trigger satisfies by construction, and `app` holds
+  `INSERT` on `obligation_edge` directly, so anything application-side would be advisory. It walks the whole
+  ancestor chain with a recursive CTE (a grandchild reintroducing its grandparent's `goal_digest` is the same
+  cycle one level out), rejects a self-edge outright, and enforces `run.max_depth` — the unconditional backstop
+  for a cycle spelled two different ways, which `goal_digest` equality cannot catch.
+- **`SQLAlchemy` masks the password when rendering an engine's URL** (`str(engine.url)` gives `***`), so
+  deriving a connection string from an existing engine silently produces one that cannot authenticate. Two tests
+  here failed that way before switching to the role-URL fixtures in `tests/conftest.py`; the error surfaces as an
+  authentication failure, which looks like a configuration problem rather than a code one.
+- **An asyncpg engine must be created *and disposed* inside the same `asyncio.run`.** M1.8.4 recorded the
+  creation half; the disposal half bites separately and later. A fixture that built engines lazily and disposed
+  them after the test passed every short test and failed the one making enough round trips to keep a connection
+  checked out, with "Event loop is closed" raised from inside `dispose()`.
 
 ## Implementation notes: blob store facts
 
