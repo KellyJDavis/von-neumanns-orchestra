@@ -56,6 +56,13 @@ class CheckRequest(BaseModel):
     base_env_digest: str  # hex-encoded sha256, matching base_env.digest
     body: str
     timeout_ms: int = DEFAULT_TIMEOUT_MS
+    #: Optionally put a materialized sealed bundle on the worker's path, so `body` can name a
+    #: sealed goal constant. This is what lets a policy *screen* candidate proofs before committing
+    #: its one `/v1/link` -- `verdict.attempt_id` is a primary key, so an attempt gets exactly one
+    #: verdict and a fifteen-tactic portfolio cannot spend it fifteen times. Screening on `check`
+    #: (cheap, cached, no verdict) and linking once (authoritative, writes the verdict) is what the
+    #: two endpoints are for.
+    bundle_sha: str | None = None
 
 
 class CheckResponse(BaseModel):
@@ -350,6 +357,14 @@ async def _execute_and_classify(
     )
 
 
+def _check_worker_key(req: CheckRequest) -> str:
+    """A bundle-bearing check needs its own pool key, since its worker's imports differ -- the
+    same rule `/v1/link` follows, and the same one warm slot per (base env, bundle) cost."""
+    if req.bundle_sha is None:
+        return req.base_env_digest
+    return f"{req.base_env_digest}+{_bundle_module_name(req.bundle_sha)}"
+
+
 async def _run_check(
     pool: LeanReplPool,
     cache: VerificationCacheStore,
@@ -360,7 +375,14 @@ async def _run_check(
     # Content-addressed: a cache hit needs only the digest bytes, never a base_env lookup -- so
     # the (comparatively expensive) database round trip to resolve imports is skipped entirely
     # whenever the answer is already known.
-    cache_key = compute_cache_key(base_env_digest, req.body, {})
+    #
+    # `bundle_sha` goes into the key's options, not alongside them as decoration: the same body
+    # against two different bundles is two different checks (the sealed constant it names means
+    # different things), and a key that ignored it would serve one bundle's answer for another's
+    # question -- a wrong *acceptance*, not just a stale one.
+    cache_key = compute_cache_key(
+        base_env_digest, req.body, {"bundle_sha": req.bundle_sha} if req.bundle_sha else {}
+    )
     hit = await _cache_hit_response(cache, cache_key)
     if hit is not None:
         return hit
@@ -371,7 +393,19 @@ async def _run_check(
             status_code=404, detail=f"no base_env with digest {req.base_env_digest!r}"
         )
 
-    async with pool.worker(req.base_env_digest, base_env.imports) as worker:
+    imports = base_env.imports
+    if req.bundle_sha is not None:
+        if (
+            pool.bundle_root is None
+            or not _bundle_olean_path(pool.bundle_root, req.bundle_sha).exists()
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=f"bundle {req.bundle_sha} is not materialized under {pool.bundle_root}",
+            )
+        imports = (*imports, _bundle_module_name(req.bundle_sha))
+
+    async with pool.worker(_check_worker_key(req), imports) as worker:
         return await _execute_and_classify(
             worker,
             cache,
