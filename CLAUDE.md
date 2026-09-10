@@ -32,7 +32,8 @@ acceptance path on one submission: link + replay + audit, writing the `verdict` 
 (`/v1/decompose` — `sorry` extraction into closed standalone statements) are done, completing M2.1.
 M2.2 (the obligation state machine — `lean_agent_core.state` plus the `SECURITY DEFINER` transition
 functions and cycle-guard trigger in `deploy/grants.sql`) and M2.3 (scheduler — `lean_agent_core.scheduler`:
-claim, lease, heartbeat, reaper) are done; next is M2.4 (control loop), M2.5 (Policy/Action +
+claim, lease, heartbeat, reaper) and M2.4 (control loop — `lean_agent_core.worker`) are done; next is
+M2.5 (Policy/Action +
 SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
 its httpx client), M2.10 (miniF2F exit-gate validation).
 
@@ -610,6 +611,53 @@ functions, against a real PostgreSQL 16 driven as the real `app` role.
   completely unlocked implementation; `test_two_concurrent_claims_never_take_the_same_obligation` runs eight
   claims over eight connections through `asyncio.gather` against four obligations and asserts the claimed ids
   are distinct — which fails under either "handed out twice" or "serialized and blocked".
+
+## Implementation notes: control loop facts (M2.4)
+
+These surfaced while building `lean_agent_core.worker`, the loop that joins M2.2's state machine to M2.3's
+scheduler, against a real PostgreSQL 16 as the real `app` role.
+
+- **Known seam, named rather than guessed: nothing re-claims a `decomposed` parent for reassembly.**
+  `claim_attempt` selects `status = 'open'`, so a parent that decomposes is never picked up again — and spec
+  §6.4 is explicit that a parent becomes proved only by presenting its own verdict ("Reassembly produces a real
+  attempt ... and flows through `mark_proved` like anything else"). Closing this needs a decision that is not
+  checkable yet: whether a fully-proved-group parent re-enters the queue as `open` (losing the `decomposed`
+  marker, edges still present) or the claim widens to select `decomposed` parents directly, and what a *failed*
+  reassembly returns it to. That only becomes testable once a reassembly runner exists, which is M2.5's
+  `DecomposeAndConquer`. Recorded in `worker.py` and left undone deliberately — a guess baked into the scheduler
+  and validated by nothing is worse than a documented hole.
+- **Only a *declared* `InfraError` is unbudgeted; an undeclared exception is charged as a failed attempt.** This
+  is a deliberate refinement of §6.4, not an oversight. Treating every crash as infrastructure means an
+  obligation that reliably crashes the policy is retried forever at no cost, occupying a worker indefinitely and
+  never reaching `failed`. A policy that consistently blows up on one obligation is telling you something about
+  that obligation, and the attempt budget is the mechanism that eventually stops asking. The `infra_error` path
+  keeps spec's meaning for the case spec actually names — a crashed Lean worker, an unreachable endpoint.
+- **"Budget exhausted → failed" has to be applied at commit, not left for the next claim.** `claim_attempt`
+  filters out obligations whose budget is spent, so one parked in `open` with nothing left is never picked up
+  again to *notice* it is done — it sits there looking schedulable forever. The loop charges, then re-reads, then
+  transitions, which is also spec's "checked coarsely [at claim] and exactly at commit".
+- **A lost lease is not uniformly fatal to an attempt's result, and splitting by outcome is the right call.**
+  `PROVED` and `DECOMPOSED` are still committed: a verified proof is verified regardless of who holds a lease,
+  `mark_proved` independently re-checks the §1.1 predicate against the verdict, and a decomposition's children
+  are already in the database. Discarding real, independently-validated work over a scheduling timeout is pure
+  loss. Everything else is dropped, because the reaper already returned the obligation to `open` and another
+  worker may hold it — charging it would take budget from work that is no longer ours.
+- **A late-finishing loop must not overwrite the reaper's account of an attempt.** `_finish_attempt` only sets
+  the attempt's status while it is still `claimed`/`running`; one the reaper marked `expired` stays `expired`,
+  and `finished_at` is `COALESCE`d rather than reset. Stamping `failed` over `expired` would erase the only
+  evidence that a worker was flapping. Spend is recorded either way — tokens and kernel time were genuinely
+  consumed whoever ended up owning the attempt.
+- **Shutdown is checked between attempts, never during one**, and the idle wait is an interruptible
+  `asyncio.wait_for(shutdown.wait(), timeout=backoff)` rather than a `sleep`. Interrupting a claimed attempt
+  would leave it to be reaped, discarding real work to save at most one lease; sleeping through a full backoff
+  interval would make a draining worker look hung.
+- **The runner is injected, not a `Policy`.** Spec §6.4 looks up a policy by `attempt.policy_id` and Appendix A
+  defines `Policy.propose()` yielding `Action`s an executor performs — both M2.5. Defining a placeholder
+  `Policy` protocol here would only be something M2.5 replaces, so the loop takes
+  `AttemptRunner = Callable[[ClaimedAttempt], Awaitable[AttemptResult]]` and M2.5 supplies the real one.
+  `AttemptResult.outcome` is an `ObligationOutcome`, so a runner cannot invent a transition the diagram has no
+  edge for; `BUDGET_EXHAUSTED`/`GROUPS_EXHAUSTED` are rejected outright, since a runner has no way to know
+  whether the budget is spent or every competing group is dead.
 
 ## Implementation notes: blob store facts
 
