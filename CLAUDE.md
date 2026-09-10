@@ -48,10 +48,14 @@ across three runs, with a materialized file that elaborates and links. Phase 3 (
 is next; note its own exit criterion begins "the Phase 2 symbolic baseline still passes
 bit-identically", which is what that gate is now for. M3.0 (`lean_agent_eval.baseline` plus the
 recorded `phase2_baseline.json`) is done: it freezes what the symbolic path currently produces, so
-that clause has something to be checked against. The rest of Phase 3 — `packages/models`
-(`ModelRole`, typed completions client with client-side token-id templating, response cache,
-router), widened trajectory logging, `ContextBuilder`, `WholeProofSampler`, `RepairLoop`, the
-trajectory viewer — is not started.
+that clause has something to be checked against. M3.1 is done too — the model layer's *types*:
+`lean_agent_core.roles.ModelRole`, `SamplingParams`/`CompletionRequest`/`Completion`/
+`CompletionResponse` and the `ModelBackend` protocol in `core.protocols`, and
+`lean_agent_models.{config,errors}`. No I/O yet. Still to come: M3.2 (the CI story for models — a
+replay server over recorded real vLLM responses), M3.3 (`template.py`), M3.4 (`client.py`), M3.5
+(`router.py`), M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
+(`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
+M3.12 (the exit gate).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -927,6 +931,54 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: model-layer type facts (M3.1)
+
+These come from scaffolding `packages/models` and the model types in `core` — types only, no I/O —
+and from checking the wire contract against a **real vLLM 0.28.0 (metal)** before freezing any of
+it.
+
+- **`vllm-metal` implements the whole §6.5 contract, verified rather than assumed.** Against
+  `Qwen/Qwen3-0.6B` on Apple Silicon: `prompt` accepts a list of token ids and echoes it back as
+  `prompt_token_ids`; `logprobs` returns per-token `token_logprobs` and `tokens`; `token_ids`
+  returns the generated ids; `prompt_logprobs` and `return_token_ids` both exist. Same seed at
+  `temperature=0` gave byte-identical text *and* identical logprobs across calls — so spec §7.2's
+  R1 "token-identical" tier is actually observable on fixed local hardware, which is exactly the
+  caveat spec attaches to it. The Metal port has no logprob gap; that was the open risk.
+- **Ollama cannot be the conformance target, and the reason is the dangerous kind.** Its native
+  API computes logprobs; its OpenAI-compatible layer accepts `logprobs`/`top_logprobs` and
+  **silently drops them** (ollama#16117). Since §9 lists logprobs among the things that cannot be
+  recomputed later, a run against Ollama would write `trajectory.logprobs_blob` as NULL and nothing
+  would complain until training needed them. `ModelProtocolError` exists to catch exactly this at
+  the boundary. LM Studio documents logprobs on `/v1/responses`, not on `/v1/completions`.
+- **`Completion.logprobs` is non-optional, and that is the design.** A backend that cannot supply
+  them fails at the boundary instead of producing a degraded success. Making the field `| None`
+  would push the failure to whoever eventually tried to train on the trajectory.
+- **`CompletionRequest` has no prompt-string field at all.** §6.5 requires client-side templating
+  to token ids, so a `str` field would merely make the mistake available. The test asserts against
+  `dataclasses.fields`, not `hasattr` — a future `prompt: str | None = None` would satisfy
+  `hasattr` and fail the real check.
+- **`ModelRole` lives in `core`, not in `packages/models`, and not in `enums.py`.** Not in
+  `packages/models` because `Policy.roles` is `frozenset[ModelRole]` and `Policy` is in `core`,
+  which `models` already depends on — the other direction is a cycle. Not in `enums.py` because
+  that module is specifically the Postgres ENUM mirror (§5.2) and no column stores a model role;
+  putting it there would make its docstring false and invite a migration for it.
+- **`SamplingParams` is separate from `CompletionRequest` because it is addressed three times**:
+  the response-cache key (§6.5), `trajectory.sampling`, and one `[models.<role>]` block. `seed` is
+  deliberately *not* a member — spec's cache key names it separately, and folding it in would make
+  two runs differing only by seed collide on one cache entry.
+- **`provenance` is required in config and never inferred from `backend`.** "Served by vLLM,
+  therefore open weights" is wrong in the direction that matters: a closed model's weights serve
+  under vLLM too, and §7.1 turns the whole export rule on this value. Mirrors
+  `trajectory.provenance` being `NOT NULL` with no default, one layer earlier.
+- **Unknown config keys are errors, not ignored.** A dropped `temprature = 0.9` leaves the model
+  sampling at the default while the config — and therefore the run manifest — says otherwise, which
+  defeats §7.3's whole purpose. Same for an unknown role.
+- **`tomllib` is standard library from 3.11**, so Appendix B parsing costs no dependency.
+- **The Phase 2 baseline (M3.0) is portable across platforms.** It was recorded on macOS/arm64 and
+  validated byte-for-byte on Linux/x86_64 in CI — so Lean's pretty-printer output, `collectAxioms`
+  cone ordering and the assembled artifact are all deterministic across platforms for a fixed
+  toolchain and Mathlib. That is what makes "record locally, enforce in CI" sound.
 
 ## Implementation notes: Phase 2 baseline facts (M3.0)
 

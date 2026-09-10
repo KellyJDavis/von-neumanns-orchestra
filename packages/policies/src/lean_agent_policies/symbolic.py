@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from lean_agent_core.actions import Action, Budget, ObligationContext, SubmitProof
 from lean_agent_core.protocols import Policy
+from lean_agent_core.roles import ModelRole
 
 #: Spec §6.6's portfolio, in a deliberate order: cheap and decisive first, expensive and general
 #: last. The executor stops at the first success, so ordering is the entire cost model -- a
@@ -65,7 +66,7 @@ class SymbolicPortfolio:
 
     id: str = "SymbolicPortfolio"
     tools: frozenset[str] = frozenset()
-    roles: frozenset[str] = frozenset()
+    roles: frozenset[ModelRole] = frozenset()
 
     @property
     def config_hash(self) -> bytes:
