@@ -2,6 +2,7 @@ import Lean
 import LeanKernel.Seal
 import LeanKernel.Link
 import LeanKernel.Replay
+import LeanKernel.Sorries
 
 /-!
 `serve`: a persistent process that elaborates against one warm base environment across many
@@ -43,10 +44,19 @@ structure CheckResponse where
   deriving ToJson
 
 /-- One goal to seal: `name` is the unqualified declaration name (the bundle puts it under
-`LeanAgent.Goals`), `statement` the goal's own type expression as source text. -/
+`LeanAgent.Goals`), `statement` the goal's own type expression as source text.
+
+`levelParams` are declared explicitly on the `def`, as spec §4.1's own bundle template shows
+(`def G_<id₁>.{u_0} : Sort _ := ...`). They are not optional decoration: sealing forces
+`autoImplicit false`, which means a universe *name* appearing free in `statement` is an error
+("unknown universe level `u_1`"), not something Lean binds for you. M1.1's finding that top-level
+universe generalization is unconditional is about a free universe *metavariable*, which is a
+different thing -- a decomposed subgoal (M2.1.3) prints its universes by name, and those names have
+nowhere to come from unless the declaration binds them. Empty for the common monomorphic case. -/
 structure SealGoal where
-  name      : String
-  statement : String
+  name        : String
+  statement   : String
+  levelParams : Array String := #[]
   deriving FromJson
 
 /-- A `seal` request (spec §4.1, §6.2's `/v1/seal`): elaborate and freeze a goal bundle. -/
@@ -85,11 +95,14 @@ the same text in both places deliberately, so what is verified at seal time is w
 out of band later, rather than two separately-generated forms that could drift.
 
 `Sort _` uniformly rather than spec's template's mix of `Sort _` and `Prop`: `Prop` is `Sort 0`, so
-the inferred form covers both the data-producing and propositional cases, and M1.1 established
-that a top-level `def`'s universe parameters are generalized unconditionally -- they do not need to
-be written out to end up explicit on the sealed constant. -/
+the inferred form covers both the data-producing and propositional cases, and a universe
+metavariable left in the type is generalized unconditionally (M1.1). Universe *names* the
+statement mentions are a separate matter and must be bound explicitly -- see `SealGoal`. -/
 def goalDeclSource (goal : SealGoal) : String :=
-  s!"def {goal.name} : Sort _ := {goal.statement}"
+  let universes :=
+    if goal.levelParams.isEmpty then ""
+    else s!".\{{String.intercalate ", " goal.levelParams.toList}}"
+  s!"def {goal.name}{universes} : Sort _ := {goal.statement}"
 
 /-- Elaborate `body` against `baseEnv` fresh each call -- `Lean.Elab.process` returns a new
 environment rather than mutating `baseEnv` in place, so one request's declarations never leak
@@ -162,6 +175,11 @@ def sealGoal (baseEnv : Environment) (goal : SealGoal) : IO SealReport := do
   if !isValidGoalName goal.name then
     return { decl := declName, levelParams := #[], ok := false,
              diagnostics := #[s!"goal name is not a plain identifier: {goal.name}"] }
+  -- Level-parameter names are spliced into `def <name>.{<here>}` exactly as `name` is spliced,
+  -- so they are the same injection site and get the same allowlist.
+  if let some bad := goal.levelParams.find? (!isValidGoalName ·) then
+    return { decl := declName, levelParams := #[], ok := false,
+             diagnostics := #[s!"universe parameter name is not a plain identifier: {bad}"] }
   let source :=
     s!"{sealedOptionLines}\nnamespace {goalsNamespace}\n{goalDeclSource goal}\nend {goalsNamespace}"
   try
@@ -321,6 +339,131 @@ def linkSubmission (baseEnv : Environment) (req : LinkRequest) : IO LinkResponse
   catch ex =>
     return moduleFields { ok := false, diagnostics := #[toString ex] }
 
+/-- A `decompose` request (spec §4.6, §6.2's `/v1/decompose`): elaborate `body` against the warm
+base environment, abstract every `sorry` into a standalone closed statement, and return the
+reassembly source. -/
+structure DecomposeRequest where
+  id   : String
+  body : String
+  deriving FromJson
+
+/-- One extracted subgoal, in the form its consumer actually needs: `statement` is source text,
+because the next thing that happens to a child is `/v1/seal`, which takes a statement as text.
+`Expr` has no `ToJson` and could not cross this boundary anyway.
+
+`roundTrips` is the honest part. Pretty-printing an `Expr` and re-elaborating it is not guaranteed
+to be faithful, and an unfaithful child statement is exactly the statement drift this whole design
+exists to make impossible -- so every statement is re-elaborated here and checked for definitional
+equality against the `Expr` it was printed from. `false` means the printed text is *not* a
+trustworthy stand-in for the abstracted goal, reported now rather than surfacing much later as a
+mysteriously failing reassembly. -/
+structure DecomposedLemma where
+  name        : String
+  statement   : String
+  levelParams : Array String := #[]
+  roundTrips  : Bool
+  diagnostics : Array String := #[]
+  deriving ToJson
+
+/-- `lemmas` empty with `ok := true` means the development genuinely had no `sorry` -- distinct
+from failing to elaborate, which is `ok := false` with the errors in `diagnostics`. An empty array
+alone cannot tell those apart, and they call for opposite responses from a caller. -/
+structure DecomposeResponse where
+  id          : Option String := none
+  ok          : Bool
+  diagnostics : Array String := #[]
+  lemmas      : Array DecomposedLemma := #[]
+  reassembly  : String := ""
+  deriving ToJson
+
+/-- The scratch declaration `printAndCheckStatement` seals its candidate statement into. Never
+survives the call: `Lean.Elab.process` returns a new environment and the warm base is untouched. -/
+def roundTripDeclName : String := "__decompose_roundtrip"
+
+/--
+Pretty-print an abstracted subgoal's type as source text, then check that the text still means what
+the `Expr` meant -- by sealing it exactly the way `/v1/seal` will and comparing the sealed
+constant's value back against the original `Expr` for definitional equality.
+
+Sealing it for real, rather than elaborating the text as a bare term, is the whole point and was
+not the first attempt. A bare-term elaboration reported *every* universe-polymorphic Mathlib goal
+as broken -- `∀ {G : Type u_1} [inst : Group G] ...` has `u_1` free, which is an error in term
+position and silently becomes `sorry`. But that is not how the statement is ever consumed: seal
+wraps it in `def <name> : Sort _ := <statement>`, and M1.1 established that a top-level `def`
+generalizes free universe names into explicit level parameters unconditionally. Rehearsing the
+real thing gets the right answer; rehearsing an approximation of it produced a false alarm on the
+first real Mathlib goal it saw.
+
+`pp.fullNames` is forced on because the statement is consumed somewhere else entirely (a later
+`seal` request, with none of this development's `open`s or `variable`s in scope), so a name that
+only resolves inside this namespace scope would become a different constant, or fail to resolve,
+by the time it matters.
+
+The check itself is not a formality. Nothing guarantees a round trip through the pretty-printer is
+faithful, and the failure mode if it isn't -- a child proving a subtly different statement than its
+parent needs -- is exactly the drift spec §1.1 calls structurally impossible for *sealed* goals. It
+is impossible there only because the goal is elaborated once and frozen; a statement that travels
+as text has to earn the same guarantee by being checked.
+-/
+def printAndCheckStatement (baseEnv : Environment) (ty : Expr) (levelParams : Array String) :
+    IO (String × Bool × Array String) := do
+  let ppCtx : Core.Context :=
+    { fileName := "<decompose>", fileMap := FileMap.ofString ""
+      options := Options.empty.setBool `pp.fullNames true }
+  let text ← (do return toString (← Meta.ppExpr ty) : MetaM String).run'.toIO' ppCtx { env := baseEnv }
+  let declName := dottedName s!"{goalsNamespace}.{roundTripDeclName}"
+  -- Built through `goalDeclSource`, not by hand: the value of this rehearsal is that it is the
+  -- *same* generated source `sealGoal` will produce, so the two cannot drift into disagreeing.
+  let goal : SealGoal := { name := roundTripDeclName, statement := text, levelParams }
+  let source :=
+    s!"{sealedOptionLines}\nnamespace {goalsNamespace}\n{goalDeclSource goal}\nend {goalsNamespace}"
+  try
+    let (env, messages) ← Lean.Elab.process source baseEnv {}
+    if messages.hasErrors then
+      let diagnostics ← messages.toList.toArray.mapM (·.toString)
+      return (text, false, diagnostics)
+    let some info := env.find? declName
+      | return (text, false, #["printed statement did not produce a declaration"])
+    let some value := info.value?
+      | return (text, false, #["sealed statement has no value to compare against"])
+    let coreCtx : Core.Context := { fileName := "<decompose>", fileMap := FileMap.ofString source }
+    let check : MetaM (Bool × Array String) := do
+      if ← Meta.isDefEq value ty then
+        return (true, #[])
+      else
+        return (false, #[s!"printed statement seals to a different type: {← Meta.ppExpr value}"])
+    let (roundTrips, diagnostics) ← check.run'.toIO' coreCtx { env }
+    return (text, roundTrips, diagnostics)
+  catch ex =>
+    return (text, false, #[s!"printed statement could not be sealed: {toString ex}"])
+
+/--
+Decompose one development (spec §4.6): elaborate it warm, abstract each `sorry` into a closed
+standalone statement, and return those plus the reassembly source.
+
+Every lemma is reported, including ones whose printed statement did not round-trip. Dropping them
+would leave a caller with a reassembly term referring to children it was never told about -- the
+reassembly text is a single artifact covering all of them, so silence about one is worse than a
+`roundTrips := false` it can act on.
+-/
+def decomposeSubmission (baseEnv : Environment) (req : DecomposeRequest) : IO DecomposeResponse := do
+  try
+    let (decomposition, messages) ← decomposeWarm baseEnv req.body
+    let diagnostics ← messages.toList.toArray.mapM (·.toString)
+    if messages.hasErrors then
+      return { ok := false, diagnostics }
+    let mut lemmas : Array DecomposedLemma := #[]
+    for (name, ty) in decomposition.lemmas do
+      let levelParams := (Lean.collectLevelParams {} ty).params.map toString
+      let (statement, roundTrips, lemmaDiagnostics) ← printAndCheckStatement baseEnv ty levelParams
+      lemmas := lemmas.push {
+        name := toString name, statement, levelParams, roundTrips,
+        diagnostics := lemmaDiagnostics
+      }
+    return { ok := true, diagnostics, lemmas, reassembly := decomposition.reassembly }
+  catch ex =>
+    return { ok := false, diagnostics := #[toString ex] }
+
 /-- Handle one already-read line: read its `kind` (absent means `"check"`, keeping M1.8.1's
 single-kind wire format valid), decode into that kind's own request type, and dispatch. Parsing is
 pure (`Json.parse`/`fromJson?` both return `Except`, never throw), so only the handlers' own
@@ -356,6 +499,12 @@ def handleLine (baseEnv : Environment) (imports : Array Name) (line : String) : 
       | .error err => return errorResponse id? err
       | .ok req =>
         let resp ← linkSubmission baseEnv req
+        return toJson { resp with id := some req.id }
+    | "decompose" =>
+      match fromJson? (α := DecomposeRequest) json with
+      | .error err => return errorResponse id? err
+      | .ok req =>
+        let resp ← decomposeSubmission baseEnv req
         return toJson { resp with id := some req.id }
     | other => return errorResponse id? s!"unknown request kind: {other}"
 

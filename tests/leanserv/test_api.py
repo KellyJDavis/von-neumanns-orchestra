@@ -710,6 +710,156 @@ def test_link_unknown_obligation_is_404(
     assert response.status_code == 404
 
 
+def test_decompose_abstracts_hypotheses_into_a_closed_statement(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """Spec §4.6: "every child is sealed at creation, so the local context is baked in and every
+    obligation is closed by construction"."""
+    response = client.post(
+        "/v1/decompose",
+        json={
+            "base_env_digest": registered_base_env,
+            "development": "theorem q (n : Nat) (h : n > 0) : n + 0 = n := by sorry",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    (lemma,) = body["lemmas"]
+    assert lemma["statement"] == "∀ (n : Nat), n > 0 → n + 0 = n"
+    assert lemma["round_trips"] is True
+    assert lemma["diagnostics"] == []
+    # The reassembly applies the child back to the captured context, `@`-prefixed so implicit and
+    # instance arguments land in the slots they came from rather than being re-synthesized.
+    assert "@sorry_1 n h" in body["reassembly"]
+    assert "sorry" not in body["reassembly"].replace("@sorry_1", "")
+
+
+def test_decompose_reports_one_lemma_per_sorry(
+    client: TestClient, registered_base_env: str
+) -> None:
+    response = client.post(
+        "/v1/decompose",
+        json={
+            "base_env_digest": registered_base_env,
+            "development": (
+                "theorem p : (1 : Nat) + 1 = 2 ∧ (2 : Nat) + 2 = 4 := by\n"
+                "  constructor\n  · sorry\n  · sorry"
+            ),
+        },
+    )
+    body = response.json()
+    assert [lemma["name"] for lemma in body["lemmas"]] == ["sorry_1", "sorry_2"]
+    assert all(lemma["round_trips"] for lemma in body["lemmas"])
+
+
+def test_decompose_no_sorries_is_success_not_an_error(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """A complete development and one that fails to elaborate both produce zero lemmas, and a
+    caller has to act on them differently -- so `ok` is what distinguishes them, not the list."""
+    response = client.post(
+        "/v1/decompose",
+        json={
+            "base_env_digest": registered_base_env,
+            "development": "theorem s : True := trivial",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True
+    assert body["lemmas"] == []
+
+
+def test_decompose_reports_a_development_that_does_not_elaborate(
+    client: TestClient, registered_base_env: str
+) -> None:
+    response = client.post(
+        "/v1/decompose",
+        json={
+            "base_env_digest": registered_base_env,
+            "development": "theorem t : True := NoSuchIdentifier",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert body["lemmas"] == []
+    assert any("NoSuchIdentifier" in d for d in body["diagnostics"])
+
+
+def test_decompose_unknown_base_env_is_404(client: TestClient) -> None:
+    response = client.post(
+        "/v1/decompose",
+        json={"base_env_digest": "ab" * 32, "development": "theorem s : True := trivial"},
+    )
+    assert response.status_code == 404
+
+
+def test_decomposed_child_seals_including_its_universe_parameter(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """The join between M2.1.3 and M2.1.1, which is what spec §6.3's ingestion actually does:
+    "extract `sorry` sites, seal each site's goal into a bundle".
+
+    The universe-polymorphic case is the one that makes this a real test rather than a formality.
+    A decomposed subgoal prints its universes *by name*, and sealing forces `autoImplicit false`,
+    so the statement only elaborates because `level_params` travels with it and the generated
+    `def` binds it (spec §4.1's own `def G_<id>.{u_0}` template). Without that, this seal fails
+    with "unknown universe level" -- which is exactly what happened before `SealGoalRequest` grew
+    the field.
+    """
+    decomposed = client.post(
+        "/v1/decompose",
+        json={
+            "base_env_digest": registered_base_env,
+            "development": "def poly.{v} (α : Type v) : List α := sorry",
+        },
+    ).json()
+    (lemma,) = decomposed["lemmas"]
+    assert lemma["level_params"] == ["v"]
+    assert lemma["round_trips"] is True
+
+    sealed = client.post(
+        "/v1/seal",
+        json={
+            "base_env_digest": registered_base_env,
+            "goals": [
+                {
+                    "name": "G_child",
+                    "statement": lemma["statement"],
+                    "level_params": lemma["level_params"],
+                }
+            ],
+        },
+    ).json()
+    assert sealed["ok"] is True
+    assert sealed["goals"][0]["level_params"] == ["v"]
+    assert "def G_child.{v} : Sort _ :=" in sealed["bundle_source"]
+
+
+def test_seal_rejects_a_universe_parameter_that_is_not_an_identifier(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """`level_params` are spliced into `def <name>.{<here>}`, so they are an injection site exactly
+    as `name` is, and get the same allowlist."""
+    response = client.post(
+        "/v1/seal",
+        json={
+            "base_env_digest": registered_base_env,
+            "goals": [
+                {
+                    "name": "G_inj",
+                    "statement": "True",
+                    "level_params": ["v} : Sort _ := True\ndef Evil3"],
+                }
+            ],
+        },
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert body["goals"][0]["ok"] is False
+    assert "Evil3" not in body["bundle_source"]
+
+
 def test_health_reports_pool_shape(client: TestClient, registered_base_env: str) -> None:
     client.post(
         "/v1/check", json={"base_env_digest": registered_base_env, "body": "def foo : Nat := 5"}

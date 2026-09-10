@@ -443,6 +443,71 @@ unsafe def serveChecks : IO (Array Check) := do
       expected := true, actual := !jsonOk unknownKind && jsonId unknownKind == some "req-2" }
   ]
 
+/-- M2.1.3's `/v1/decompose` handler. `Init`-only: what is under test is the wire-level behaviour
+(what elaborates, what round-trips, how a no-`sorry` development differs from one that fails), not
+the abstraction machinery itself -- `decomposeChecks` above already exercises that against a real
+Mathlib instance-implicit goal, which is where spec's Appendix C says those cases surface.
+
+The round-trip checks are the load-bearing ones. A subgoal's statement leaves this process as
+*text* and comes back as a sealed goal, so text that does not seal back to the `Expr` it was
+printed from is statement drift -- the one thing spec §1.1 designs to make impossible. -/
+unsafe def decomposeServeChecks : IO (Array Check) := do
+  enableInitializersExecution
+  let baseEnv ← importModules #[{ module := `Init }] {} (loadExts := true)
+  let run (body : String) : IO LeanKernel.DecomposeResponse :=
+    LeanKernel.decomposeSubmission baseEnv { id := "d", body }
+
+  let twoSorries ← run
+    "theorem p : (1 : Nat) + 1 = 2 ∧ (2 : Nat) + 2 = 4 := by\n  constructor\n  · sorry\n  · sorry"
+  -- Hypotheses must be captured as binders, so the child is closed by construction (spec §4.6:
+  -- "every obligation is closed by construction").
+  let withContext ← run "theorem q (n : Nat) (h : n > 0) : n + 0 = n := by sorry"
+  -- Dependency order, not local-context order: `m = n` depends on `n`, declared earlier.
+  let dependent ← run "theorem w (n : Nat) (h : n = 1) (m : Nat) (h2 : m = n) : m = 1 := by sorry"
+  let termSorry ← run "def r : Nat := sorry"
+  let noSorries ← run "theorem s : True := trivial"
+  let doesNotElaborate ← run "theorem t : True := NoSuchIdentifier"
+  -- A universe-polymorphic subgoal prints its universe by *name*, which only seals because
+  -- `goalDeclSource` binds it explicitly -- `autoImplicit false` will not bind it for us.
+  let universePoly ← run "def poly.{v} (α : Type v) : List α := sorry"
+
+  let firstLemma (r : LeanKernel.DecomposeResponse) : Option LeanKernel.DecomposedLemma :=
+    r.lemmas[0]?
+  let stmtOf (r : LeanKernel.DecomposeResponse) : String :=
+    ((firstLemma r).map (·.statement)).getD ""
+
+  return #[
+    { name := "decompose-serve/two sorries: one lemma each, both round-tripping",
+      expected := true,
+      actual := twoSorries.ok && twoSorries.lemmas.size == 2
+        && twoSorries.lemmas.all (·.roundTrips) },
+    { name := "decompose-serve/two sorries: reassembly references both children",
+      expected := true,
+      actual := (twoSorries.reassembly.splitOn "@sorry_1").length > 1
+        && (twoSorries.reassembly.splitOn "@sorry_2").length > 1 },
+    { name := "decompose-serve/local context is abstracted into binders",
+      expected := true,
+      actual := withContext.ok && stmtOf withContext == "∀ (n : Nat), n > 0 → n + 0 = n" },
+    { name := "decompose-serve/binders are ordered by dependency",
+      expected := true,
+      actual := dependent.ok
+        && stmtOf dependent == "∀ (n : Nat), n = 1 → ∀ (m : Nat), m = n → m = 1" },
+    { name := "decompose-serve/term-mode sorry is extracted too",
+      expected := true,
+      actual := termSorry.ok && termSorry.lemmas.size == 1 && stmtOf termSorry == "Nat" },
+    { name := "decompose-serve/no sorries: succeeds with no lemmas, not an error",
+      expected := true, actual := noSorries.ok && noSorries.lemmas.isEmpty },
+    { name := "decompose-serve/failing development is distinguishable from having no sorries",
+      expected := true,
+      actual := !doesNotElaborate.ok && doesNotElaborate.lemmas.isEmpty
+        && !doesNotElaborate.diagnostics.isEmpty },
+    { name := "decompose-serve/universe-polymorphic subgoal reports its parameter and round-trips",
+      expected := true,
+      actual := universePoly.ok
+        && ((firstLemma universePoly).map (·.levelParams)).getD #[] == #["v"]
+        && ((firstLemma universePoly).map (·.roundTrips)).getD false }
+  ]
+
 /-- M2.1.2's `/v1/link` handler: the whole acceptance path behind one wire request. Runs against
 `LeanKernelTests.Goals`, a genuinely *compiled* module, because that is the only way the sealed
 goal is an imported constant -- the condition `link` requires and an in-session `seal` result can
@@ -602,8 +667,9 @@ unsafe def main : IO UInt32 := do
   let serveResults ← LeanKernelTests.serveChecks
   let sealServeResults ← LeanKernelTests.sealServeChecks
   let linkServeResults ← LeanKernelTests.linkServeChecks
+  let decomposeServeResults ← LeanKernelTests.decomposeServeChecks
   let checks := auditResults ++ sealResults ++ linkResults ++ replayResults ++ decomposeResults
-    ++ serveResults ++ sealServeResults ++ linkServeResults
+    ++ serveResults ++ sealServeResults ++ linkServeResults ++ decomposeServeResults
   let mut failures := 0
   for c in checks do
     if c.passed then

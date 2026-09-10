@@ -113,6 +113,40 @@ def test_seal_reports_universe_parameters(lake_project_dir: Path) -> None:
     asyncio.run(run())
 
 
+def test_decompose_then_seal_on_one_worker(lake_project_dir: Path) -> None:
+    """The two halves of spec §6.3's ingestion, back to back on one warm worker: extract a `sorry`
+    site, then seal the goal it produced. They are separate request kinds sharing one pipe, so
+    this also exercises correlation across kinds -- a response landing on the wrong call would
+    raise `ReplProtocolError` rather than quietly returning the other one's answer.
+    """
+
+    async def run() -> None:
+        async with await ReplWorker.spawn(lake_project_dir, ("Init",)) as worker:
+            decomposed = await worker.decompose(
+                "theorem q (n : Nat) (h : n > 0) : n + 0 = n := by sorry"
+            )
+            assert decomposed.ok
+            (lemma,) = decomposed.lemmas
+            assert lemma.round_trips
+
+            sealed = await worker.seal(
+                [
+                    SealGoal(
+                        name="G_child",
+                        statement=lemma.statement,
+                        level_params=lemma.level_params,
+                    )
+                ]
+            )
+            assert sealed.ok
+            assert lemma.statement in sealed.bundle_source
+
+            # And the worker is still usable for an unrelated kind afterwards.
+            assert (await worker.check("def after : Nat := 1")).ok
+
+    asyncio.run(run())
+
+
 def test_link_imports_a_bundle_from_extra_lean_path(
     lake_project_dir: Path, materialized_bundle: MaterializedBundle
 ) -> None:

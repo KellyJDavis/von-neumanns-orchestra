@@ -9,16 +9,14 @@ worker is already scoped to one base env by which imports it was spawned with, a
 side now, with no caller that needs `CheckOptions` or infotree/axiom extraction, would be
 speculative surface area. Extend both together when a real caller needs more.
 
-Three request kinds so far: `check` (M1.8.1), `seal` (M2.1.1) and `link` (M2.1.2). They share one
-pipe, one `_request` transport, and one crash taxonomy; `decompose` joins them as the milestone
-that drives it lands.
+Four request kinds: `check` (M1.8.1), `seal` (M2.1.1), `link` (M2.1.2) and `decompose` (M2.1.3).
+They share one pipe, one `_request` transport, and one crash taxonomy.
 """
 
 from __future__ import annotations
 
 import asyncio
 import asyncio.subprocess
-import dataclasses
 import json
 import os
 import signal
@@ -81,10 +79,17 @@ class CheckResult:
 @dataclass(frozen=True)
 class SealGoal:
     """One goal to seal (spec §4.1). `name` is the unqualified declaration name -- `Serve.lean`
-    puts it under `LeanAgent.Goals` and rejects anything that isn't a plain identifier."""
+    puts it under `LeanAgent.Goals` and rejects anything that isn't a plain identifier.
+
+    `level_params` are declared on the generated `def` (spec §4.1's `def G_<id>.{u_0}`). Required
+    whenever `statement` mentions a universe by name, which a decomposed subgoal's printed
+    statement routinely does: sealing forces `autoImplicit false`, so a free universe name is an
+    error rather than something Lean binds. Empty for the ordinary monomorphic case.
+    """
 
     name: str
     statement: str
+    level_params: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,42 @@ class SealResult:
     ok: bool
     goals: tuple[SealedGoal, ...]
     bundle_source: str
+
+
+@dataclass(frozen=True)
+class DecomposedLemma:
+    """One extracted subgoal (spec §4.6), in the form its consumer needs: `statement` is source
+    text, because the next thing that happens to a child is a `seal` request, which takes text.
+
+    `round_trips` is false when the printed statement does not seal back to the `Expr` it was
+    printed from -- i.e. the text is not a faithful stand-in for the abstracted goal. A caller must
+    not create an obligation from such a statement: it would prove something other than what the
+    parent's reassembly needs, and the mismatch would only surface much later as a failing group.
+    """
+
+    name: str
+    statement: str
+    level_params: tuple[str, ...]
+    round_trips: bool
+    diagnostics: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DecomposeResult:
+    """`ok` with an empty `lemmas` means the development genuinely contained no `sorry`; `ok=False`
+    means it did not elaborate. An empty list alone cannot tell those apart and they call for
+    opposite responses.
+
+    `reassembly` is the original source with each `sorry` replaced by an application of its child
+    lemma. Spec §4.6 is explicit that running it is a *full acceptance check* against the parent's
+    sealed goal -- link, replay and audit -- not a text-substitution exercise; this is only the
+    text.
+    """
+
+    ok: bool
+    lemmas: tuple[DecomposedLemma, ...]
+    reassembly: str
+    diagnostics: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -351,7 +392,18 @@ class ReplWorker:
         `check` rather than anything that needs a Lake invocation of its own.
         """
         response = await self._request(
-            {"kind": "seal", "goals": [dataclasses.asdict(g) for g in goals]}, timeout_ms
+            {
+                "kind": "seal",
+                "goals": [
+                    {
+                        "name": g.name,
+                        "statement": g.statement,
+                        "levelParams": list(g.level_params),
+                    }
+                    for g in goals
+                ],
+            },
+            timeout_ms,
         )
         return SealResult(
             ok=bool(response.get("ok")),
@@ -365,6 +417,34 @@ class ReplWorker:
                 for report in response.get("reports", [])
             ),
             bundle_source=str(response.get("bundleSource", "")),
+        )
+
+    async def decompose(
+        self, development: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS
+    ) -> DecomposeResult:
+        """Extract every `sorry` from `development` as a standalone closed statement (spec §4.6),
+        against this worker's warm environment. Raises a `ReplCrashed` subclass on the same
+        conditions `check` does.
+
+        Warm, like every other request kind here: spec §4.1's measurement (cold per-child
+        compilation ~78% of pipeline time against under 1% warm) is what makes decomposition
+        affordable at all, since a decomposition group multiplies the number of children.
+        """
+        response = await self._request({"kind": "decompose", "body": development}, timeout_ms)
+        return DecomposeResult(
+            ok=bool(response.get("ok")),
+            lemmas=tuple(
+                DecomposedLemma(
+                    name=str(lemma.get("name", "")),
+                    statement=str(lemma.get("statement", "")),
+                    level_params=tuple(lemma.get("levelParams", [])),
+                    round_trips=bool(lemma.get("roundTrips")),
+                    diagnostics=tuple(lemma.get("diagnostics", [])),
+                )
+                for lemma in response.get("lemmas", [])
+            ),
+            reassembly=str(response.get("reassembly", "")),
+            diagnostics=tuple(response.get("diagnostics", [])),
         )
 
     async def link(

@@ -107,33 +107,19 @@ structure Decomposition where
   reassembly : String
 
 /--
-Elaborate `source`, extract every `sorry`, abstract each into a standalone lemma, and splice a
-reference to each lemma back into `source` in place of the `sorry` it replaced.
+The shared half of decomposition: given an already-elaborated environment and its infotrees,
+abstract every `sorry` into a standalone lemma and splice a reference to each back into `source`.
 
-Text-splicing is safe here specifically because each replaced span is the `sorry` token itself
-(a syntactic leaf), not some larger reconstructed expression -- there is no
-precedence/parenthesization concern to get wrong, since a parenthesized application is valid
-wherever a single term (or, prefixed with `exact`, a closing tactic) was expected. A captured
-argument with a hygiene-mangled name (Mathlib's normal anonymous-instance style, e.g. `[Group G]`)
-has no valid source-level identifier to splice in at all -- confirmed empirically, this isn't
-merely cosmetic, it's a parse error -- so it's spliced as `‹Type›` (anonymous instance lookup by
-type) instead of by name; see CLAUDE.md for what this does and doesn't cover.
-
-Per spec §4.6, reassembly is a full acceptance check when it is later run -- link, replay, and
-audit against the parent's sealed goal -- not merely a text-substitution exercise. `decompose`
-only produces the reassembly source; it does not itself re-run the acceptance path on it.
+Factored out because there are two ways to reach this point and only one of them should exist
+twice: `decompose` elaborates a complete module cold (its own `import` header), while
+`decomposeWarm` elaborates a bare body against a base environment a `serve` worker already holds.
+Everything that is actually delicate -- `revert`'s own reverted-fvar list, `@`-application,
+hygiene-mangled instance binders, splicing back-to-front -- lives here, once.
 -/
-unsafe def decompose (source : String) (fileName : String := "<decompose>") : IO Decomposition := do
-  enableInitializersExecution
-  let inputCtx := Parser.mkInputContext source fileName
-  let (header, parserState, messages) ← Parser.parseHeader inputCtx
-  let (env, messages) ← Lean.Elab.processHeader header {} messages inputCtx
-  let commandState := { Lean.Elab.Command.mkState env messages {} with infoState.enabled := true }
-  let frontendState ← Lean.Elab.IO.processCommands inputCtx parserState commandState
-  let finalState := frontendState.commandState
-  let sorryGoals ← extractSorries finalState.infoState.trees
-
-  let coreCtx : Core.Context := { fileName, fileMap := inputCtx.fileMap }
+def decomposeElaborated (env : Environment) (trees : PersistentArray InfoTree)
+    (source : String) (fileMap : FileMap) (fileName : String) : IO Decomposition := do
+  let sorryGoals ← extractSorries trees
+  let coreCtx : Core.Context := { fileName, fileMap }
   let mut lemmas : Array (Name × Expr) := #[]
   let mut splices : Array (Syntax.Range × String) := #[]
   for g in sorryGoals do
@@ -171,7 +157,7 @@ unsafe def decompose (source : String) (fileName : String := "<decompose>") : IO
             else
               return s!"{acc} {decl.userName}"
         return (name, ty, argsText)
-    let ((name, ty, argsText), _) ← action.run'.toIO coreCtx { env := finalState.env }
+    let ((name, ty, argsText), _) ← action.run'.toIO coreCtx { env }
     lemmas := lemmas.push (name, ty)
     -- `@`-prefixed: every reverted fvar (implicit `{G}`, instance `[Group G]`, and explicit
     -- alike) is spliced back positionally. Without `@`, ordinary application auto-inserts a
@@ -195,5 +181,59 @@ unsafe def decompose (source : String) (fileName : String := "<decompose>") : IO
     let after := (Substring.Raw.mk result range.stop ⟨result.utf8ByteSize⟩).toString
     result := before ++ replacement ++ after
   return { lemmas, reassembly := result }
+
+/--
+Elaborate `source`, extract every `sorry`, abstract each into a standalone lemma, and splice a
+reference to each lemma back into `source` in place of the `sorry` it replaced.
+
+Text-splicing is safe here specifically because each replaced span is the `sorry` token itself
+(a syntactic leaf), not some larger reconstructed expression -- there is no
+precedence/parenthesization concern to get wrong, since a parenthesized application is valid
+wherever a single term (or, prefixed with `exact`, a closing tactic) was expected. A captured
+argument with a hygiene-mangled name (Mathlib's normal anonymous-instance style, e.g. `[Group G]`)
+has no valid source-level identifier to splice in at all -- confirmed empirically, this isn't
+merely cosmetic, it's a parse error -- so it's spliced as `‹Type›` (anonymous instance lookup by
+type) instead of by name; see CLAUDE.md for what this does and doesn't cover.
+
+Per spec §4.6, reassembly is a full acceptance check when it is later run -- link, replay, and
+audit against the parent's sealed goal -- not merely a text-substitution exercise. `decompose`
+only produces the reassembly source; it does not itself re-run the acceptance path on it.
+-/
+unsafe def decompose (source : String) (fileName : String := "<decompose>") : IO Decomposition := do
+  enableInitializersExecution
+  let inputCtx := Parser.mkInputContext source fileName
+  let (header, parserState, messages) ← Parser.parseHeader inputCtx
+  let (env, messages) ← Lean.Elab.processHeader header {} messages inputCtx
+  let commandState := { Lean.Elab.Command.mkState env messages {} with infoState.enabled := true }
+  let frontendState ← Lean.Elab.IO.processCommands inputCtx parserState commandState
+  let finalState := frontendState.commandState
+  decomposeElaborated finalState.env finalState.infoState.trees source inputCtx.fileMap fileName
+
+/--
+Elaborate `source` against an already-warm `baseEnv` and decompose it -- the same work
+`decompose` does, minus the cold `import` handling, for a `serve` worker that already holds the
+base environment (spec §4.1's warm-vs-cold measurement: cold per-child compilation was ~78% of
+pipeline time against under 1% warm).
+
+`source` therefore carries no `import` line of its own, exactly like a `check` body. The only
+other difference from `Lean.Elab.process` (which `checkAgainst`/`sealGoal`/`linkSubmission` all
+use) is `infoState.enabled := true`: infotrees are what `extractSorries` walks, and they are off
+by default because building them is not free -- which is why this is a separate entry point
+rather than something the other handlers turn on for everyone.
+
+Returns the message log alongside the decomposition so a caller can tell "no sorries because the
+development is complete" from "no sorries because it did not elaborate" -- two very different
+outcomes that an empty `lemmas` array alone cannot distinguish.
+-/
+def decomposeWarm (baseEnv : Environment) (source : String)
+    (fileName : String := "<decompose>") : IO (Decomposition × MessageLog) := do
+  let inputCtx := Parser.mkInputContext source fileName
+  let commandState :=
+    { Lean.Elab.Command.mkState baseEnv {} {} with infoState.enabled := true }
+  let frontendState ← Lean.Elab.IO.processCommands inputCtx {} commandState
+  let finalState := frontendState.commandState
+  let decomposition ←
+    decomposeElaborated finalState.env finalState.infoState.trees source inputCtx.fileMap fileName
+  return (decomposition, finalState.messages)
 
 end LeanKernel
