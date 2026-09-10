@@ -39,7 +39,8 @@ bundle materialization (`lean_agent_api.materialize`) are done — **the whole P
 end**: submission → ingestion → materialization → claim → null agent → link/replay/audit → `mark_proved`, with
 zero model calls, and out the other side as a **standalone materialized `.lean` file** with its `sorry`s filled
 (spec §6.3 step 6) — `tests/leanserv/test_end_to_end.py`. M2.8 (the public §6.1 API surface —
-`lean_agent_api.app`) is done. Next is M2.9 (CLI as its httpx client), M2.10 (miniF2F exit-gate validation).
+`lean_agent_api.app`) and M2.9 (`lean_agent_cli`, an httpx client of that API, plus
+`lean_agent_serv.client.LeanServiceClient`) are done. Next is M2.10 (miniF2F exit-gate validation), which is Phase 2's last milestone.
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -900,6 +901,44 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: CLI and client facts (M2.9)
+
+- **`argparse` puts a global flag *before* the subcommand, and nobody types it that way.**
+  `lean-agent run --json ...` failed with "unrecognized arguments: --json"; only
+  `lean-agent --json run ...` worked. Both positions are now accepted by declaring the shared flags
+  on a `parents=[common]` parser as well as at top level — and `default=argparse.SUPPRESS` on the
+  subparser copies is what makes that *safe*: without it the subparser's own default overwrites a
+  value given before the subcommand, silently turning `--json run` back off. Found by a test that
+  wrote the flag the natural way.
+- **The CLI is only an httpx client of §6.1, and that is the point of the milestone.** No database
+  handle, no Lean toolchain, no shared code path with the server: if the CLI can do it, so can
+  anyone else's client, which is the real test of whether §6.1 is a complete API rather than a
+  convenient subset of one. Its tests drive `main(argv, client=...)` — the real parsing, the real
+  command functions, the real client — against a `TestClient` wired to the genuine app.
+- **`TestClient` is an `httpx.Client` subclass**, so it can be handed straight to a sync client
+  under test. For an *async* client, `httpx.ASGITransport` routes into the app with no socket — but
+  it does **not** run lifespan, so anything relying on startup/shutdown (leanserv's pool close)
+  still needs a `TestClient` alongside it driving the same app object.
+- **Exit codes are interface.** `0` did what was asked, `1` the request succeeded but the answer is
+  "no" (incomplete run, unfilled holes, nothing sealed), `2` the request itself failed. Separating
+  1 from 2 is what lets a script tell "this file could not be proved" from "the system is broken" —
+  the same distinction `infra_error` draws inside the pipeline.
+- **`--json` prints the API's own object, unreshaped.** Reshaping would make the CLI a second,
+  undocumented schema drifting from the OpenAPI document.
+- **`LeanServiceClient` deliberately does not retry.** A `/v1/link` that timed out may still have
+  written its verdict, and `verdict.attempt_id` is a primary key — a blind retry would either
+  collide or spend a second attempt's kernel time against one attempt's budget. Retry policy
+  belongs with the control loop, which knows whether a *new attempt* is the right answer.
+- **A client never closes a transport it was given.** Once a deployment shares one connection pool
+  across several clients, closing someone else's breaks every other user of it. Tested.
+- **`batch`/`from-folder` keep going past a file that fails.** For a benchmark folder, inputs that
+  do not elaborate are the normal case rather than the exception; a batch that stopped at its worst
+  input would be hostage to it. Each result is reported and the exit code summarizes.
+- **The integration suites still carry their own `LeanService` adapter.** `LeanServiceClient` now
+  has its own test against the real app, so the shipped path is covered; consolidating the three
+  integration files onto it needs each `asyncio.run` body wrapped in an extra `async with` to own
+  the transport, and that refactor does not belong in the same change as the client itself.
 
 ## Implementation notes: blob store facts
 

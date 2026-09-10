@@ -420,11 +420,15 @@ name = "lean-agent-cli"
 version = "0.0.0"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "httpx" },
     { name = "lean-agent-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lean-agent-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "httpx" },
+    { name = "lean-agent-core", editable = "packages/core" },
+]
 
 [[package]]
 name = "lean-agent-core"
@@ -488,12 +492,14 @@ version = "0.0.0"
 source = { editable = "packages/leanserv" }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "lean-agent-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx" },
     { name = "lean-agent-core", editable = "packages/core" },
 ]
 
