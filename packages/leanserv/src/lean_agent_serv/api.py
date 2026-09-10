@@ -1,17 +1,15 @@
 """Internal FastAPI surface for `leanserv` (spec §6.2): `/v1/check`, `/v1/check_batch`,
-`/v1/seal`, `/v1/link`, `/v1/health` -- wiring `pool.py` (M1.8.3), `cache.py`, and `verdicts.py`
-(M1.8.4) together into the HTTP API spec's own worker-model table describes.
+`/v1/seal`, `/v1/link`, `/v1/decompose`, `/v1/health` -- wiring `pool.py` (M1.8.3), `cache.py`, and
+`verdicts.py` (M1.8.4) together into the HTTP API spec's own worker-model table describes.
 
 `/v1/link` is where this module becomes the *only* writer of `verdict` rows (spec §5.5/§6.4):
 workers request a check and observe the outcome, never transcribing it themselves, and
 `deploy/grants.sql` enforces that at the database.
 
-Scope note -- `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are **not** built here.
-`LeanKernel.Serve`'s wire protocol knows `check`, `seal` and `link` and nothing else yet: there is
-no standalone replay or decompose request shape to dispatch an HTTP route to, and a route with
-nothing real underneath it is exactly the half-finished surface this project avoids. Standalone
-`/v1/replay` has no caller either -- `/v1/link` already replays as part of the acceptance path,
-which is what spec §4.3 actually asks for.
+Scope note -- `/v1/replay` and `/v1/base-env/materialize` are **not** built here. Standalone
+`/v1/replay` has no caller: `/v1/link` already replays as part of the acceptance path, which is
+what spec §4.3 actually asks for, and a route with nothing real underneath it is exactly the
+half-finished surface this project avoids.
 
 `create_app` is a factory, not a module-level `app` object: `pool`/`cache`/`verdict_writer`/
 `base_env_sessionmaker` are real, expensive, stateful resources (a process pool, a database
@@ -92,6 +90,11 @@ class CheckBatchResponse(BaseModel):
 class SealGoalRequest(BaseModel):
     name: str
     statement: str
+    #: Declared on the generated `def` (spec §4.1's `def G_<id>.{u_0}`). Needed whenever
+    #: `statement` names a universe, which a decomposed subgoal's printed statement routinely
+    #: does -- sealing forces `autoImplicit false`, so a free universe name is an error, not
+    #: something Lean binds. Empty for the ordinary monomorphic case.
+    level_params: list[str] = []
 
 
 class SealRequest(BaseModel):
@@ -132,6 +135,43 @@ class SealResponse(BaseModel):
     goals: list[SealedGoalResponse]
     bundle_source: str
     bundle_digest: str
+    elapsed_ms: int
+
+
+class DecomposeRequest(BaseModel):
+    base_env_digest: str
+    development: str
+    timeout_ms: int = DEFAULT_TIMEOUT_MS
+
+
+class DecomposedLemmaResponse(BaseModel):
+    """One extracted subgoal, in the shape `/v1/seal` accepts directly -- `name`, `statement` and
+    `level_params` are exactly `SealGoalRequest`'s fields, because sealing each child is what
+    happens next (spec §6.3's ingestion: "extract `sorry` sites, seal each site's goal").
+
+    `round_trips` false means the printed statement does not seal back to the `Expr` it came from,
+    so it is *not* a faithful stand-in for the abstracted goal. Creating an obligation from one
+    would mean proving something other than what the parent's reassembly needs.
+    """
+
+    name: str
+    statement: str
+    level_params: list[str]
+    round_trips: bool
+    diagnostics: list[str]
+
+
+class DecomposeResponse(BaseModel):
+    """`ok` with no `lemmas` means the development contained no `sorry`; `ok=False` means it did
+    not elaborate. `reassembly` is the source with each `sorry` replaced by its child -- running it
+    is a full acceptance check against the parent's sealed goal (spec §4.6), which is `/v1/link`'s
+    job, not this endpoint's.
+    """
+
+    ok: bool
+    lemmas: list[DecomposedLemmaResponse]
+    reassembly: str
+    diagnostics: list[str]
     elapsed_ms: int
 
 
@@ -408,7 +448,14 @@ async def _run_seal(
     async with pool.worker(req.base_env_digest, base_env.imports) as worker:
         try:
             result = await worker.seal(
-                [SealGoal(name=g.name, statement=g.statement) for g in req.goals],
+                [
+                    SealGoal(
+                        name=g.name,
+                        statement=g.statement,
+                        level_params=tuple(g.level_params),
+                    )
+                    for g in req.goals
+                ],
                 timeout_ms=req.timeout_ms,
             )
         except ReplCrashed as exc:
@@ -662,6 +709,56 @@ async def _write_link_verdict(
     )
 
 
+async def _run_decompose(
+    pool: LeanReplPool,
+    base_env_sessionmaker: async_sessionmaker[AsyncSession],
+    req: DecomposeRequest,
+) -> DecomposeResponse:
+    """Spec §6.2's `/v1/decompose`: "`sorry` extraction → `Decomposition`".
+
+    Uncached, for the same reason `/v1/seal` is: `verification_cache` answers "did this declaration
+    check", and a `CachedCheck` has nowhere to carry per-lemma statements or the reassembly source.
+
+    Needs no bundle on the worker's path, unlike `/v1/link` -- decomposition reads a development's
+    own `sorry`s and never touches a sealed goal, so it runs on the plain base-env worker `/v1/check`
+    already uses, sharing its warm slots rather than fragmenting the pool further.
+    """
+    base_env_digest = _parse_digest(req.base_env_digest)
+    base_env = await _resolve_base_env(base_env_sessionmaker, base_env_digest)
+    if base_env is None:
+        raise HTTPException(
+            status_code=404, detail=f"no base_env with digest {req.base_env_digest!r}"
+        )
+
+    started = time.monotonic()
+    async with pool.worker(req.base_env_digest, base_env.imports) as worker:
+        try:
+            result = await worker.decompose(req.development, timeout_ms=req.timeout_ms)
+        except ReplCrashed as exc:
+            # 503 rather than `ok=False`: `ok=False` here means "the development does not
+            # elaborate", a statement about the content. A crashed worker judged nothing, and
+            # spec's `infra_error` principle is that such a failure is not evidence about content.
+            raise HTTPException(status_code=503, detail=f"lean worker unusable: {exc}") from exc
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+
+    return DecomposeResponse(
+        ok=result.ok,
+        lemmas=[
+            DecomposedLemmaResponse(
+                name=lemma.name,
+                statement=lemma.statement,
+                level_params=list(lemma.level_params),
+                round_trips=lemma.round_trips,
+                diagnostics=list(lemma.diagnostics),
+            )
+            for lemma in result.lemmas
+        ],
+        reassembly=result.reassembly,
+        diagnostics=list(result.diagnostics),
+        elapsed_ms=elapsed_ms,
+    )
+
+
 def create_app(
     pool: LeanReplPool,
     cache: VerificationCacheStore,
@@ -702,6 +799,10 @@ def create_app(
     @app.post("/v1/seal", response_model=SealResponse)
     async def seal(req: SealRequest) -> SealResponse:
         return await _run_seal(pool, base_env_sessionmaker, req)
+
+    @app.post("/v1/decompose", response_model=DecomposeResponse)
+    async def decompose(req: DecomposeRequest) -> DecomposeResponse:
+        return await _run_decompose(pool, base_env_sessionmaker, req)
 
     @app.post("/v1/link", response_model=LinkResponse)
     async def link(req: LinkRequest) -> LinkResponse:

@@ -28,8 +28,9 @@ the full readout and what it means for R19.
 Phase 2 (the "null agent" — zero model calls, closing miniF2F's easy tail deterministically) has begun. M2.1
 extends the acceptance path onto the wire, one request kind at a time: M2.1.1 (`/v1/seal` — `Serve.lean`'s `seal`
 kind, `ReplWorker.seal`, `POST /v1/seal`, `lean_agent_core.digests`) and M2.1.2 (`/v1/link` — the whole
-acceptance path on one submission: link + replay + audit, writing the `verdict` row) are done; M2.1.3
-(`/v1/decompose`) follows, then M2.2 (state machine), M2.3 (scheduler), M2.4 (control loop), M2.5 (Policy/Action +
+acceptance path on one submission: link + replay + audit, writing the `verdict` row) and M2.1.3
+(`/v1/decompose` — `sorry` extraction into closed standalone statements) are done, completing M2.1;
+next is M2.2 (state machine), M2.3 (scheduler), M2.4 (control loop), M2.5 (Policy/Action +
 SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
 its httpx client), M2.10 (miniF2F exit-gate validation).
 
@@ -86,7 +87,7 @@ Two decisions drive nearly everything else in the design (spec §1):
   `kernel_tests`, the Audit/Seal test suite — this is what CI's `lean` job runs via `lean-action`'s `test: true`).
   Run `lake exe kernel_tests` directly for a single test run without going through `lake test`'s dependency
   check.
-- `leankernel serve` (M1.8.1/M2.1.1/M2.1.2, the persistent warm-environment process `leanserv`'s pool spawns one
+- `leankernel serve` (M1.8.1/M2.1.1–M2.1.3, the persistent warm-environment process `leanserv`'s pool spawns one
   of per worker): `lake exe leankernel serve [<import>...]` (e.g. `serve Init` for a fast Mathlib-free session, or
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
   its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` for a
@@ -667,12 +668,11 @@ These surfaced while building M1.8.5 (`packages/leanserv/src/lean_agent_serv/api
 sub-milestone — wiring `pool.py`/`cache.py`/`verdicts.py` behind `/v1/check`, `/v1/check_batch`, `/v1/health`,
 tested through a real `FastAPI` app against a real spawned Lean process and a real Postgres, never mocked.
 
-- **`/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are not built.** `LeanKernel.Serve`'s wire
-  protocol understands `check` (M1.8.1), `seal` (M2.1.1) and `link` (M2.1.2) and nothing else — there is no
-  standalone replay or decompose request shape on the Lean side for an HTTP route to dispatch to, and a route
-  with nothing real underneath it is exactly the half-finished surface this project avoids. Standalone
-  `/v1/replay` also has no caller: `/v1/link` already replays as part of the acceptance path, which is what spec
-  §4.3 actually asks for.
+- **`/v1/replay` and `/v1/base-env/materialize` are not built.** Standalone `/v1/replay` has no caller:
+  `/v1/link` already replays as part of the acceptance path, which is what spec §4.3 actually asks for, and a
+  route with nothing real underneath it is exactly the half-finished surface this project avoids.
+  `LeanKernel.Serve`'s wire protocol understands `check` (M1.8.1), `seal` (M2.1.1), `link` (M2.1.2) and
+  `decompose` (M2.1.3).
 - **A bare `check`'s outcome is classified with the same `VerdictKind` enum a proof verdict uses**, not a
   separate ok/not-ok shape: `ok=True` (clean elaboration) is `PROVED`, a genuine elaboration error is `ERRORS`, a
   `ReplTimeout` is `TIMEOUT`, and any `ReplCrashed` (`ReplExited`/`ReplProtocolError`) is `INFRA_ERROR` — one more
@@ -753,6 +753,10 @@ These surfaced while building `/v1/seal` — `Serve.lean`'s `seal` request kind,
   prerequisite is honest locally and dangerous in CI, so any such fixture needs an environment-gated "here it is
   mandatory" mode — and a green job proves nothing about tests that never ran, so check step *durations*, not just
   conclusions, when a suite is supposed to be exercising real infrastructure.
+- **`SealGoal` grew a `levelParams` field in M2.1.3.** M2.1.1 shipped without it and was complete against every
+  goal that existed at the time (hand-written statements, monomorphic or with universes Lean could infer from a
+  metavariable); the gap only appeared once decomposition started producing statements that name their universes.
+  See M2.1.3's notes for why `autoImplicit false` makes that field mandatory rather than cosmetic.
 - **A goal bundle is elaborated one goal at a time, not as a single unit, and this is forced by `checkSealed`'s
   own semantics.** `checkSealed` (M1.1) reads the *whole* message log's `hasErrors`, so one bad goal in a combined
   elaboration marks every sibling failed — which would break exactly the behaviour spec §6.1 asks for ("a
@@ -876,6 +880,59 @@ These surfaced while building `/v1/link` — `Serve.lean`'s `link` request kind,
   definitionally equal and the kernel was right to accept it (this is spec §4.2's own "the kernel decides
   definitional equality" property working as designed). A genuine weakening needs a different proposition:
   `∃ n, n + 0 = n`, which M1.2's own gate-5 test already used.
+
+## Implementation notes: decomposition-on-the-wire facts (M2.1.3)
+
+These surfaced while building `/v1/decompose` — `Serve.lean`'s `decompose` kind, `Sorries.lean`'s warm entry
+point, `ReplWorker.decompose`, and `api.py`'s route — against the real v4.33.1 toolchain.
+
+- **A decomposed subgoal's statement crosses the process boundary as *text*, and text is not automatically a
+  faithful stand-in for the `Expr` it was printed from.** `Decomposition.lemmas` is `Array (Name × Expr)` and
+  `Expr` has no `ToJson`, so the wire has to carry pretty-printed source — which is also what the consumer wants,
+  since the next thing that happens to a child is `/v1/seal`, which takes a statement as text. But an unfaithful
+  print means a child proving something other than what its parent's reassembly needs, which is exactly the
+  statement drift spec §1.1 designs away for *sealed* goals. Sealed goals get that guarantee structurally (the
+  goal is elaborated once and frozen); a statement travelling as text has to *earn* it. So `Serve.lean` seals
+  every printed statement on the spot and checks the result is defeq to the `Expr` it printed, reporting
+  `roundTrips` per lemma. That check paid for itself on its first contact with real Mathlib goals — see below.
+- **Rehearse the real thing, not an approximation of it.** The round-trip check's first version elaborated the
+  printed statement as a bare *term*, and reported every universe-polymorphic Mathlib goal as broken:
+  `∀ {G : Type u_1} [inst : Group G] ...` has `u_1` free, which in term position is an error that silently
+  becomes `sorry`. That is not how the statement is ever consumed. Rebuilding the check to run `goalDeclSource`'s
+  actual generated source — the same function `sealGoal` uses — got the right answer *and* found a genuine bug
+  (next item). A test double of the thing under test is worth less than the thing itself when the thing is cheap
+  to run.
+- **`autoImplicit false` does not bind a free universe *name*, and `sealGoal` forces `autoImplicit false` — so
+  M2.1.1 could not seal any decomposed subgoal that mentions a universe.** The error is "unknown universe level
+  `u_1`". This does not contradict M1.1's "top-level `def` universe generalization is unconditional": that
+  finding is about a free universe *metavariable*, which Lean generalizes regardless of options. A universe
+  *name* is a different thing and needs the declaration to bind it. **Fix**: `SealGoal` grew `levelParams`, and
+  `goalDeclSource` emits `def <name>.{u_1, v} : Sort _ := ...` — which is what spec §4.1's own bundle template
+  showed all along (`def G_<id₁>.{u_0} : Sort _ := ...`) and M2.1.1 simply had not implemented, because nothing
+  had yet produced a goal that needed it. Worth remembering as a shape: a milestone can look complete against
+  every input that exists at the time and still be missing something its own spec text shows.
+- **Level-parameter names are an injection site too.** They are spliced into `def <name>.{<here>}` exactly as
+  `name` is, so they get the same character allowlist `isValidGoalName` applies — confirmed by sending
+  `"v} : Sort _ := True\ndef Evil3"` as a level parameter and checking nothing named `Evil3` reaches the bundle.
+- **`pp.fullNames` is forced when printing a subgoal statement.** The statement is consumed somewhere else
+  entirely — a later `seal` request, with none of the originating development's `open`s or `variable`s in scope —
+  so a name that only resolves inside that namespace scope would silently become a different constant, or fail to
+  resolve, by the time it matters. Readability is the right thing to trade for context-independence here.
+- **`decomposeWarm` exists because `Lean.Elab.process` discards infotrees.** `process` is exactly
+  `IO.processCommands inputCtx {} (Command.mkState env {} opts)`; the only differences for decomposition are
+  `infoState.enabled := true` (infotrees are what `extractSorries` walks, and building them is not free, which is
+  why the other handlers leave them off) and returning the message log so a caller can tell "no sorries because
+  the development is complete" from "no sorries because it did not elaborate". Everything genuinely delicate —
+  `revert`'s own reverted-fvar list, `@`-application, hygiene-mangled instance binders, back-to-front splicing —
+  lives in `decomposeElaborated`, shared with the cold `decompose`, so there is exactly one copy of it.
+- **`/v1/decompose` needs no bundle on the worker's `LEAN_PATH`, unlike `/v1/link`.** Decomposition reads a
+  development's own `sorry`s and never touches a sealed goal, so it runs on the same plain base-env worker
+  `/v1/check` uses and shares its warm slots instead of fragmenting the pool further (spec §6.2's header
+  fragmentation is the binding multi-tenancy constraint, so every avoided pool key matters).
+- **A crashed worker is a 503; `ok=False` means "the development does not elaborate".** Same distinction
+  `/v1/link` draws: `ok=False` is a statement about the content, and an infra failure is not evidence about
+  content. `/v1/decompose` is also uncached, for `/v1/seal`'s reason — `verification_cache` answers "did this
+  declaration check", and a `CachedCheck` has nowhere to carry per-lemma statements or a reassembly source.
 
 ## Implementation notes: eval harness facts
 
