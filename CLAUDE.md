@@ -58,8 +58,9 @@ GPU-less CI box without mocking the client. M3.3 is done — `lean_agent_models.
 template → token ids without depending on `transformers`, held byte-for-byte to recorded
 `transformers` output for two vendored tokenizers. M3.4 is done — `lean_agent_models.client`, the
 `ModelBackend` implementation over `/v1/completions`, driven in tests against M3.2's replay server,
-plus digest verification of the pinned tokenizer. Still to come: M3.5
-(`router.py`), M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
+plus digest verification of the pinned tokenizer. M3.5 is done — `lean_agent_models.router`,
+`ModelRole` → backend, carrying the run manifest's `models` array (§7.3). Still to come:
+M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
 (`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
 M3.12 (the exit gate).
 
@@ -949,6 +950,36 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: router facts (M3.5)
+
+From building `lean_agent_models.router` — the `ModelRole` → backend indirection §6.5 asks for.
+
+- **Backends are built eagerly, at configuration time.** A bad `tokenizer_dir` or a digest that
+  does not match should stop a run *before* it claims work, not at whatever hour the first
+  `decomposer` call happens. That also matches §7.1's language: provenance is derived "at model
+  registration time", and registration is this construction.
+- **A tokenizer failure reached from `build_backend` is re-typed to `ConfigError`.**
+  `TemplateError` is a `ModelBackendError`, which is right at *call* time — a backend that could
+  not produce a prompt. Reached from configuration it means something else: the config names a
+  tokenizer that is missing, or is not the one it was pinned to. Re-typing lets a caller guarding
+  startup catch every "your configuration is wrong" in one place.
+- **`Policy.roles` is checkable up front, and `require()` is where.** Discovering a missing
+  `decomposer` when a policy first asks for one wastes the whole run to that point and reports a
+  configuration mistake as a mid-run failure. `SymbolicPortfolio` declares no roles and passes
+  against an empty router — the same fact that makes Phase 2's "zero model calls" checkable.
+- **`provenances()` exists so §7.1's export rule can be checked before a corpus exists.** The
+  exporter "raises (does not filter)" on anything outside `{open_weights, symbolic, human}`, and
+  finding that out after collecting a corpus is finding out too late.
+- **The manifest needs three things a `ModelBackend` does not expose**, so `BackendConfig` gained
+  them: `tokenizer_dir` (where the converted tokenizer lives), `weights_revision` and
+  `serving_version`. Neither revision is derivable from a model id — the same id serves different
+  weights across revisions, and the same weights give different token ids across serving versions —
+  so they are declared, and stay `None` when a deployment did not say. A `null` in a published
+  manifest is honest; a plausible guess is not.
+- **The router is frozen and built once.** A run whose role mapping could change midway would
+  produce a manifest describing something other than what happened, which is the one thing §7.3
+  exists to prevent.
 
 ## Implementation notes: keeping the miniF2F gate affordable
 
