@@ -208,13 +208,19 @@ class Ingestor:
         base_env = await self._resolve_base_env(submission.base_env_digest)
         manifest = build_manifest(submission, base_env)
         manifest_hash = canonical_manifest_hash(manifest)
-        run_id = await self._create_run(submission, manifest, manifest_hash)
 
-        candidates, failures = await self._candidates(submission)
+        # Decomposition happens *before* the run row is inserted, so the reassembly can go into
+        # that same INSERT. `app` holds INSERT on `run` and deliberately not UPDATE (M2.6), and
+        # rather than widen the grant, the run is written once and never modified -- which is also
+        # the more honest shape: the reassembly is part of the submission's frozen record, exactly
+        # like the manifest beside it. Nothing references the run until obligations are inserted,
+        # so there is no ordering constraint requiring it to exist first.
+        candidates, failures, reassembly = await self._candidates(submission)
         # §4.5's "elaborates only with `autoImplicit true`" is a property of the *submitted
         # development*, not of the abstracted statements it yields, so it has to be measured here
         # -- once, before decomposition erases the evidence. See `_source_needs_auto_implicit`.
         source_needs_auto_implicit = await self._source_needs_auto_implicit(submission)
+        run_id = await self._create_run(submission, manifest, manifest_hash, reassembly)
         if not candidates:
             return IngestionResult(
                 run_id=run_id, manifest_hash=manifest_hash.hex(), seal_failures=failures
@@ -265,7 +271,7 @@ class Ingestor:
 
     async def _candidates(
         self, submission: Submission
-    ) -> tuple[list[SealGoalRequest], list[SealFailure]]:
+    ) -> tuple[list[SealGoalRequest], list[SealFailure], str | None]:
         """Spec §6.3 step 3. A bare statement is one candidate; a file is elaborated once and its
         `sorry` sites become the candidates.
 
@@ -276,21 +282,27 @@ class Ingestor:
         sealing's own guarantee.
         """
         if submission.statement is not None:
-            return [SealGoalRequest(name=goal_name(1), statement=submission.statement)], []
+            # No reassembly: a bare statement is not a file with holes in it, so there is nothing
+            # to write back. `run.reassembly_blob` stays NULL and §6.3 step 6 has nothing to do.
+            return [SealGoalRequest(name=goal_name(1), statement=submission.statement)], [], None
 
         assert submission.source is not None
         decomposed = await self._lean.decompose(
             base_env_digest=submission.base_env_digest, development=submission.source
         )
         if not decomposed.ok:
-            return [], [
-                SealFailure(
-                    name="<submission>",
-                    statement=submission.source,
-                    diagnostics=decomposed.diagnostics,
-                    reason="the submitted file does not elaborate",
-                )
-            ]
+            return (
+                [],
+                [
+                    SealFailure(
+                        name="<submission>",
+                        statement=submission.source,
+                        diagnostics=decomposed.diagnostics,
+                        reason="the submitted file does not elaborate",
+                    )
+                ],
+                None,
+            )
 
         candidates: list[SealGoalRequest] = []
         failures: list[SealFailure] = []
@@ -321,7 +333,7 @@ class Ingestor:
                     name=name, statement=lemma.statement, level_params=lemma.level_params
                 )
             )
-        return candidates, failures
+        return candidates, failures, decomposed.reassembly
 
     async def _source_needs_auto_implicit(self, submission: Submission) -> bool:
         """Spec §4.5: "Elaborates only with `autoImplicit true` -- mistyped identifier silently
@@ -412,17 +424,27 @@ class Ingestor:
         return {"toolchain_rev": row[0], "mathlib_rev": row[1]}
 
     async def _create_run(
-        self, submission: Submission, manifest: dict[str, Any], manifest_hash: bytes
+        self,
+        submission: Submission,
+        manifest: dict[str, Any],
+        manifest_hash: bytes,
+        reassembly: str | None,
     ) -> uuid.UUID:
+        """One INSERT, never updated afterwards.
+
+        `reassembly_blob` carries no acceptance guarantee and does not need one: the assembled file
+        is re-elaborated and every declaration re-linked at materialization (spec §6.3 step 6), so
+        a corrupted reassembly fails loudly there rather than being trusted here.
+        """
         run_id = uuid.uuid4()
         async with self._sessions() as session:
             await session.execute(
                 text(
                     "INSERT INTO run (id, tenant_id, base_env_digest, status, manifest, "
                     "manifest_hash, allow_sorry, axiom_allowlist, max_depth, budget_tokens, "
-                    "budget_kernel_ms) VALUES (:id, :tenant, :base_env, 'running', "
-                    "CAST(:manifest AS jsonb), :mh, :allow_sorry, :allowlist, :max_depth, "
-                    ":tokens, :kernel_ms)"
+                    "budget_kernel_ms, reassembly_blob) VALUES (:id, :tenant, :base_env, "
+                    "'running', CAST(:manifest AS jsonb), :mh, :allow_sorry, :allowlist, "
+                    ":max_depth, :tokens, :kernel_ms, :reassembly)"
                 ),
                 {
                     "id": run_id,
@@ -435,6 +457,7 @@ class Ingestor:
                     "max_depth": submission.max_depth,
                     "tokens": submission.budget_tokens,
                     "kernel_ms": submission.budget_kernel_ms,
+                    "reassembly": reassembly.encode() if reassembly is not None else None,
                 },
             )
             await session.commit()

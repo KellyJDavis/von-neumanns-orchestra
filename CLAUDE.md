@@ -37,8 +37,8 @@ claim, lease, heartbeat, reaper) M2.4 (control loop — `lean_agent_core.worker`
 `lean_agent_api.ingestion`: submission → sealed goals → obligations, with §4.5 admission signals) and M2.7's
 bundle materialization (`lean_agent_api.materialize`) are done — **the whole Phase 2 pipeline now runs end to
 end**: submission → ingestion → materialization → claim → null agent → link/replay/audit → `mark_proved`, with
-zero model calls (`tests/leanserv/test_end_to_end.py`). Spec §6.3 step 6's *output file* materialization is the
-one part of M2.7 not built; see the implementation note for exactly what it needs. Next is M2.8 (the public §6.1
+zero model calls, and out the other side as a **standalone materialized `.lean` file** with its `sorry`s filled
+(spec §6.3 step 6) — `tests/leanserv/test_end_to_end.py`. Next is M2.8 (the public §6.1
 API surface), M2.9 (CLI as its httpx client), M2.10 (miniF2F exit-gate validation).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
@@ -789,12 +789,38 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
 - **`/v1/link` now records the accepted development as `verdict.proof_blob`.** That is the only place the proof
   text can live without widening `app`'s grants: `obligation.proof_blob` is not in app's permitted-column list,
   deliberately, and `verdict` is the row leanserv already writes.
-- **Spec §6.3 step 6 (output *file* materialization) is not built, and what blocks it is a schema question.**
-  Assembling "the file with each `sorry` replaced" needs the reassembly text `/v1/decompose` produced, which has
-  no column: its natural home, `obligation_edge.reassembly_blob` ("on the group, not the child"), does not apply
-  because ingestion creates roots and no edges. Deciding where it lives is tangled with the same
-  decomposition-edge design M2.4's seam already defers, so the half that *is* determinate (recording each hole's
-  accepted proof) is done and the assembly step waits for that decision rather than guessing at it.
+- **Spec §6.3 step 6's reassembly text belongs on the *run*, not on an edge — and framing that as "part of the
+  decomposition-edge decision" was wrong.** Spec has a `reassembly_blob` on `obligation_edge`, "on the group,
+  not the child", and that is a *decomposition group*'s reassembly, produced when a policy decomposes an
+  obligation. A submitted file's reassembly is a different artifact: it exists before any policy runs, has no
+  parent obligation to hang off, and covers every root at once. Once named that way the answer is obvious, and
+  two milestones of deferring it were deferring the wrong question.
+- **The assembled file inlines the sealed bundle rather than importing it.** Importing `Bundle_<sha>` would be
+  simpler and would make the artifact useless: a `.lean` file a person takes away must not depend on a per-run
+  generated module they do not have. Inlining costs nothing, since the bundle source is content-addressed and
+  already stored, and the test compiles the emitted artifact with `lake env lean` against nothing but the
+  toolchain — no bundle root on `LEAN_PATH` — which is the only real check on "standalone".
+- **§6.3 step 6's second check is read from the recorded verdicts, not re-derived, because re-deriving it would
+  corrupt the attempt record.** `/v1/link` writes a `verdict`, whose `attempt_id` is a foreign key to a real
+  `attempt` — so re-linking at materialization means inventing attempt rows no policy ran, which the scheduler,
+  the budget accounting and every pass-rate calculation would then see. What is verified instead is the §1.1
+  predicate over each hole's accepted verdict, including `sealed_olean_sha_observed = obligation.sealed_olean_sha`;
+  what ties that to the file in hand is content-addressing, since the inlined goals are the bundle's own text
+  fetched by `bundle_sha` and cannot have drifted. Spec's worry ("the materialized file could compile cleanly
+  with a drifted statement") is closed by the digest rather than by a second link.
+- **`/v1/check` takes a *body*, so an assembled file must be split before it is checked.** A body carrying its
+  own `import` line fails with "invalid 'import' command, it must be used in the beginning of the file" — the
+  warm worker has already imported the base env. The renderer returns `(header, body)` and the artifact is their
+  concatenation, so what is checked is exactly what is emitted minus a header that adds nothing to check.
+  (Comments *are* allowed before `import` in a real file — verified — so the artifact's header is well-formed.)
+- **The run row is written once and never updated, which is why decomposition happens before the INSERT.**
+  `app` holds `INSERT` on `run` and deliberately not `UPDATE` (M2.6), and rather than widen that grant to store
+  the reassembly, ingestion computes it first and puts it in the same INSERT. That is also the more honest shape:
+  the reassembly is part of the submission's frozen record, exactly like the manifest beside it.
+- **A test of a *global* sweeper must not assert a global count.** `test_reaper_*` asserted
+  `reap_expired_attempts(...) == 1`, which silently coupled them to the whole database being otherwise idle;
+  they broke the moment another suite left an expired lease around. They now assert on the specific attempt's
+  status, which is the property actually under test.
 - **`/v1/base-env/materialize` (§6.2) is also absent.** It builds and snapshots a *base environment*, which is a
   different artifact from a goal bundle, and spec §8 already defers the snapshot machinery it would need ("L3
   snapshot persistence: warm sealing needs a warm worker, not a persisted snapshot").

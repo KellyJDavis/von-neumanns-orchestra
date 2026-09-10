@@ -13,14 +13,20 @@ is the reason this test file exists here rather than as a nicer version of M2.5'
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from lean_agent_api.ingestion import Ingestor, Submission
-from lean_agent_api.materialize import BundleMaterializer
+from lean_agent_api.materialize import (
+    AssembledFile,
+    BundleMaterializer,
+    FileMaterializer,
+    MaterializationError,
+)
 from lean_agent_core.actions import Budget, ObligationContext
 from lean_agent_core.blobs import LocalBlobStore
 from lean_agent_core.enums import VerdictKind
@@ -528,3 +534,213 @@ def test_materialization_is_idempotent_and_write_once(
         assert bytes(stored) == olean_sha
     finally:
         _cleanup(admin_engine, run_id)
+
+
+def _prove_all(
+    sessions: async_sessionmaker[AsyncSession], leanserv: TestClient
+) -> Callable[[], Awaitable[int]]:
+    """Claim and prove every schedulable obligation until the queue is empty. Returns how many
+    were proved -- the tests assert on that rather than on a fixed loop count."""
+
+    async def run() -> int:
+        lean = LeanServiceOverTestClient(leanserv)
+        policy = SymbolicPortfolio(tactics=("rfl", "decide", "simp"))
+        proved = 0
+        for _ in range(12):
+            claimed = await claim_attempt(
+                sessions,
+                worker_id="assembly",
+                policy_id=policy.id,
+                policy_config_hash=policy.config_hash,
+            )
+            if claimed is None:
+                break
+            ctx, budget = await _context_for(sessions, claimed)
+            executor = PolicyExecutor(
+                policy=policy,
+                lean=lean,
+                trajectories=TrajectoryWriter(sessions, LocalBlobStore(Path("/tmp"))),
+                context_loader=lambda o, r, c=claimed: _context_for(sessions, c),  # type: ignore[misc]
+            )
+            result = await executor.execute(attempt_id=claimed.attempt_id, ctx=ctx, budget=budget)
+            if result.outcome is ObligationOutcome.PROVED:
+                await ObligationStateMachine(sessions).mark_proved(
+                    claimed.obligation_id, claimed.attempt_id
+                )
+                proved += 1
+            else:
+                await ObligationStateMachine(sessions).retryable_failure(claimed.obligation_id)
+        return proved
+
+    return run
+
+
+def test_a_proved_file_assembles_into_a_standalone_lean_file(
+    admin_engine: Engine,
+    base_env: str,
+    leanserv: TestClient,
+    bundle_root: Path,
+    lake_project_dir: Path,
+    app_async_database_url: str,
+    tmp_path: Path,
+) -> None:
+    """Spec §6.3 step 6, end to end: a submitted file with holes comes back with them filled.
+
+    The two checks are what the step is for. Elaborating proves the pieces compile together;
+    linking each declaration against its *sealed* constant proves they prove what was asked --
+    "without the link the materialized file could compile cleanly with a drifted statement".
+    """
+    submission = Submission(
+        base_env_digest=base_env,
+        tenant_id=uuid.uuid4(),
+        source=(
+            "theorem both : (1 : Nat) + 1 = 2 ∧ (2 : Nat) + 2 = 4 := by\n"
+            "  constructor\n  · sorry\n  · sorry"
+        ),
+    )
+
+    async def main() -> tuple[uuid.UUID, int, AssembledFile]:
+        engine = create_async_engine(app_async_database_url)
+        try:
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            blobs = LocalBlobStore(tmp_path / "app_blobs")
+            lean = LeanServiceOverTestClient(leanserv)
+            result = await Ingestor(session_factory=sessions, lean=lean, blobs=blobs).ingest(
+                submission
+            )
+            await BundleMaterializer(
+                session_factory=sessions,
+                blobs=blobs,
+                bundle_root=bundle_root,
+                lake_project_dir=lake_project_dir,
+            ).materialize_run(result.run_id)
+            proved = await _prove_all(sessions, leanserv)()
+            assembled = await FileMaterializer(
+                session_factory=sessions, blobs=blobs, lean=lean
+            ).assemble(result.run_id)
+            return result.run_id, proved, assembled
+        finally:
+            await engine.dispose()
+
+    run_id, proved, assembled = asyncio.run(main())
+    try:
+        assert proved == 2
+        assert assembled.holes == 2
+        assert assembled.unfilled == ()
+        assert assembled.elaborates is True
+        assert assembled.links is True
+        assert assembled.complete is True
+
+        # Standalone: the sealed goals are inlined, not imported from a per-run generated module a
+        # person taking this file away would not have.
+        assert "import LeanAgent.Goals.Bundle_" not in assembled.source
+        assert "def G_1 : Sort _ :=" in assembled.source
+        # The original theorem is back, with its holes filled by references to the accepted proofs.
+        assert "theorem both :" in assembled.source
+        assert "abbrev sorry_1 := @LeanAgent.Sol.sol_1" in assembled.source
+        assert "@sorry_1" in assembled.source
+
+        # The strongest available check on "standalone", and stronger than `elaborates`: compile
+        # the emitted artifact itself, as a file, against nothing but the toolchain -- no bundle
+        # root on `LEAN_PATH`, no warm base environment. If it needed the generated bundle module
+        # it would fail here.
+        artifact = tmp_path / "Materialized.lean"
+        artifact.write_text(assembled.source)
+        compiled = subprocess.run(
+            ["lake", "env", "lean", f"--root={tmp_path}", str(artifact)],
+            cwd=lake_project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    finally:
+        _cleanup(admin_engine, run_id)
+
+
+def test_an_unproved_hole_is_reported_rather_than_hidden(
+    admin_engine: Engine,
+    base_env: str,
+    leanserv: TestClient,
+    bundle_root: Path,
+    lake_project_dir: Path,
+    app_async_database_url: str,
+    tmp_path: Path,
+) -> None:
+    """A partially-proved run still produces an artifact, and it says which holes are open.
+
+    Emitting the file anyway is deliberate: a partial result is the useful thing to hand back, and
+    `complete` is what says whether it is finished. Silently omitting an unproved declaration would
+    produce a file that fails to elaborate for a reason its reader cannot see.
+    """
+    submission = Submission(
+        base_env_digest=base_env,
+        tenant_id=uuid.uuid4(),
+        source="theorem hard : ∀ n : Nat, 2 ^ n ≥ n + 1 := by sorry",
+    )
+
+    async def main() -> tuple[uuid.UUID, AssembledFile]:
+        engine = create_async_engine(app_async_database_url)
+        try:
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            blobs = LocalBlobStore(tmp_path / "app_blobs")
+            lean = LeanServiceOverTestClient(leanserv)
+            result = await Ingestor(session_factory=sessions, lean=lean, blobs=blobs).ingest(
+                submission
+            )
+            await BundleMaterializer(
+                session_factory=sessions,
+                blobs=blobs,
+                bundle_root=bundle_root,
+                lake_project_dir=lake_project_dir,
+            ).materialize_run(result.run_id)
+            # The portfolio cannot close it; do not even try, so the test stays fast and its point
+            # stays "an unfilled hole is reported", not "these tactics fail".
+            assembled = await FileMaterializer(
+                session_factory=sessions, blobs=blobs, lean=lean
+            ).assemble(result.run_id)
+            return result.run_id, assembled
+        finally:
+            await engine.dispose()
+
+    run_id, assembled = asyncio.run(main())
+    try:
+        assert assembled.unfilled == ("sorry_1",)
+        assert assembled.complete is False
+        # Named in the file itself, not only in the report.
+        assert "UNPROVED" in assembled.source
+    finally:
+        _cleanup(admin_engine, run_id)
+
+
+def test_a_bare_statement_has_no_file_to_assemble(
+    admin_engine: Engine,
+    base_env: str,
+    leanserv: TestClient,
+    app_async_database_url: str,
+    tmp_path: Path,
+) -> None:
+    """`run.reassembly_blob` is NULL for a statement submission, and that is not a missing value to
+    work around -- there was never a file with holes in it."""
+    submission = Submission(
+        base_env_digest=base_env, tenant_id=uuid.uuid4(), statement="(2 : Nat) + 2 = 4"
+    )
+
+    async def main() -> uuid.UUID:
+        engine = create_async_engine(app_async_database_url)
+        try:
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            blobs = LocalBlobStore(tmp_path / "app_blobs")
+            lean = LeanServiceOverTestClient(leanserv)
+            result = await Ingestor(session_factory=sessions, lean=lean, blobs=blobs).ingest(
+                submission
+            )
+            with pytest.raises(MaterializationError, match="no reassembly"):
+                await FileMaterializer(session_factory=sessions, blobs=blobs, lean=lean).assemble(
+                    result.run_id
+                )
+            return result.run_id
+        finally:
+            await engine.dispose()
+
+    _cleanup(admin_engine, asyncio.run(main()))
