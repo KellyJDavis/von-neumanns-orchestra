@@ -44,6 +44,7 @@ from typing import Any, Protocol
 
 from lean_agent_core.enums import VerdictKind
 
+from lean_agent_eval.baseline import AcceptedProof
 from lean_agent_eval.score import AttemptOutcome, BudgetTotals, SuiteScore, score_suite
 
 CORPUS_PATH = Path(__file__).parent / "data" / "minif2f.json"
@@ -342,6 +343,16 @@ class MiniF2FPipeline(Protocol):
 
     async def winning_tactics(self, run_id: uuid.UUID) -> dict[uuid.UUID, str]: ...
 
+    async def accepted_proofs(self, run_id: uuid.UUID) -> dict[uuid.UUID, AcceptedProof]:
+        """The sealed statement and accepted proof for every obligation with a verdict.
+
+        Needed by the Phase 2 baseline (M3.0), which has to compare more than pass/fail: spec's
+        Phase 3 exit says the symbolic baseline must still pass *bit-identically*, and a run that
+        proved the same problems with different text against a differently-printed statement is
+        not that.
+        """
+        ...
+
     async def artifact(self, run_id: uuid.UUID) -> ArtifactResult: ...
 
 
@@ -362,6 +373,12 @@ class ProblemResult:
     outcomes: tuple[AttemptOutcome, ...]
     tactic: str | None
     diagnostics: tuple[str, ...] = ()
+    #: The statement that was actually sealed, and the proof the kernel actually accepted, as
+    #: `/v1/link` recorded them. Carried so the Phase 2 baseline (M3.0) can compare what was
+    #: proved and how, not merely that something was.
+    goal_src: str | None = None
+    proof_text: str | None = None
+    axioms: tuple[str, ...] = ()
 
     @property
     def infra_error(self) -> bool:
@@ -436,6 +453,7 @@ async def run_suite(
 
     outcomes_by_obligation = await pipeline.attempt_outcomes(ingested.run_id)
     tactics = await pipeline.winning_tactics(ingested.run_id)
+    accepted = await pipeline.accepted_proofs(ingested.run_id)
     artifact = await pipeline.artifact(ingested.run_id)
 
     results: list[ProblemResult] = []
@@ -454,6 +472,7 @@ async def run_suite(
             )
             continue
         outcomes = outcomes_by_obligation.get(obligation_id, ())
+        evidence = accepted.get(obligation_id)
         results.append(
             ProblemResult(
                 id=problem.id,
@@ -461,6 +480,9 @@ async def run_suite(
                 proved=any(o.kind is VerdictKind.PROVED for o in outcomes),
                 outcomes=outcomes,
                 tactic=tactics.get(obligation_id),
+                goal_src=evidence.goal_src if evidence else None,
+                proof_text=evidence.proof_text if evidence else None,
+                axioms=evidence.axioms if evidence else (),
             )
         )
 

@@ -36,6 +36,8 @@ from lean_agent_core.enums import VerdictKind
 from lean_agent_core.executor import PolicyExecutor, TrajectoryWriter
 from lean_agent_core.scheduler import ClaimedAttempt
 from lean_agent_core.worker import AttemptResult, Worker
+from lean_agent_eval import baseline
+from lean_agent_eval.baseline import AcceptedProof
 from lean_agent_eval.score import AttemptOutcome
 from lean_agent_eval.suites.minif2f import (
     EASY_TAIL,
@@ -353,6 +355,41 @@ class _Pipeline:
                 winners[obligation_id] = str(succeeded[-1])
         return winners
 
+    async def accepted_proofs(self, run_id: uuid.UUID) -> dict[uuid.UUID, AcceptedProof]:
+        """Each obligation's sealed statement and the proof its verdict accepted.
+
+        Joined from `obligation` and `verdict` rather than reconstructed from the policy: the
+        verdict row is what `mark_proved` checked the §1.1 predicate against, so it is the only
+        account of the proof that cannot disagree with the one the system acted on.
+        """
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT DISTINCT ON (o.id) o.id, o.goal_src, v.proof_blob, v.axioms "
+                        "FROM obligation o LEFT JOIN verdict v ON v.obligation_id = o.id "
+                        "WHERE o.run_id = CAST(:r AS uuid) "
+                        # An obligation may carry one verdict per attempt, so the accepted one has
+                        # to be chosen rather than whichever row the join happened to yield first.
+                        "ORDER BY o.id, (v.kind = 'proved') DESC NULLS LAST"
+                    ),
+                    {"r": str(run_id)},
+                )
+            ).all()
+        proofs: dict[uuid.UUID, AcceptedProof] = {}
+        for obligation_id, goal_src, proof_blob, axioms in rows:
+            proof_text: str | None = None
+            if proof_blob is not None:
+                # Blob-suffixed column: inline content or a CAS digest behind a tag byte (M1.8.4).
+                proof_text = (await from_bytea(self._blobs, bytes(proof_blob))).decode()
+            proofs[obligation_id] = AcceptedProof(
+                obligation_id=obligation_id,
+                goal_src=goal_src,
+                proof_text=proof_text,
+                axioms=tuple(axioms or ()),
+            )
+        return proofs
+
     async def artifact(self, run_id: uuid.UUID) -> ArtifactResult:
         assembled = await FileMaterializer(
             session_factory=self._sessions, blobs=self._blobs, lean=self._lean
@@ -616,3 +653,73 @@ def test_the_easy_tail_is_stable_across_three_runs(gate) -> None:
     winners = [{r.id: r.tactic for r in report.results} for report in reports]
     assert winners[0] == winners[1] == winners[2]
     assert all(report.tokens == 0 for report in reports)
+
+
+def test_the_phase_2_baseline_is_unchanged(gate) -> None:
+    """M3.0 -- the record Phase 3's exit criterion is measured against.
+
+    Spec §8's Phase 3 exit begins "the Phase 2 symbolic baseline still passes bit-identically".
+    The other tests in this file assert the *criterion* (everything closes, at zero tokens, with an
+    artifact that elaborates and links); this one asserts nothing moved: same sealed statements,
+    same winning tactics, byte-identical accepted proofs, same axiom cones, byte-identical
+    artifact.
+
+    It fails on any drift, including drift that leaves the pass rate at 100%. That is the point --
+    a model policy is supposed to *dominate* the symbolic one, and if wiring a model in also
+    perturbs the symbolic path, the thing it is being compared against has moved.
+
+    To re-record after a deliberate change, having read the printed diff:
+
+        LEAN_AGENT_RERECORD_BASELINE=1 uv run pytest tests/eval/test_minif2f.py -k baseline
+    """
+    (report,) = gate()
+    policy = SymbolicPortfolio(tactics=GATE_TACTICS, tactic_timeout_ms=GATE_TACTIC_TIMEOUT_MS)
+    current = baseline.record(
+        report,
+        policy_id=policy.id,
+        policy_config_hash=policy.config_hash,
+        tactics=GATE_TACTICS,
+    )
+
+    if os.environ.get(baseline.RERECORD_ENV) == "1":
+        if baseline.BASELINE_PATH.exists():
+            for line in baseline.compare(baseline.load(), current):
+                print(f"  re-recording over: {line}")
+        baseline.save(current)
+        pytest.skip(f"re-recorded {baseline.BASELINE_PATH}")
+
+    differences = baseline.compare(baseline.load(), current)
+    assert not differences, "the Phase 2 baseline moved:\n  " + "\n  ".join(differences)
+
+
+def test_the_baseline_records_real_evidence_not_placeholders(gate) -> None:
+    """A golden file full of `None` would compare equal to itself forever.
+
+    So this checks the recorded fields are actually populated from the run: every proved problem
+    has a sealed statement, an accepted proof and a non-empty axiom cone, and the proof genuinely
+    names both the sealed constant and its winning tactic. Without it, a regression that stopped
+    writing `verdict.proof_blob` would make the baseline vacuous rather than failing.
+    """
+    recorded = baseline.load()
+    by_id = recorded.by_id()
+    assert set(by_id) == set(EASY_TAIL)
+
+    for problem in recorded.problems:
+        assert problem.proved is True
+        assert problem.tactic in GATE_TACTICS
+        assert problem.goal_src_sha256 is not None
+        assert problem.proof_sha256 is not None
+        # `simp`/`linarith` and friends genuinely use these; an empty cone here would mean the
+        # audit surface was not recorded rather than that the proof was axiom-free.
+        assert set(problem.axioms) <= {"propext", "Classical.choice", "Quot.sound"}
+
+    # And the digests are of the real thing, checked against a live run rather than themselves.
+    (report,) = gate()
+    for result in report.results:
+        assert result.proof_text is not None
+        assert result.goal_src is not None
+        assert result.tactic is not None and result.tactic in result.proof_text
+        assert result.goal_src != ""
+        entry = by_id[result.id]
+        assert entry.proof_sha256 == baseline.sha256_text(result.proof_text)
+        assert entry.goal_src_sha256 == baseline.sha256_text(result.goal_src)

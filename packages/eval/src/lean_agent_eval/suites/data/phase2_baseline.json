@@ -1,0 +1,171 @@
+{
+ "corpus_sha256": "a1e419c61e47b3884e17e2eac6acca6d6a93bbee8ef5c484b4dfe58e88159722",
+ "policy_id": "SymbolicPortfolio",
+ "policy_config_hash": "39d673c402d05edb9fa60b8d2863f231b3a537d25b1e758a7ec08990240cf07f",
+ "tactics": [
+  "rfl",
+  "decide",
+  "simp",
+  "simp_all",
+  "omega",
+  "norm_num",
+  "linarith",
+  "nlinarith"
+ ],
+ "artifact_sha256": "bad44bea03e7e6ffd596f57d81672a1a9ca6fd93fcbb01800e8afdfda7851efa",
+ "artifact_holes": 13,
+ "problems": [
+  {
+   "id": "amc12b_2002_p2",
+   "sealed": true,
+   "proved": true,
+   "tactic": "simp_all",
+   "goal_src_sha256": "9077bd0165870450d6649b6ea25dcf2cd6cf10a8666f564037c86c498b9b7fd6",
+   "proof_sha256": "a952160f64ee89a7226748973db127b99da05b100c00f68ba97b5816b15d3a55",
+   "axioms": [
+    "propext"
+   ]
+  },
+  {
+   "id": "mathd_algebra_188",
+   "sealed": true,
+   "proved": true,
+   "tactic": "simp_all",
+   "goal_src_sha256": "6dfbf33d2a349ad5f37a420e61932fb485d932342cd2220f1d6ad0897f94e941",
+   "proof_sha256": "843afa15baf08eab1e1a7fde4496b853fa1302c1b8253984d91762ca0565d12c",
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_algebra_24",
+   "sealed": true,
+   "proved": true,
+   "tactic": "linarith",
+   "goal_src_sha256": "ef83e64106471d7a1838cf54209bc1825ebbe6b22d10c64046ca0610bfa5c99a",
+   "proof_sha256": "a666eeb753c891da369c4a0c188ff8da022d8fb1e82666a2d03962ef226e1e58",
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_algebra_304",
+   "sealed": true,
+   "proved": true,
+   "tactic": "rfl",
+   "goal_src_sha256": "db74cf8657f17eeb5a1c74675a823b1c4f074ccfae14bab1d527cc66934e0d5a",
+   "proof_sha256": "0d04328e1ee107a80c32d45f5fdfeb03b25aa2989d06f3721b539935ecfa064d",
+   "axioms": [
+    "propext"
+   ]
+  },
+  {
+   "id": "mathd_algebra_314",
+   "sealed": true,
+   "proved": true,
+   "tactic": "simp",
+   "goal_src_sha256": "e981fce61b178bf7503000bf43640a472195861d65967a13b8fafc63c58a14e8",
+   "proof_sha256": "24f03b54af860de03f14851382ff577b29884302b38cae6bdf12f71ccb601146",
+   "axioms": [
+    "propext"
+   ]
+  },
+  {
+   "id": "mathd_algebra_359",
+   "sealed": true,
+   "proved": true,
+   "tactic": "linarith",
+   "goal_src_sha256": "1b29460f97e29ae9cb28af67660c2b5002133738c1e05d258881a21e6596e3d6",
+   "proof_sha256": "b879ced0ec8875bd8d0208ee1c64e144746ad3d12072335ad19beff54f26d4c7",
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_algebra_478",
+   "sealed": true,
+   "proved": true,
+   "tactic": "nlinarith",
+   "goal_src_sha256": "8fda73128c98e76429f551411e40ee5cacdc061f75d5b66362cc9e92d3534961",
+   "proof_sha256": "c803c7f515b9ce177626bdd2186110a190996a0c3a2d5970bcbfcda50e82ddd0",
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_algebra_536",
+   "sealed": true,
+   "proved": true,
+   "tactic": "norm_num",
+   "goal_src_sha256": "8ed49eaa22b8850a3de17a0c73e1c9b20b6a2342e18e544c99e7b96230e44be0",
+   "proof_sha256": "0fa1969f3b836df4eb85d74fc9ad8be4ab3e09eb02bf74c41eaa6235de174de7",
+   "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_numbertheory_136",
+   "sealed": true,
+   "proved": true,
+   "tactic": "omega",
+   "goal_src_sha256": "8e09b2272978aedb87230c6f114fb5cdd013a12d8edf6cf9ceeca55eda0040c3",
+   "proof_sha256": "5ad59db523529a87f6f929e3cc929f27da418e7176c120216e0cbb803f0934b6",
+   "axioms": [
+    "propext",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_numbertheory_198",
+   "sealed": true,
+   "proved": true,
+   "tactic": "omega",
+   "goal_src_sha256": "9a03946ead3103057f846ac171e7e34ff3411e97113da211ee0dbb833834e063",
+   "proof_sha256": "c5a4115643edfe2fa0de21fa82bc6704724ed220c106338669a71605d6e1a05a",
+   "axioms": [
+    "propext",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_numbertheory_252",
+   "sealed": true,
+   "proved": true,
+   "tactic": "rfl",
+   "goal_src_sha256": "89d9e7afc71223a53643d83a824394286a764f4376d14a7542653530243d6b5a",
+   "proof_sha256": "699c68d5d32b513933a66d46b9557db7a1a72cd8ece1fe71cd62e5e69716b609",
+   "axioms": []
+  },
+  {
+   "id": "mathd_numbertheory_64",
+   "sealed": true,
+   "proved": true,
+   "tactic": "decide",
+   "goal_src_sha256": "6a8b7425aab2ac4a3f2cea0d16fa0aa15f10e850e6cb25e0829d7f05b6f124b6",
+   "proof_sha256": "b1ad75ac168a1c3ac0534662b4f9f1e3352413af3ec08d71dfd2f964abd27c8a",
+   "axioms": [
+    "propext",
+    "Quot.sound"
+   ]
+  },
+  {
+   "id": "mathd_numbertheory_66",
+   "sealed": true,
+   "proved": true,
+   "tactic": "rfl",
+   "goal_src_sha256": "a79dafba0e9f7d1871786a90f4d9b2afb6cd9eedc80ff6c128c5aa8c484900e4",
+   "proof_sha256": "62c678c94d68f505522472ac028d067e20308e83eebd88e9505d55e585c53c97",
+   "axioms": []
+  }
+ ]
+}
