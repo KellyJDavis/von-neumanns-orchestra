@@ -46,7 +46,12 @@ zero model calls, and out the other side as a **standalone materialized `.lean` 
 null agent closes miniF2F's easy tail through the whole acceptance path at zero token cost, stable
 across three runs, with a materialized file that elaborates and links. Phase 3 (model as policy)
 is next; note its own exit criterion begins "the Phase 2 symbolic baseline still passes
-bit-identically", which is what that gate is now for.
+bit-identically", which is what that gate is now for. M3.0 (`lean_agent_eval.baseline` plus the
+recorded `phase2_baseline.json`) is done: it freezes what the symbolic path currently produces, so
+that clause has something to be checked against. The rest of Phase 3 — `packages/models`
+(`ModelRole`, typed completions client with client-side token-id templating, response cache,
+router), widened trajectory logging, `ContextBuilder`, `WholeProofSampler`, `RepairLoop`, the
+trajectory viewer — is not started.
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -194,6 +199,10 @@ Two decisions drive nearly everything else in the design (spec §1):
   lean_agent_eval.suites.survey_minif2f --out <path>` re-measures which of the 488 problems the null agent
   closes (~25 min) — that measurement is what `EASY_TAIL` is derived from, and it is checked in rather than
   recomputed by the gate.
+- Phase 2 baseline (M3.0, `lean_agent_eval.baseline` + `suites/data/phase2_baseline.json`): asserted by the same
+  miniF2F gate, so it needs the same prerequisites. Re-record deliberately after reading the printed diff with
+  `LEAN_AGENT_RERECORD_BASELINE=1 uv run pytest tests/eval/test_minif2f.py -k baseline`; never automatically.
+  `tests/eval/test_baseline.py` covers the comparison logic on its own and needs no infrastructure at all.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -918,6 +927,50 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: Phase 2 baseline facts (M3.0)
+
+These come from building `packages/eval/src/lean_agent_eval/baseline.py` and recording
+`suites/data/phase2_baseline.json` — the record Phase 3's exit criterion ("the Phase 2 symbolic
+baseline still passes bit-identically") is measured against.
+
+- **The baseline has to be recorded before the change it protects against, which is why this is
+  M3.0 and not M3.11.** A record captured after Phase 3 starts would faithfully freeze whatever
+  Phase 3 had already broken.
+- **"Bit-identically" is interpreted as five things**: the same problems seal to the same
+  statements (`goal_src` digest), the same tactic wins each, the accepted proof text is
+  byte-identical (`verdict.proof_blob` digest), the axiom cone is unchanged, and the materialized
+  artifact is byte-identical. Deliberately excluded: uuids, timestamps, and every elapsed/kernel
+  millisecond count — a baseline that failed on those would be re-recorded so often it would stop
+  being evidence.
+- **The artifact embeds its own run's uuid** (`-- run: <uuid>` in the header), so the raw source
+  cannot be digested directly; `normalize_artifact` replaces that one line. Worth knowing before
+  adding any other per-run text to a materialized file — it would have to be normalized too, and
+  the alternative is a golden file that fails every single run.
+- **Verified that the baseline can actually fail, by making it fail.** A whitespace-only change to
+  `SymbolicPortfolio.development` (`;  intros` instead of `; intros`) leaves every problem proved,
+  by the same tactic, at a 100% pass rate — and the baseline correctly reports "accepted proof text
+  changed" for all 13. A golden file nobody has watched fail is not evidence of anything.
+- **`compare` returns described differences, not a boolean.** The failure this exists to catch is
+  someone's *unrelated* change perturbing the symbolic path, and "baselines differ" would send them
+  looking in the wrong place. Which field moved is most of the diagnosis: a changed `goal_src`
+  digest is a sealing/pretty-printing change, a changed proof digest under the same tactic is a
+  policy-text change, a changed cone is an audit-surface change.
+- **A changed `policy_config_hash` is reported as "re-record deliberately", not as a regression.**
+  Changing the portfolio *should* invalidate the baseline — that is a different experiment, not a
+  breakage — and collapsing the two readings would make every future portfolio change look like a
+  failure.
+- **Re-recording is an environment variable, never automatic**: `LEAN_AGENT_RERECORD_BASELINE=1 uv
+  run pytest tests/eval/test_minif2f.py -k baseline`, which prints the diff it is overwriting. An
+  auto-refreshing golden file guarantees the exact failure mode this is built to prevent.
+- **A golden file needs a test that it is not vacuous.** `test_the_baseline_records_real_evidence_
+  not_placeholders` checks every recorded entry has a real statement digest, proof digest and
+  non-empty axiom cone, that the winning tactic actually appears in the recorded proof text, and
+  that the digests match a live run — otherwise a regression that stopped writing
+  `verdict.proof_blob` would leave the baseline comparing `None` to `None` forever.
+- **The recorded cones differ per problem and that is the signal they are real**: `propext` alone
+  for the `Nat` problems, the full `{propext, Classical.choice, Quot.sound}` for the ones over `ℝ`
+  — the same finding that broke sealing in M2.10, now frozen as an expectation.
 
 ## Implementation notes: miniF2F exit-gate facts (M2.10)
 
