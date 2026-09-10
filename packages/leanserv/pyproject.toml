@@ -2,7 +2,7 @@
 name = "lean-agent-serv"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = ["lean-agent-core", "fastapi>=0.115"]
+dependencies = ["lean-agent-core", "fastapi>=0.115", "httpx"]
 
 [tool.uv.sources]
 lean-agent-core = { workspace = true }
