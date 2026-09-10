@@ -167,6 +167,17 @@ def leanserv_database_url(admin_engine: Engine) -> str:
 
 
 @pytest.fixture(scope="session")
+def app_async_database_url(admin_engine: Engine) -> str:
+    """The `app` role over asyncpg. `state.py`'s transition functions must be exercised as the
+    role that will actually call them in production -- running them as the admin/superuser would
+    prove nothing about the privilege model, since the whole design rests on `app` being unable to
+    write `obligation.status` by any other route.
+    """
+    del admin_engine
+    return _role_url("app", _APP_PASSWORD, driver="postgresql+asyncpg")
+
+
+@pytest.fixture(scope="session")
 def leanserv_async_database_url(admin_engine: Engine) -> str:
     """Same role and credentials as `leanserv_database_url`, but with the `asyncpg` driver --
     for `lean_agent_serv.cache`/`.verdicts`, which are async (leanserv's own control loop and
