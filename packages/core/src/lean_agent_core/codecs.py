@@ -16,7 +16,10 @@ drift -- if they did, a trajectory replayed from the cache would not match the o
 
 from __future__ import annotations
 
+import json
 import struct
+
+from lean_agent_core.protocols import Completion
 
 #: Little-endian, fixed width, no padding. Explicit rather than native (`=`/`@`) because these
 #: bytes are written to a database that a different machine will read: native byte order would make
@@ -84,3 +87,88 @@ def round_trip_logprobs(logprobs: tuple[float, ...]) -> tuple[float, ...]:
     """What `logprobs` becomes once stored. Useful to a caller that wants to compare a live value
     against a stored one without asking which side lost precision."""
     return unpack_logprobs(pack_logprobs(logprobs))
+
+
+def encode_completions(completions: tuple[Completion, ...]) -> bytes:
+    """One request's samples as one blob.
+
+    The arrays are packed (int32 / float32) and the envelope around them is JSON. That split is
+    deliberate: the packing is where the volume is -- §6.5's 4 GB per 10⁹ tokens -- while the
+    envelope is a handful of bytes per completion and buys a self-describing record that survives
+    a schema change.
+
+    **One encoder, two callers**: `model_response_cache` (M3.6) and `trajectory.token_ids_blob` /
+    `logprobs_blob` (M3.7). If the cached form and the recorded form could drift, a trajectory
+    replayed from the cache would not match the one it replayed -- so they cannot be separate
+    functions that happen to agree today.
+    """
+    return json.dumps(
+        [
+            {
+                "token_ids": pack_token_ids(c.token_ids).hex(),
+                "logprobs": pack_logprobs(c.logprobs).hex(),
+                "text": c.text,
+                "finish_reason": c.finish_reason,
+            }
+            for c in completions
+        ],
+        separators=(",", ":"),
+    ).encode()
+
+
+def decode_completions(payload: bytes) -> tuple[Completion, ...]:
+    try:
+        entries = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise CodecError(f"completions blob is not JSON: {exc}") from exc
+    return tuple(
+        Completion(
+            token_ids=unpack_token_ids(bytes.fromhex(entry["token_ids"])),
+            logprobs=unpack_logprobs(bytes.fromhex(entry["logprobs"])),
+            text=entry["text"],
+            finish_reason=entry["finish_reason"],
+        )
+        for entry in entries
+    )
+
+
+def encode_trajectory_token_ids(
+    prompt_token_ids: tuple[int, ...], completions: tuple[Completion, ...]
+) -> bytes:
+    """Spec §5.3's `token_ids_blob`: "prompt + completion token ids".
+
+    Both, in one structure with the boundary preserved. Concatenating them would save a few bytes
+    and destroy the only thing replay needs from this column -- where the prompt ends and the
+    sampled tokens begin. On-policy RL cannot compute a loss over tokens it cannot separate from
+    the context they were conditioned on.
+    """
+    return json.dumps(
+        {
+            "prompt": pack_token_ids(prompt_token_ids).hex(),
+            "completions": [pack_token_ids(c.token_ids).hex() for c in completions],
+        },
+        separators=(",", ":"),
+    ).encode()
+
+
+def decode_trajectory_token_ids(payload: bytes) -> tuple[tuple[int, ...], list[tuple[int, ...]]]:
+    document = json.loads(payload)
+    return (
+        unpack_token_ids(bytes.fromhex(document["prompt"])),
+        [unpack_token_ids(bytes.fromhex(entry)) for entry in document["completions"]],
+    )
+
+
+def encode_trajectory_logprobs(completions: tuple[Completion, ...]) -> bytes:
+    """Spec §5.3's `logprobs_blob`: "sampled-token logprobs, float32".
+
+    Only the sampled tokens, never the prompt's: a prompt token has no sampled logprob, and §6.5
+    is explicit that what is stored is "the sampled token's logprob ... not top-k".
+    """
+    return json.dumps(
+        [pack_logprobs(c.logprobs).hex() for c in completions], separators=(",", ":")
+    ).encode()
+
+
+def decode_trajectory_logprobs(payload: bytes) -> list[tuple[float, ...]]:
+    return [unpack_logprobs(bytes.fromhex(entry)) for entry in json.loads(payload)]

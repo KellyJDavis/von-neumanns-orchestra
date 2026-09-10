@@ -62,7 +62,9 @@ plus digest verification of the pinned tokenizer. M3.5 is done — `lean_agent_m
 `ModelRole` → backend, carrying the run manifest's `models` array (§7.3). Still to come:
 M3.6 is done — `lean_agent_models.cache` over a new `model_response_cache` table
 (migration `3bd1fe9a53fb`), plus `lean_agent_core.codecs` for the float32/int32 storage §6.5
-requires. Still to come: M3.7 (widened trajectory logging), M3.8
+requires. M3.7 is done — the executor can call a model through a `CompletionService` and the trajectory
+records what came back, filling the four columns M1.5 created and Phase 2 left NULL. Still to
+come: M3.8
 (`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
 M3.12 (the exit gate).
 
@@ -952,6 +954,56 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: trajectory-logging facts (M3.7)
+
+From wiring `RequestCompletion` through the executor and filling `trajectory`'s model columns.
+
+- **Widening the writer alone would have been speculative.** The four columns
+  (`token_ids_blob`, `logprobs_blob`, `model_weights_hash`, `tokenizer_revision`) have existed
+  since M1.5 and had no producer, so the milestone is the *executor path* — a policy asks a role
+  for tokens, the router resolves it, and what comes back is recorded. Spec's Phase 3 list calls
+  this "trajectory logging with provenance and logprobs", which is one thing, not two.
+- **`RequestCompletion` carries chat turns, not a prompt string.** §6.5 requires the template be
+  rendered client-side, and a template needs turns; a bare string cannot express a system prompt,
+  which every prover model uses, and §6.6's context bands are assembled into turns rather than
+  concatenated. `Message.role` (`system`/`user`/`assistant`) is *not* `ModelRole` — an unfortunate
+  collision inherited from the OpenAI wire format, kept because renaming it would diverge from
+  every chat template in existence.
+- **`CompletionService` is a protocol in `core`, implemented in `models`.** Same shape as
+  `LeanService`: `core` holds the executor, `models` depends on `core`, and the other direction is
+  a cycle. It is also the narrower contract — the executor needs a role resolved and a request
+  performed, not the router's configuration, manifest or lifecycle. `provenance_for` is separate
+  from `complete` because §7.1 says provenance is *derived from the backend*, never asserted by
+  the code writing the row.
+- **An executor with no completion service refuses `RequestCompletion`.** That is what keeps
+  "zero model calls anywhere in the codebase" true by construction rather than by discipline: with
+  nothing wired up, Phase 2's shape cannot make a model call even by mistake.
+- **A policy asking for a role it did not declare is a `PolicyContractError`.** `Policy.roles` is
+  what the router checks before the run starts (M3.5); a policy that asks for more than it
+  declared would make that check meaningless.
+- **`token_ids_blob` keeps the prompt/completion boundary.** §5.3 says "prompt + completion token
+  ids", and concatenating them would save a few bytes while destroying the only thing replay needs
+  from the column — on-policy RL cannot compute a loss over tokens it cannot separate from the
+  context they were conditioned on. `logprobs_blob` holds only the *sampled* tokens' logprobs; a
+  prompt token has no sampled logprob.
+- **`tokenizer_revision` is filled by the service, not the backend.** A server never sees a
+  tokenizer, only ids, so it cannot report one — and without it the stored ids are not
+  interpretable back into text (§7.3).
+- **Configured sampling is the default and the policy narrows it**, not the other way round. §6.5's
+  promise that an ablation is "four config files and no code" fails the moment a policy's
+  hardcoded temperature wins over the file.
+- **A cached response reports the *original* call's `elapsed_ms`.** Reporting ~0 ms for a cache hit
+  would understate what producing those tokens actually cost, and §7.5 wants "pass@k with the
+  budget that produced it".
+- **One encoder for the cache and the trajectory**, promoted into `lean_agent_core.codecs`. M3.6
+  wrote that promise down; this is where it becomes structural. Two encoders that merely agree
+  today would eventually let a trajectory replayed from the cache differ from the one it replayed.
+- **A test stub with a fixed signature breaks when a writer is widened, and that is useful once.**
+  `test_executor_screen.py`'s trajectory stub broke on the new arguments, which correctly said the
+  signature had moved. It now takes `**_`, because that test is about the screening decision and
+  mirroring every future column there would guarantee it breaks again for reasons it does not
+  test — `tests/db/test_trajectory.py` is what holds the real writer to the real columns.
 
 ## Implementation notes: response-cache facts (M3.6)
 

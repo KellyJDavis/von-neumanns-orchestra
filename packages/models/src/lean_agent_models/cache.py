@@ -25,13 +25,13 @@ import json
 from dataclasses import dataclass
 
 from lean_agent_core.blobs import from_bytea, store_or_inline, to_bytea
-from lean_agent_core.codecs import pack_logprobs, pack_token_ids, unpack_logprobs, unpack_token_ids
-from lean_agent_core.protocols import (
-    BlobStore,
-    Completion,
-    CompletionResponse,
-    SamplingParams,
+from lean_agent_core.codecs import (
+    decode_completions,
+    encode_completions,
+    pack_token_ids,
+    unpack_token_ids,
 )
+from lean_agent_core.protocols import BlobStore, Completion, CompletionResponse, SamplingParams
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -83,40 +83,6 @@ class CachedResponse:
     tokenizer_revision: str | None = None
 
 
-def _encode_completions(completions: tuple[Completion, ...]) -> bytes:
-    """One request's samples as one blob.
-
-    Token ids and logprobs go through `lean_agent_core.codecs` (int32 / float32) rather than into
-    JSON, because §6.5 sized the corpus on 4 bytes per logprob and JSON costs three to five times
-    that. The surrounding structure is JSON, with the arrays hex-encoded inside it -- the packing
-    is where the volume is, and a self-describing envelope is worth more than the bytes it costs.
-    """
-    return json.dumps(
-        [
-            {
-                "token_ids": pack_token_ids(c.token_ids).hex(),
-                "logprobs": pack_logprobs(c.logprobs).hex(),
-                "text": c.text,
-                "finish_reason": c.finish_reason,
-            }
-            for c in completions
-        ],
-        separators=(",", ":"),
-    ).encode()
-
-
-def _decode_completions(payload: bytes) -> tuple[Completion, ...]:
-    return tuple(
-        Completion(
-            token_ids=unpack_token_ids(bytes.fromhex(entry["token_ids"])),
-            logprobs=unpack_logprobs(bytes.fromhex(entry["logprobs"])),
-            text=entry["text"],
-            finish_reason=entry["finish_reason"],
-        )
-        for entry in json.loads(payload)
-    )
-
-
 class ResponseCacheStore:
     """`model_response_cache`, read and written as the `app` role.
 
@@ -154,7 +120,7 @@ class ResponseCacheStore:
             prompt_token_ids = unpack_token_ids(await from_bytea(self._blobs, bytes(prompt_blob)))
         return CachedResponse(
             model_id=model_id,
-            completions=_decode_completions(await from_bytea(self._blobs, bytes(completions_blob))),
+            completions=decode_completions(await from_bytea(self._blobs, bytes(completions_blob))),
             prompt_token_ids=prompt_token_ids,
             elapsed_ms=int(elapsed),
             weights_revision=weights_revision,
@@ -170,7 +136,7 @@ class ResponseCacheStore:
         """
         completions = to_bytea(
             await store_or_inline(
-                self._blobs, _encode_completions(response.completions), "application/json"
+                self._blobs, encode_completions(response.completions), "application/json"
             )
         )
         prompt = to_bytea(
