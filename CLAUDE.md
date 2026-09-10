@@ -56,7 +56,9 @@ responses recorded by hand (`record_fixtures.py`) and replayed by a genuine ASGI
 `/v1/completions` server (`replay_server.py`), which is how the model layer gets tested on a
 GPU-less CI box without mocking the client. M3.3 is done — `lean_agent_models.template`, chat
 template → token ids without depending on `transformers`, held byte-for-byte to recorded
-`transformers` output for two vendored tokenizers. Still to come: M3.4 (`client.py`), M3.5
+`transformers` output for two vendored tokenizers. M3.4 is done — `lean_agent_models.client`, the
+`ModelBackend` implementation over `/v1/completions`, driven in tests against M3.2's replay server,
+plus digest verification of the pinned tokenizer. Still to come: M3.5
 (`router.py`), M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
 (`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
 M3.12 (the exit gate).
@@ -945,6 +947,46 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: completions-client facts (M3.4)
+
+These come from building `lean_agent_models.client` — the `ModelBackend` over
+`/v1/completions` — against real recorded vLLM bytes, and from closing M3.3's pinning gap.
+
+- **`logprobs: 0` is the right request, and it still returns what is needed.** Verified against
+  real vLLM: `logprobs=0` returns `token_logprobs` (the sampled token's own logprob) and a
+  one-entry `top_logprobs`. Spec §6.5 says to store the sampled token's logprob "**not top-k**", so
+  asking for more would pay for payload this system has already decided not to keep. The earlier
+  fixtures used `logprobs: 1` before this was checked.
+- **`return_token_ids: true` is not optional.** Without it a response carries only text, and the
+  only way to get ids back is to tokenize that text — which is exactly the re-tokenization §6.5
+  forbids. A response missing `token_ids` is a `ModelProtocolError`, not a degraded success.
+- **The recorder builds its request bodies by calling `CompletionsClient.build_body`.** The replay
+  server matches requests exactly, so hand-written fixture requests could drift from what the
+  client sends and the mismatch would surface as a 409 in some later milestone — far from the real
+  server needed to fix it. Having the recorder call the client makes drift impossible by
+  construction, and `build_body` is public *because* it is that contract.
+- **`seed` and `stop` are omitted when unset rather than sent as `null`/`[]`**, while everything
+  with a value is sent explicitly including defaults. A server may treat an absent key differently
+  from an empty one, and there is nothing to gain by finding out; sending explicit defaults means
+  the request says what it means rather than relying on the server's defaults agreeing with ours.
+- **A 4xx is `ModelProtocolError`, a 5xx is `ModelUnavailable`.** The responses differ: a rejected
+  request will be rejected identically however many times it is sent, while a server error may
+  pass. Collapsing them would make the control loop retry something that cannot succeed.
+- **One fixture cannot test two failures.** `missing_logprobs` models Ollama accurately — it
+  returns neither token ids nor logprobs — so the client trips on ids first and the logprob branch
+  is unreachable through it. A separate `logprobs_dropped` fixture (ids present, logprobs null)
+  isolates that check. Found because the logprob test passed for the wrong reason and its `match=`
+  pattern did not fit the error it actually got.
+- **The tokenizer pin is now verified, not just required.** `load_chat_tokenizer(...,
+  expect_sha256=...)` refuses a mismatch, and `tokenizer_digest` computes it. Requiring
+  `tokenizer.converted.json` by name only required that *some* converted tokenizer was present —
+  swap in a different model's and every prompt tokenizes differently with nothing raised. The
+  digest is of the **converted artifact**, not an upstream revision string: two upstream revisions
+  can convert to the same tokenizer, and one revision can convert differently under a different
+  `transformers`, so the file's bytes are what decides the ids and therefore what gets pinned. It
+  defaults into `ChatTokenizer.revision`, which is what `trajectory.tokenizer_revision` records
+  (§7.3).
 
 ## Implementation notes: chat-template facts (M3.3)
 

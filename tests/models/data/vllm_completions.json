@@ -3,8 +3,8 @@
   "recorded_from": "vllm 0.28.0 + vllm-metal plugin",
   "endpoint_path": "/v1/completions",
   "model_id": "Qwen/Qwen3-0.6B",
-  "recorded_at": "2026-09-10T16:52:51+00:00",
-  "note": "Real server responses, stored verbatim. Interactions with recorded=false are constructed and say why in their own note."
+  "recorded_at": "2026-09-10T17:54:17+00:00",
+  "note": "Real server responses, stored verbatim, keyed on request bodies built by `CompletionsClient.build_body` so they cannot drift from what the client sends. Interactions with recorded=false are constructed and say why in their own note."
  },
  "interactions": [
   {
@@ -20,15 +20,17 @@
     ],
     "max_tokens": 8,
     "temperature": 0.0,
-    "seed": 1234,
-    "logprobs": 1,
-    "return_token_ids": true
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 1234
    },
    "status": 200,
    "response": {
-    "id": "cmpl-a07940789c82de45",
+    "id": "cmpl-b0b70f111f8c8610",
     "object": "text_completion",
-    "created": 1789059167,
+    "created": 1789062854,
     "model": "Qwen/Qwen3-0.6B",
     "choices": [
      {
@@ -140,15 +142,17 @@
     ],
     "max_tokens": 8,
     "temperature": 0.0,
-    "seed": 1234,
-    "logprobs": 1,
-    "return_token_ids": true
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 1234
    },
    "status": 200,
    "response": {
-    "id": "cmpl-9395ca6b160c8296",
+    "id": "cmpl-9efc4924ffe7aeb6",
     "object": "text_completion",
-    "created": 1789059169,
+    "created": 1789062856,
     "model": "Qwen/Qwen3-0.6B",
     "choices": [
      {
@@ -262,15 +266,15 @@
     "temperature": 0.8,
     "top_p": 0.95,
     "n": 4,
-    "seed": 7,
-    "logprobs": 1,
-    "return_token_ids": true
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 7
    },
    "status": 200,
    "response": {
-    "id": "cmpl-84da2271f812c624",
+    "id": "cmpl-8c659100dc1ecf85",
     "object": "text_completion",
-    "created": 1789059169,
+    "created": 1789062856,
     "model": "Qwen/Qwen3-0.6B",
     "choices": [
      {
@@ -330,8 +334,7 @@
          "'m": -0.87242591381073
         },
         {
-         " excited": -3.717625617980957,
-         " a": -1.9051257371902466
+         " excited": -3.717625617980957
         },
         {
          " to": -0.09438297152519226
@@ -346,12 +349,10 @@
          " you": -0.010021844878792763
         },
         {
-         " a": -1.7134718894958496,
-         " my": -1.3384718894958496
+         " a": -1.7134718894958496
         },
         {
-         " list": -3.8060874938964844,
-         " new": -1.4935874938964844
+         " list": -3.8060874938964844
         },
         {
          " of": -0.010083802975714207
@@ -433,24 +434,19 @@
        ],
        "top_logprobs": [
         {
-         " of": -3.8176193237304688,
-         ".": -1.4426193237304688
+         " of": -3.8176193237304688
         },
         {
-         " data": -4.469568252563477,
-         " the": -3.3445680141448975
+         " data": -4.469568252563477
         },
         {
-         ".\n": -3.592130422592163,
-         "!": -2.154630422592163
+         ".\n": -3.592130422592163
         },
         {
-         "The": -3.894491672515869,
-         "I": -2.144491672515869
+         "The": -3.894491672515869
         },
         {
-         " challenge": -4.610533237457275,
-         " problem": -2.8605332374572754
+         " challenge": -4.610533237457275
         },
         {
          " is": -0.2939598262310028
@@ -459,22 +455,19 @@
          " to": -0.11958544701337814
         },
         {
-         " create": -1.9294538497924805,
-         " find": -1.6794538497924805
+         " create": -1.9294538497924805
         },
         {
          " a": -0.18685832619667053
         },
         {
-         " game": -4.795416831970215,
-         " program": -3.1704165935516357
+         " game": -4.795416831970215
         },
         {
          " where": -1.0990681648254395
         },
         {
-         " a": -1.9284522533416748,
-         " the": -0.80345219373703
+         " a": -1.9284522533416748
         }
        ]
       },
@@ -550,16 +543,13 @@
        ],
        "top_logprobs": [
         {
-         "!": -1.5676193237304688,
-         ".": -1.4426193237304688
+         "!": -1.5676193237304688
         },
         {
-         " Today": -4.313213348388672,
-         " This": -2.1257131099700928
+         " Today": -4.313213348388672
         },
         {
-         "'s": -1.3853079080581665,
-         " I": -1.2603079080581665
+         "'s": -1.3853079080581665
         },
         {
          " challenge": -2.1949288845062256
@@ -571,8 +561,7 @@
          " to": -0.15789198875427246
         },
         {
-         " write": -1.9723163843154907,
-         " create": -1.3473163843154907
+         " write": -1.9723163843154907
         },
         {
          " a": -0.0786466896533966
@@ -663,12 +652,10 @@
        ],
        "top_logprobs": [
         {
-         "!": -1.5676193237304688,
-         ".": -1.4426193237304688
+         "!": -1.5676193237304688
         },
         {
-         " Welcome": -2.1882131099700928,
-         " This": -2.1257131099700928
+         " Welcome": -2.1882131099700928
         },
         {
          " to": -0.24018454551696777
@@ -683,19 +670,16 @@
          " of": -0.027309557422995567
         },
         {
-         " quantum": -5.1404852867126465,
-         " programming": -2.9529852867126465
+         " quantum": -5.1404852867126465
         },
         {
-         " physics": -3.2174007892608643,
-         " computing": -0.34240084886550903
+         " physics": -3.2174007892608643
         },
         {
          "!": -1.1138298511505127
         },
         {
-         " In": -2.490238666534424,
-         " Today": -1.8027385473251343
+         " In": -2.490238666534424
         },
         {
          " this": -0.17714397609233856
@@ -757,18 +741,20 @@
     ],
     "max_tokens": 64,
     "temperature": 0.0,
-    "seed": 1234,
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
     "stop": [
      "."
     ],
-    "logprobs": 1,
-    "return_token_ids": true
+    "seed": 1234
    },
    "status": 200,
    "response": {
-    "id": "cmpl-a72ff9770763cec3",
+    "id": "cmpl-afd06eb6265f1017",
     "object": "text_completion",
-    "created": 1789059170,
+    "created": 1789062856,
     "model": "Qwen/Qwen3-0.6B",
     "choices": [
      {
@@ -831,15 +817,17 @@
     ],
     "max_tokens": 64,
     "temperature": 0.0,
-    "seed": 1234,
-    "logprobs": 1,
-    "return_token_ids": true
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 1234
    },
    "status": 200,
    "response": {
-    "id": "cmpl-85c331d77f9adb00",
+    "id": "cmpl-8f8571889b0de35b",
     "object": "text_completion",
-    "created": 1789059170,
+    "created": 1789062856,
     "model": "Qwen/Qwen3-0.6B",
     "choices": [
      {
@@ -1331,6 +1319,127 @@
    }
   },
   {
+   "name": "no_seed",
+   "recorded": true,
+   "note": "No seed at all: the client omits the key rather than sending `null`, and a server may treat those differently.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 8,
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-b2665361ecab92ac",
+    "object": "text_completion",
+    "created": 1789062857,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I'm a student of the University",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        3,
+        5,
+        7,
+        15,
+        18,
+        22
+       ],
+       "token_logprobs": [
+        -1.4426193237304688,
+        -1.9816466569900513,
+        -0.8837368488311768,
+        -1.8618056774139404,
+        -2.737832546234131,
+        -1.5308977365493774,
+        -2.3477108478546143,
+        -3.2424070835113525
+       ],
+       "tokens": [
+        ".",
+        " I",
+        "'m",
+        " a",
+        " student",
+        " of",
+        " the",
+        " University"
+       ],
+       "top_logprobs": [
+        {
+         ".": -1.4426193237304688
+        },
+        {
+         " I": -1.9816466569900513
+        },
+        {
+         "'m": -0.8837368488311768
+        },
+        {
+         " a": -1.8618056774139404
+        },
+        {
+         " student": -2.737832546234131
+        },
+        {
+         " of": -1.5308977365493774
+        },
+        {
+         " the": -2.3477108478546143
+        },
+        {
+         " University": -3.2424070835113525
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       13,
+       358,
+       2776,
+       264,
+       5458,
+       315,
+       279,
+       3822
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     }
+    ],
+    "service_tier": null,
+    "system_fingerprint": "vllm-0.28.0-ab2ba28f",
+    "usage": {
+     "prompt_tokens": 3,
+     "total_tokens": 11,
+     "completion_tokens": 8,
+     "prompt_tokens_details": null,
+     "completion_tokens_details": null
+    },
+    "kv_transfer_params": null,
+    "ec_transfer_params": null,
+    "metrics": null
+   }
+  },
+  {
    "name": "unknown_model",
    "recorded": true,
    "note": "A real error response, so the client's error path is tested against real bytes.",
@@ -1343,7 +1452,10 @@
     ],
     "max_tokens": 4,
     "temperature": 0.0,
-    "logprobs": 1
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true
    },
    "status": 404,
    "response": {
@@ -1368,8 +1480,11 @@
     ],
     "max_tokens": 4,
     "temperature": 0.0,
-    "seed": 99,
-    "logprobs": 1
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 99
    },
    "status": 200,
    "response": {
@@ -1394,6 +1509,52 @@
    }
   },
   {
+   "name": "logprobs_dropped",
+   "recorded": false,
+   "note": "Constructed: `token_ids` present, `logprobs` null. Separated from `missing_logprobs` so the logprob check is isolated -- that fixture models Ollama, which returns neither, so the client trips on `token_ids` first and the logprob branch would never be reached.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 4,
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 97
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-synthetic-logprobs-dropped",
+    "object": "text_completion",
+    "created": 0,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I am",
+      "token_ids": [
+       13,
+       358,
+       1079
+      ],
+      "logprobs": null,
+      "finish_reason": "length",
+      "stop_reason": null
+     }
+    ],
+    "usage": {
+     "prompt_tokens": 3,
+     "completion_tokens": 3,
+     "total_tokens": 6
+    }
+   }
+  },
+  {
    "name": "ragged_logprobs",
    "recorded": false,
    "note": "Constructed: `token_logprobs` shorter than `tokens`. A client that zipped them would silently drop the tail rather than notice, so this pins the length check.",
@@ -1406,8 +1567,11 @@
     ],
     "max_tokens": 4,
     "temperature": 0.0,
-    "seed": 98,
-    "logprobs": 1
+    "top_p": 1.0,
+    "n": 1,
+    "logprobs": 0,
+    "return_token_ids": true,
+    "seed": 98
    },
    "status": 200,
    "response": {

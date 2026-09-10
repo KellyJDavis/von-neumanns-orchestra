@@ -27,7 +27,15 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from lean_agent_core.enums import ProvenanceClass
+from lean_agent_core.protocols import CompletionRequest, SamplingParams
+from lean_agent_core.roles import ModelRole
+from lean_agent_models.client import CompletionsClient
+from lean_agent_models.config import BackendConfig
+from lean_agent_models.template import load_chat_tokenizer
+
 FIXTURE_PATH = Path(__file__).parent / "data" / "vllm_completions.json"
+TOKENIZER_DIR = Path(__file__).parent / "data" / "tokenizers" / "TinyLlama-1.1B-Chat-v1.0"
 
 MODEL = "Qwen/Qwen3-0.6B"
 
@@ -36,92 +44,78 @@ MODEL = "Qwen/Qwen3-0.6B"
 #: depend on a tokenizer being present to replay them.
 HELLO_IDS = [9707, 11, 1879]
 
-#: Each entry becomes one recorded interaction. `name` is what a test asks for; the request body is
-#: sent to the real server exactly as written and stored exactly as sent.
-REQUESTS: list[dict[str, Any]] = [
-    {
-        "name": "greedy_single",
-        "note": "The ordinary case: one deterministic sample with per-token logprobs.",
-        "body": {
-            "model": MODEL,
-            "prompt": HELLO_IDS,
-            "max_tokens": 8,
-            "temperature": 0.0,
-            "seed": 1234,
-            "logprobs": 1,
-            "return_token_ids": True,
-        },
-    },
-    {
-        "name": "greedy_single_repeat",
-        "note": (
+#: Each entry is `(name, note, CompletionRequest)`. The wire body is **built by the client
+#: itself**, not written out here, so a fixture cannot describe a request the client would not
+#: send. That matters because the replay server matches exactly: were these hand-written, the
+#: fixtures could drift from `build_body` and the mismatch would show up as a 409 in a later
+#: milestone rather than here, where a real server is available to re-record against.
+SCENARIOS: list[tuple[str, str, CompletionRequest]] = [
+    (
+        "greedy_single",
+        "The ordinary case: one deterministic sample with per-token logprobs.",
+        CompletionRequest(
+            prompt_token_ids=tuple(HELLO_IDS),
+            sampling=SamplingParams(temperature=0.0, max_tokens=8),
+            seed=1234,
+        ),
+    ),
+    (
+        "greedy_single_repeat",
+        (
             "Byte-identical request to `greedy_single`, recorded separately so a test can assert "
             "the *server* was deterministic at record time rather than trusting the claim."
         ),
-        "body": {
-            "model": MODEL,
-            "prompt": HELLO_IDS,
-            "max_tokens": 8,
-            "temperature": 0.0,
-            "seed": 1234,
-            "logprobs": 1,
-            "return_token_ids": True,
-        },
-    },
-    {
-        "name": "sampled_n4",
-        "note": "n>1: one request, several completions, which is how `WholeProofSampler` runs.",
-        "body": {
-            "model": MODEL,
-            "prompt": HELLO_IDS,
-            "max_tokens": 12,
-            "temperature": 0.8,
-            "top_p": 0.95,
-            "n": 4,
-            "seed": 7,
-            "logprobs": 1,
-            "return_token_ids": True,
-        },
-    },
-    {
-        "name": "stop_string",
-        "note": "finish_reason='stop' rather than 'length' -- a different terminal branch.",
-        "body": {
-            "model": MODEL,
-            "prompt": HELLO_IDS,
-            "max_tokens": 64,
-            "temperature": 0.0,
-            "seed": 1234,
-            "stop": ["."],
-            "logprobs": 1,
-            "return_token_ids": True,
-        },
-    },
-    {
-        "name": "long_max_tokens",
-        "note": "A longer completion, so a test exercises more than a handful of logprobs.",
-        "body": {
-            "model": MODEL,
-            "prompt": HELLO_IDS,
-            "max_tokens": 64,
-            "temperature": 0.0,
-            "seed": 1234,
-            "logprobs": 1,
-            "return_token_ids": True,
-        },
-    },
-    {
-        "name": "unknown_model",
-        "note": "A real error response, so the client's error path is tested against real bytes.",
-        "body": {
-            "model": "not/a-real-model",
-            "prompt": HELLO_IDS,
-            "max_tokens": 4,
-            "temperature": 0.0,
-            "logprobs": 1,
-        },
-    },
+        CompletionRequest(
+            prompt_token_ids=tuple(HELLO_IDS),
+            sampling=SamplingParams(temperature=0.0, max_tokens=8),
+            seed=1234,
+        ),
+    ),
+    (
+        "sampled_n4",
+        "n>1: one request, several completions, which is how `WholeProofSampler` runs.",
+        CompletionRequest(
+            prompt_token_ids=tuple(HELLO_IDS),
+            sampling=SamplingParams(temperature=0.8, top_p=0.95, max_tokens=12, n=4),
+            seed=7,
+        ),
+    ),
+    (
+        "stop_string",
+        "finish_reason='stop' rather than 'length' -- a different terminal branch.",
+        CompletionRequest(
+            prompt_token_ids=tuple(HELLO_IDS),
+            sampling=SamplingParams(temperature=0.0, max_tokens=64, stop=(".",)),
+            seed=1234,
+        ),
+    ),
+    (
+        "long_max_tokens",
+        "A longer completion, so a test exercises more than a handful of logprobs.",
+        CompletionRequest(
+            prompt_token_ids=tuple(HELLO_IDS),
+            sampling=SamplingParams(temperature=0.0, max_tokens=64),
+            seed=1234,
+        ),
+    ),
+    (
+        "no_seed",
+        (
+            "No seed at all: the client omits the key rather than sending `null`, and a server may "
+            "treat those differently."
+        ),
+        CompletionRequest(
+            prompt_token_ids=tuple(HELLO_IDS),
+            sampling=SamplingParams(temperature=0.0, max_tokens=8),
+        ),
+    ),
 ]
+
+#: A request the server rejects, recorded so the client's error path is tested against real bytes.
+UNKNOWN_MODEL = CompletionRequest(
+    prompt_token_ids=tuple(HELLO_IDS),
+    sampling=SamplingParams(temperature=0.0, max_tokens=4),
+)
 
 
 def _post(endpoint: str, body: dict[str, Any]) -> tuple[int, Any]:
@@ -137,10 +131,10 @@ def _post(endpoint: str, body: dict[str, Any]) -> tuple[int, Any]:
         return exc.code, json.loads(exc.read())
 
 
-def _synthesized() -> list[dict[str, Any]]:
+def _synthesized(client: CompletionsClient) -> list[dict[str, Any]]:
     """Interactions no real vLLM will produce, marked as constructed rather than recorded.
 
-    Only one so far, and it models a server this project has actually met: Ollama's
+    They model servers this project has actually met, or shapes a correct one cannot produce: Ollama's
     OpenAI-compatible layer accepts `logprobs` and returns a completion without them. Since §9
     lists logprobs among the things that cannot be recomputed later, the client must reject that
     rather than store a NULL -- and there is no way to record the case from a server that behaves
@@ -156,14 +150,13 @@ def _synthesized() -> list[dict[str, Any]]:
                 "which is what Ollama's OpenAI shim returns (ollama#16117). The client must raise "
                 "`ModelProtocolError` rather than accept a completion it cannot store logprobs for."
             ),
-            "request": {
-                "model": MODEL,
-                "prompt": HELLO_IDS,
-                "max_tokens": 4,
-                "temperature": 0.0,
-                "seed": 99,
-                "logprobs": 1,
-            },
+            "request": client.build_body(
+                CompletionRequest(
+                    prompt_token_ids=tuple(HELLO_IDS),
+                    sampling=SamplingParams(temperature=0.0, max_tokens=4),
+                    seed=99,
+                )
+            ),
             "status": 200,
             "response": {
                 "id": "cmpl-synthetic-missing-logprobs",
@@ -183,20 +176,54 @@ def _synthesized() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "logprobs_dropped",
+            "recorded": False,
+            "note": (
+                "Constructed: `token_ids` present, `logprobs` null. Separated from "
+                "`missing_logprobs` so the logprob check is isolated -- that fixture models "
+                "Ollama, which returns neither, so the client trips on `token_ids` first and the "
+                "logprob branch would never be reached."
+            ),
+            "request": client.build_body(
+                CompletionRequest(
+                    prompt_token_ids=tuple(HELLO_IDS),
+                    sampling=SamplingParams(temperature=0.0, max_tokens=4),
+                    seed=97,
+                )
+            ),
+            "status": 200,
+            "response": {
+                "id": "cmpl-synthetic-logprobs-dropped",
+                "object": "text_completion",
+                "created": 0,
+                "model": MODEL,
+                "choices": [
+                    {
+                        "index": 0,
+                        "text": ". I am",
+                        "token_ids": [13, 358, 1079],
+                        "logprobs": None,
+                        "finish_reason": "length",
+                        "stop_reason": None,
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 3, "total_tokens": 6},
+            },
+        },
+        {
             "name": "ragged_logprobs",
             "recorded": False,
             "note": (
                 "Constructed: `token_logprobs` shorter than `tokens`. A client that zipped them "
                 "would silently drop the tail rather than notice, so this pins the length check."
             ),
-            "request": {
-                "model": MODEL,
-                "prompt": HELLO_IDS,
-                "max_tokens": 4,
-                "temperature": 0.0,
-                "seed": 98,
-                "logprobs": 1,
-            },
+            "request": client.build_body(
+                CompletionRequest(
+                    prompt_token_ids=tuple(HELLO_IDS),
+                    sampling=SamplingParams(temperature=0.0, max_tokens=4),
+                    seed=98,
+                )
+            ),
             "status": 200,
             "response": {
                 "id": "cmpl-synthetic-ragged",
@@ -224,27 +251,60 @@ def _synthesized() -> list[dict[str, Any]]:
     ]
 
 
+def _client(model_id: str) -> CompletionsClient:
+    """A client purely for its `build_body`. The tokenizer is the vendored TinyLlama one and is
+    never consulted here -- prompts in these scenarios are already token ids, which is the whole
+    point of §6.5 -- but `CompletionsClient` requires one, so it gets one."""
+    return CompletionsClient(
+        BackendConfig(
+            role=ModelRole.PROVER,
+            backend="vllm",
+            model_id=model_id,
+            provenance=ProvenanceClass.OPEN_WEIGHTS,
+            endpoint="http://127.0.0.1:8765",
+        ),
+        load_chat_tokenizer(TOKENIZER_DIR),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--endpoint", default="http://127.0.0.1:8765")
     parser.add_argument("--server-version", default="", help="recorded into provenance")
     args = parser.parse_args()
 
+    client = _client(MODEL)
     interactions: list[dict[str, Any]] = []
-    for spec in REQUESTS:
-        status, response = _post(args.endpoint, spec["body"])
-        print(f"  {spec['name']}: HTTP {status}")
+    for name, note, request in SCENARIOS:
+        body = client.build_body(request)
+        status, response = _post(args.endpoint, body)
+        print(f"  {name}: HTTP {status}")
         interactions.append(
             {
-                "name": spec["name"],
+                "name": name,
                 "recorded": True,
-                "note": spec["note"],
-                "request": spec["body"],
+                "note": note,
+                "request": body,
                 "status": status,
                 "response": response,
             }
         )
-    interactions.extend(_synthesized())
+
+    unknown_body = _client("not/a-real-model").build_body(UNKNOWN_MODEL)
+    status, response = _post(args.endpoint, unknown_body)
+    print(f"  unknown_model: HTTP {status}")
+    interactions.append(
+        {
+            "name": "unknown_model",
+            "recorded": True,
+            "note": "A real error response, so the client's error path is tested against real bytes.",
+            "request": unknown_body,
+            "status": status,
+            "response": response,
+        }
+    )
+
+    interactions.extend(_synthesized(client))
 
     document = {
         "provenance": {
@@ -253,8 +313,9 @@ def main() -> int:
             "model_id": MODEL,
             "recorded_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
             "note": (
-                "Real server responses, stored verbatim. Interactions with recorded=false are "
-                "constructed and say why in their own note."
+                "Real server responses, stored verbatim, keyed on request bodies built by "
+                "`CompletionsClient.build_body` so they cannot drift from what the client sends. "
+                "Interactions with recorded=false are constructed and say why in their own note."
             ),
         },
         "interactions": interactions,

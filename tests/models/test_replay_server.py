@@ -53,7 +53,7 @@ def test_constructed_interactions_are_marked_and_say_why(fixtures: Fixtures) -> 
     """Two fixtures model servers that misbehave, which no correctly-behaving server can produce.
     They are legitimate, and they must never be mistaken for evidence about vLLM."""
     constructed = {i.name for i in fixtures.interactions if not i.recorded}
-    assert constructed == {"missing_logprobs", "ragged_logprobs"}
+    assert constructed == {"missing_logprobs", "logprobs_dropped", "ragged_logprobs"}
     for name in constructed:
         assert "Constructed" in fixtures.by_name(name).note
 
