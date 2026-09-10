@@ -220,7 +220,9 @@ Two decisions drive nearly everything else in the design (spec §1):
   `source ~/.venv-vllm-metal/bin/activate && vllm serve Qwen/Qwen3-0.6B --port 8765 --max-model-len 2048`, then
   `uv run python tests/models/record_fixtures.py --endpoint http://127.0.0.1:8765 --server-version "..."`.
 - Phase 2 baseline (M3.0, `lean_agent_eval.baseline` + `suites/data/phase2_baseline.json`): asserted by the same
-  miniF2F gate, so it needs the same prerequisites. Re-record deliberately after reading the printed diff with
+  miniF2F gate, so it needs the same prerequisites. Note the gate runs **once per module** (a module-scoped
+  `gate_reports` fixture) and every test reads that one result — see the cost note below before adding a test
+  that drives its own run. Re-record deliberately after reading the printed diff with
   `LEAN_AGENT_RERECORD_BASELINE=1 uv run pytest tests/eval/test_minif2f.py -k baseline`; never automatically.
   `tests/eval/test_baseline.py` covers the comparison logic on its own and needs no infrastructure at all.
 
@@ -947,6 +949,32 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: keeping the miniF2F gate affordable
+
+Spec wants this suite on every PR **forever**, so its cost compounds across every future milestone.
+It is worth knowing where that cost lives before adding to it.
+
+- **The gate runs once per module, and every test reads the same reports.** Before that, five tests
+  each drove their own gate: a full-Mathlib worker was warmed five times and the easy tail was
+  proved seven times over, for assertions that are all read-only views of the same behaviour.
+  Measured: **198 s → 66 s** for `tests/eval/test_minif2f.py`. A new test here should take
+  `report` (the first run) or `gate_reports` (all three) rather than calling the pipeline itself.
+- **Three runs, not one, and only because spec says "stable across three runs."** They come from a
+  single `_run_gate(repeats=3)` call sharing one warm worker, which is why the third run is nearly
+  free while still being a genuinely separate run — its own run row, obligations, attempts and
+  verdicts, and `/v1/link` is uncached so all three really re-link, replay and audit.
+- **What the sharing costs is test independence**: a failure in the gate run itself now fails every
+  test in the module rather than one. Read the first failure, not the count. That is the honest
+  reading anyway — they are assertions about one pipeline execution, not five.
+- **The dominant per-run cost is worker warm-up, not the proving.** A full-Mathlib worker is ~6 GiB
+  and ~30 s, so anything that causes an extra pool key or an extra `leanserv` fixture instance
+  costs another warm-up. That is also why the module's fixtures (`leanserv`, `bundle_root`,
+  `mathlib_base_env`, `mathlib`) are module-scoped: a function-scoped one silently multiplies it.
+- **Verify a refactor here by breaking something.** Sharing a fixture is exactly the change that can
+  neuter a suite while leaving it green, so this one was checked the same way M3.0 was: a
+  whitespace-only change to `SymbolicPortfolio.development` must still fail the baseline test with
+  "accepted proof text changed" for all 13 problems. It does.
 
 ## Implementation notes: completions-client facts (M3.4)
 

@@ -98,7 +98,7 @@ def corpus() -> MiniF2FCorpus:
     return load_corpus()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mathlib(lake_project_dir: Path) -> Path:
     if not _mathlib_built(lake_project_dir):
         if os.environ.get("LEANKERNEL_REQUIRED") == "1":
@@ -111,14 +111,14 @@ def mathlib(lake_project_dir: Path) -> Path:
     return lake_project_dir
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def bundle_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Empty at the start, deliberately: a bundle that exists at link time can only have got there
     through `BundleMaterializer`."""
     return tmp_path_factory.mktemp("minif2f_bundles")
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mathlib_base_env(admin_engine: Engine, corpus: MiniF2FCorpus) -> Iterator[str]:
     """A base env whose recipe is miniF2F's own `import Mathlib`.
 
@@ -143,11 +143,11 @@ def mathlib_base_env(admin_engine: Engine, corpus: MiniF2FCorpus) -> Iterator[st
         conn.commit()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def leanserv(
     mathlib: Path,
     leanserv_async_database_url: str,
-    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
     bundle_root: Path,
 ) -> Iterator[TestClient]:
     """leanserv with a pool capped at **one** worker, which is a memory decision, not tidiness.
@@ -160,7 +160,7 @@ def leanserv(
     """
     engine = create_async_engine(leanserv_async_database_url)
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    blobs = LocalBlobStore(tmp_path / "leanserv_blobs")
+    blobs = LocalBlobStore(tmp_path_factory.mktemp("leanserv_blobs"))
     pool = LeanReplPool(mathlib, PoolConfig(max_total_workers=1, bundle_root=bundle_root))
     app = create_app(
         pool,
@@ -539,48 +539,69 @@ def test_the_submitted_file_carries_the_opens_but_never_an_import(corpus: MiniF2
 # --------------------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def gate(
+#: Spec's "stable across three runs", and the only reason this module runs the gate more than once.
+GATE_REPEATS = 3
+
+
+@pytest.fixture(scope="module")
+def gate_reports(
     app_async_database_url: str,
     app_database_url: str,
     leanserv: TestClient,
     bundle_root: Path,
     mathlib: Path,
-    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
     mathlib_base_env: str,
     corpus: MiniF2FCorpus,
     admin_engine: Engine,
-):
-    """Runs the gate, cleaning up whatever runs it created."""
-    created: list[uuid.UUID] = []
+) -> Iterator[list[SuiteReport]]:
+    """Every report this module asserts on, from **one** set of gate runs.
 
-    def run(repeats: int = 1) -> list[SuiteReport]:
-        reports, run_ids = _run_gate(
-            app_async_database_url=app_async_database_url,
-            app_database_url=app_database_url,
-            leanserv=leanserv,
-            bundle_root=bundle_root,
-            lake_project_dir=mathlib,
-            tmp_path=tmp_path,
-            base_env_digest=mathlib_base_env,
-            corpus=corpus,
-            repeats=repeats,
-        )
-        created.extend(run_ids)
-        return reports
+    Module-scoped because the gate is expensive and each run was being paid for repeatedly: five
+    tests each drove their own, so a full-Mathlib worker was warmed five times and the tail was
+    proved seven times over, for assertions that are all read-only views of the same behaviour.
+    Measured at 198 s for the file; sharing one run brings it to roughly a third of that, and spec
+    wants this suite on every PR *forever*, so its cost compounds across every future milestone.
 
-    yield run
-    _cleanup(admin_engine, created)
+    Three runs rather than one only because spec's exit criterion says "stable across three runs".
+    Each is a genuinely separate run -- its own run row, obligations, attempts and verdicts -- and
+    `/v1/link` is uncached, so all three really do re-link, replay and audit in the kernel.
+
+    What this trades away is test independence: a failure in the gate run itself now fails every
+    test in the module rather than one. That is the honest reading anyway -- they are assertions
+    about a single pipeline execution, not about five -- but it does mean a red build here needs
+    the first failure read, not the count.
+    """
+    reports, run_ids = _run_gate(
+        app_async_database_url=app_async_database_url,
+        app_database_url=app_database_url,
+        leanserv=leanserv,
+        bundle_root=bundle_root,
+        lake_project_dir=mathlib,
+        tmp_path=tmp_path_factory.mktemp("gate_blobs"),
+        base_env_digest=mathlib_base_env,
+        corpus=corpus,
+        repeats=GATE_REPEATS,
+    )
+    try:
+        yield reports
+    finally:
+        _cleanup(admin_engine, run_ids)
 
 
-def test_the_null_agent_closes_the_easy_tail_at_zero_token_cost(gate) -> None:
+@pytest.fixture(scope="module")
+def report(gate_reports: list[SuiteReport]) -> SuiteReport:
+    """The first of the three runs, for the tests that only need one."""
+    return gate_reports[0]
+
+
+def test_the_null_agent_closes_the_easy_tail_at_zero_token_cost(report: SuiteReport) -> None:
     """Phase 2's exit criterion, first half.
 
     Every problem in `EASY_TAIL` reaches `proved` through the whole acceptance path -- sealed,
     linked in the kernel against the sealed constant, replayed, axiom-audited, and admitted by
     `mark_proved`'s own re-check of the §1.1 predicate -- with zero model calls.
     """
-    (report,) = gate()
     print(f"\n{report.summary()}")
 
     assert report.unsealed == frozenset(), (
@@ -604,7 +625,7 @@ def test_the_null_agent_closes_the_easy_tail_at_zero_token_cost(gate) -> None:
     assert all(r.tactic in GATE_TACTICS for r in report.results if r.proved)
 
 
-def test_the_materialized_file_elaborates_and_links(gate) -> None:
+def test_the_materialized_file_elaborates_and_links(report: SuiteReport) -> None:
     """Phase 2's exit criterion, second half: "a materialized file passes both the elaboration and
     the link check".
 
@@ -612,7 +633,6 @@ def test_the_materialized_file_elaborates_and_links(gate) -> None:
     exists for -- per-obligation acceptance proves each hole is filled correctly, whole-file
     elaboration proves they were filled *compatibly*.
     """
-    (report,) = gate()
     artifact = report.artifact
 
     assert artifact.holes == len(EASY_TAIL)
@@ -631,7 +651,7 @@ def test_the_materialized_file_elaborates_and_links(gate) -> None:
     assert re.search(r"\bsorry\b(?!_)", artifact.source) is None
 
 
-def test_the_easy_tail_is_stable_across_three_runs(gate) -> None:
+def test_the_easy_tail_is_stable_across_three_runs(gate_reports: list[SuiteReport]) -> None:
     """Spec's "stable across three runs", run as three genuinely separate runs.
 
     Each pass creates its own run, obligations, attempts and verdicts -- `/v1/link` is uncached
@@ -643,7 +663,7 @@ def test_the_easy_tail_is_stable_across_three_runs(gate) -> None:
     every PR forever: without it, a harness that closes a different subset each run looks exactly
     like a policy change.
     """
-    reports = gate(repeats=3)
+    reports = gate_reports
     passes = [r.proved for r in reports]
     assert passes[0] == passes[1] == passes[2] == frozenset(EASY_TAIL), (
         f"pass set drifted across runs: {[sorted(p) for p in passes]}"
@@ -655,7 +675,7 @@ def test_the_easy_tail_is_stable_across_three_runs(gate) -> None:
     assert all(report.tokens == 0 for report in reports)
 
 
-def test_the_phase_2_baseline_is_unchanged(gate) -> None:
+def test_the_phase_2_baseline_is_unchanged(report: SuiteReport) -> None:
     """M3.0 -- the record Phase 3's exit criterion is measured against.
 
     Spec §8's Phase 3 exit begins "the Phase 2 symbolic baseline still passes bit-identically".
@@ -672,7 +692,6 @@ def test_the_phase_2_baseline_is_unchanged(gate) -> None:
 
         LEAN_AGENT_RERECORD_BASELINE=1 uv run pytest tests/eval/test_minif2f.py -k baseline
     """
-    (report,) = gate()
     policy = SymbolicPortfolio(tactics=GATE_TACTICS, tactic_timeout_ms=GATE_TACTIC_TIMEOUT_MS)
     current = baseline.record(
         report,
@@ -692,7 +711,7 @@ def test_the_phase_2_baseline_is_unchanged(gate) -> None:
     assert not differences, "the Phase 2 baseline moved:\n  " + "\n  ".join(differences)
 
 
-def test_the_baseline_records_real_evidence_not_placeholders(gate) -> None:
+def test_the_baseline_records_real_evidence_not_placeholders(report: SuiteReport) -> None:
     """A golden file full of `None` would compare equal to itself forever.
 
     So this checks the recorded fields are actually populated from the run: every proved problem
@@ -714,7 +733,6 @@ def test_the_baseline_records_real_evidence_not_placeholders(gate) -> None:
         assert set(problem.axioms) <= {"propext", "Classical.choice", "Quot.sound"}
 
     # And the digests are of the real thing, checked against a live run rather than themselves.
-    (report,) = gate()
     for result in report.results:
         assert result.proof_text is not None
         assert result.goal_src is not None
