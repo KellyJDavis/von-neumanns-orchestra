@@ -31,8 +31,8 @@ kind, `ReplWorker.seal`, `POST /v1/seal`, `lean_agent_core.digests`) and M2.1.2 
 acceptance path on one submission: link + replay + audit, writing the `verdict` row) and M2.1.3
 (`/v1/decompose` — `sorry` extraction into closed standalone statements) are done, completing M2.1.
 M2.2 (the obligation state machine — `lean_agent_core.state` plus the `SECURITY DEFINER` transition
-functions and cycle-guard trigger in `deploy/grants.sql`) is done; next is M2.3 (scheduler), M2.4
-(control loop), M2.5 (Policy/Action +
+functions and cycle-guard trigger in `deploy/grants.sql`) and M2.3 (scheduler — `lean_agent_core.scheduler`:
+claim, lease, heartbeat, reaper) are done; next is M2.4 (control loop), M2.5 (Policy/Action +
 SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
 its httpx client), M2.10 (miniF2F exit-gate validation).
 
@@ -141,8 +141,9 @@ Two decisions drive nearly everything else in the design (spec §1):
   output needs verification, not blind trust (see the enum-type finding below).
 - Privilege model (`deploy/grants.sql`, spec §5.5): after migrations, apply it with
   `psql postgresql://postgres:postgres@localhost:5432/leanagent -f deploy/grants.sql` — this file holds both
-  the role grants and every obligation-status transition function (M2.2), since the two are one design: `app`
-  cannot write `obligation.status`, so the functions are the only way it moves. Note the plain
+  the role grants, every obligation-status transition function (M2.2), and the scheduler's claim/reap functions
+  (M2.3), since the three are one design: `app` cannot write `obligation.status`, so these functions are the
+  only way it moves. Note the plain
   `postgresql://` URL, not `DATABASE_URL`'s `postgresql+asyncpg://` (psql/libpq don't understand the SQLAlchemy
   driver suffix). It's idempotent (safe to re-run). CI applies it via `psycopg` instead of the `psql` binary, so
   it doesn't depend on a Postgres client being preinstalled on the runner — see `.github/workflows/ci.yml`. Then
@@ -566,6 +567,49 @@ against a real PostgreSQL 16 driven as the real `app` role.
   creation half; the disposal half bites separately and later. A fixture that built engines lazily and disposed
   them after the test passed every short test and failed the one making enough round trips to keep a connection
   checked out, with "Event loop is closed" raised from inside `dispose()`.
+
+## Implementation notes: scheduler facts (M2.3)
+
+These surfaced while building `lean_agent_core.scheduler` and the `claim_attempt`/`reap_expired_attempts`
+functions, against a real PostgreSQL 16 driven as the real `app` role.
+
+- **A `VOLATILE` function called in a `WHERE` clause runs once per scanned row, and for `claim_attempt` that
+  meant claiming an obligation per row of `attempt`.** The first version returned a bare `uuid` and was read
+  back as `SELECT ... FROM attempt a WHERE a.id = claim_attempt(...)`, which looks like one call and is not:
+  every row the scan touched triggered another claim, marking unrelated obligations `in_progress` and opening
+  attempts nobody was working. The fix is `RETURNS TABLE (attempt_id, obligation_id, run_id)` and
+  `SELECT ... FROM claim_attempt(...)`, which is also one round trip rather than a claim plus a read-back
+  against a table other workers are concurrently writing. Caught immediately by the tests (every claim test
+  failed at once), but worth naming: this is not a Postgres quirk, it is what `VOLATILE` means, and the
+  wrong form reads perfectly naturally.
+- **`CREATE OR REPLACE FUNCTION` cannot change a function's return type** ("cannot change return type of
+  existing function"), so the fix above needed an explicit `DROP FUNCTION` against any database that already
+  had the old signature. `grants.sql` is otherwise re-appliable, and this is the one edit that breaks that
+  property — noted in the file itself. Adding a parameter is a different trap in the same family: it creates a
+  new *overload*, leaving the old signature callable.
+- **The heartbeat is a thread with its own connection, and there is a test that fails if it ever becomes an
+  asyncio task.** Spec's reason ("a blocking tokenizer call or CPU-bound serialization inside a policy would
+  otherwise starve it and get a live worker reaped") is the kind of claim that is easy to honour in shape and
+  lose in substance, so `test_heartbeat_keeps_beating_while_the_event_loop_is_blocked` blocks the loop with a
+  synchronous `time.sleep` — the way a real policy does inside a tokenizer — and asserts beats still land in the
+  database. An asyncio heartbeat records zero beats there. (Ruff's `ASYNC251` correctly objects to
+  `time.sleep` in an async function; that one call carries a `noqa` with the reason, since blocking the loop is
+  the scenario.)
+- **A heartbeat that only stamps `heartbeat_at` is useless.** Each beat must also extend `lease_expires_at`, or
+  the lease runs out under a worker that is demonstrably alive and the reaper takes its work.
+- **Lease expiry means the worker is gone, never that the attempt took too long** (spec's own words), so
+  `reap_expired_attempts` returns the obligation to `open` **without** charging an attempt. Charging would let a
+  node that keeps dying quietly consume every obligation's budget — the same silent pass-rate depression
+  `infra_error` exists to prevent. The reaper also expires the attempt and releases the obligation in one
+  function: doing them separately leaves a window whose crash strands an obligation `in_progress` with no live
+  attempt, which nothing would ever reclaim.
+- **The reaper deliberately does *not* call `release_obligation`.** That function raises when the obligation is
+  not releasable, which is right for one worker reporting its own outcome and wrong for a best-effort batch
+  sweep that must not abort on one odd row.
+- **`SKIP LOCKED` needs a genuinely concurrent test to mean anything.** Two sequential claims pass against a
+  completely unlocked implementation; `test_two_concurrent_claims_never_take_the_same_obligation` runs eight
+  claims over eight connections through `asyncio.gather` against four obligations and asserts the claimed ids
+  are distinct — which fails under either "handed out twice" or "serialized and blocked".
 
 ## Implementation notes: blob store facts
 

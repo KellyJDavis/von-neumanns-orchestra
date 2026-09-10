@@ -6,6 +6,12 @@
 -- Idempotent: safe to re-run against a database that already has these roles/grants (uses
 -- `IF NOT EXISTS` for role creation and IF-wrapped checks where Postgres has no direct
 -- equivalent), since deploys are expected to apply it every time, not just once.
+--
+-- One caveat with teeth: `CREATE OR REPLACE FUNCTION` cannot change an existing function's return
+-- type ("cannot change return type of existing function"). Changing one -- as M2.3 did, turning
+-- `claim_attempt` from `RETURNS uuid` into `RETURNS TABLE(...)` -- needs an explicit
+-- `DROP FUNCTION` against every database that already has the old signature. Adding a *new*
+-- parameter is likewise a new overload rather than a replacement, leaving the old one callable.
 
 DO $$
 BEGIN
@@ -273,3 +279,122 @@ GRANT EXECUTE ON FUNCTION mark_decomposed TO app;
 GRANT EXECUTE ON FUNCTION release_obligation TO app;
 GRANT EXECUTE ON FUNCTION mark_failed TO app;
 GRANT EXECUTE ON FUNCTION mark_blocked TO app;
+
+-- ---------------------------------------------------------------------------
+-- Scheduler (spec §6.4). M2.3.
+
+-- `open` -> `in_progress`, plus the `attempt` row that owns the lease. Spec §6.4 writes this as a
+-- CTE chain in the application; it is a function here for M2.2's reason -- `app` cannot write
+-- `obligation.status` -- and the whole chain has to be one statement anyway, since a claim that
+-- selected an obligation in one round trip and marked it in another would hand the same work to
+-- two workers.
+--
+-- Returns the new attempt's id, or NULL when nothing is claimable. NULL is the ordinary idle case
+-- (spec's control loop backs off on it), not an error.
+--
+-- `FOR UPDATE OF o SKIP LOCKED` is what makes concurrent workers pick *different* obligations
+-- rather than serializing on the highest-priority row. Spec names the cost and accepts it:
+-- "ORDER BY … SKIP LOCKED can invert priority under contention; documented, and shardable by
+-- hashtext(id) if it becomes visible."
+--
+-- `p_tenants` is spec's `$eligible_tenants`, "refreshed by the admission loop". No admission loop
+-- exists yet (multi-tenancy is post-MVP, §9), so NULL means "no tenant filter" -- an explicit
+-- pass-through rather than a hardcoded assumption that every tenant is eligible, so the parameter
+-- is already in place when the loop that computes it arrives.
+--
+-- The budget test here is `spent_attempts < budget_attempts`, checked again exactly at commit per
+-- spec: "Quota is checked coarsely here and exactly at commit; over-admission by one attempt is
+-- acceptable, a per-row function call on a locking scan is not."
+-- Returns a one-row table rather than a bare uuid, so the caller reads the attempt in the same
+-- round trip. A `uuid`-returning version, called as `SELECT ... FROM attempt a WHERE a.id =
+-- claim_attempt(...)`, is a trap and was written first: the function is VOLATILE, so Postgres
+-- evaluates it *once per scanned row* of `attempt`, claiming a fresh obligation every time.
+CREATE OR REPLACE FUNCTION claim_attempt(
+  p_worker   text,
+  p_lease    interval,
+  p_policy   text,
+  p_cfg_hash bytea,
+  p_tenants  uuid[] DEFAULT NULL
+) RETURNS TABLE (attempt_id uuid, obligation_id uuid, run_id uuid)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  v_obligation uuid;
+  v_run        uuid;
+  v_attempt    uuid;
+BEGIN
+  SELECT o.id, o.run_id INTO v_obligation, v_run
+  FROM obligation o
+  JOIN run r ON r.id = o.run_id
+  WHERE o.status = 'open'
+    AND o.spent_attempts < o.budget_attempts
+    AND r.status = 'running'
+    AND (p_tenants IS NULL OR r.tenant_id = ANY(p_tenants))
+  ORDER BY o.priority DESC, o.depth ASC, o.created_at ASC
+  FOR UPDATE OF o SKIP LOCKED
+  LIMIT 1;
+
+  IF v_obligation IS NULL THEN
+    RETURN;  -- no rows: the ordinary idle case
+  END IF;
+
+  UPDATE obligation SET status = 'in_progress', updated_at = now() WHERE id = v_obligation;
+
+  INSERT INTO attempt (obligation_id, run_id, policy_id, policy_config_hash,
+                       lease_owner, lease_expires_at, heartbeat_at, status)
+  VALUES (v_obligation, v_run, p_policy, p_cfg_hash,
+          p_worker, now() + p_lease, now(), 'claimed')
+  RETURNING id INTO v_attempt;
+
+  RETURN QUERY SELECT v_attempt, v_obligation, v_run;
+END $$;
+
+-- Reap attempts whose lease has expired: the worker holding them is gone.
+--
+-- Spec is explicit about what this means and it is worth restating where the code is: "Lease
+-- expiry means *the worker is gone*, never *the attempt took too long*. Wallclock is a budget
+-- concern." So the obligation is returned to `open` **without charging an attempt** -- charging
+-- would let a node that keeps dying quietly consume every obligation's budget and depress the
+-- reported pass rate, which is the same failure `infra_error` exists to prevent.
+--
+-- Both writes happen in one statement pair inside one function deliberately. Expiring the attempt
+-- and releasing the obligation separately leaves a window -- and a crash in that window leaves an
+-- obligation stuck `in_progress` with no live attempt, which nothing would ever reclaim.
+--
+-- The obligation update is written inline rather than calling `release_obligation`: that function
+-- raises when the obligation is not releasable, which is correct for a single worker reporting its
+-- own outcome and wrong for a best-effort batch sweep that must not abort on one odd row.
+CREATE OR REPLACE FUNCTION reap_expired_attempts(p_limit int DEFAULT 100)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  v_reaped int;
+BEGIN
+  WITH expired AS (
+    SELECT a.id, a.obligation_id
+    FROM attempt a
+    WHERE a.status IN ('claimed', 'running')
+      AND a.lease_expires_at IS NOT NULL
+      AND a.lease_expires_at < now()
+    ORDER BY a.lease_expires_at
+    FOR UPDATE OF a SKIP LOCKED
+    LIMIT p_limit
+  ),
+  closed AS (
+    UPDATE attempt a SET status = 'expired', finished_at = now(), lease_owner = NULL
+    FROM expired WHERE a.id = expired.id
+    RETURNING a.obligation_id
+  ),
+  released AS (
+    UPDATE obligation o SET status = 'open', updated_at = now()
+    FROM closed WHERE o.id = closed.obligation_id AND o.status = 'in_progress'
+    RETURNING o.id
+  )
+  SELECT count(*) INTO v_reaped FROM closed;
+  RETURN v_reaped;
+END $$;
+
+GRANT EXECUTE ON FUNCTION claim_attempt TO app;
+GRANT EXECUTE ON FUNCTION reap_expired_attempts TO app;
