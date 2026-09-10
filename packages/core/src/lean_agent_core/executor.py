@@ -36,6 +36,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -50,8 +51,19 @@ from lean_agent_core.actions import (
     SubmitProof,
 )
 from lean_agent_core.blobs import store_or_inline, to_bytea
+from lean_agent_core.codecs import (
+    encode_trajectory_logprobs,
+    encode_trajectory_token_ids,
+)
 from lean_agent_core.enums import ProvenanceClass
-from lean_agent_core.protocols import BlobStore, LeanService, Policy
+from lean_agent_core.protocols import (
+    BlobStore,
+    Completion,
+    CompletionResponse,
+    LeanService,
+    Policy,
+)
+from lean_agent_core.roles import ModelRole
 from lean_agent_core.scheduler import ClaimedAttempt
 from lean_agent_core.state import ObligationOutcome
 from lean_agent_core.worker import AttemptResult, AttemptRunner, AttemptSpend
@@ -60,6 +72,26 @@ from lean_agent_core.worker import AttemptResult, AttemptRunner, AttemptSpend
 #: its own session factory (or, in a test, hand over a fixed context) without either side knowing
 #: how the other gets its database connection.
 ContextLoader = Callable[[uuid.UUID, uuid.UUID], Awaitable[tuple[ObligationContext, Budget]]]
+
+
+class CompletionService(Protocol):
+    """What the executor needs to turn a `RequestCompletion` into tokens.
+
+    A protocol in `core` rather than a direct dependency on `lean_agent_models.router`, for the
+    reason `LeanService` is one: `core` holds the executor, `models` depends on `core`, and the
+    other direction would be a cycle. It is also the narrower contract -- the executor needs a
+    role resolved and a request performed, not the router's configuration, manifest or lifecycle.
+
+    `provenance_for` is separate from `complete` because §7.1 is specific: `trajectory.provenance`
+    is "derived from `ModelBackend.provenance` at model registration time. It is never asserted by
+    whatever code is writing the trajectory row." The executor asks which provenance served a role;
+    it never chooses one.
+    """
+
+    async def complete(self, request: RequestCompletion) -> CompletionResponse: ...
+
+    def provenance_for(self, role: ModelRole) -> ProvenanceClass: ...
+
 
 #: Lean's axiom for `sorry`. Named directly, which is safe here for the reason `Audit.lean` gives:
 #: it is Lean's one stable, version-independent axiom name -- unlike the `native_decide` axioms
@@ -152,23 +184,65 @@ class TrajectoryWriter:
         sampling: dict[str, object] | None = None,
         model_id: str | None = None,
         seed: int | None = None,
+        prompt_token_ids: tuple[int, ...] = (),
+        completions: tuple[Completion, ...] = (),
+        model_weights_hash: str | None = None,
+        tokenizer_revision: str | None = None,
     ) -> None:
+        """Write the one `trajectory` row an attempt produces.
+
+        The token-id and logprob columns have existed since M1.5 and were left NULL through all of
+        Phase 2, which was correct then -- a symbolic attempt has no tokens. They are filled from
+        M3.7 on, and they are the reason `provenance` matters: §9's own table lists "token ids +
+        logprobs at generation" under *cannot be recomputed correctly later*, so an attempt whose
+        completions were not recorded here is one that can never be trained on or replayed.
+
+        `model_weights_hash` and `tokenizer_revision` go beside them because ids alone are not
+        interpretable: the same ids mean different text under a different tokenizer, and the same
+        prompt gives different ids under different weights (§7.3's manifest names both for exactly
+        this reason).
+        """
         payload = json.dumps([step.__dict__ for step in steps], sort_keys=True).encode()
         steps_blob = to_bytea(await store_or_inline(self._blobs, payload, "application/json"))
+
+        token_ids_blob: bytes | None = None
+        logprobs_blob: bytes | None = None
+        if completions:
+            token_ids_blob = to_bytea(
+                await store_or_inline(
+                    self._blobs,
+                    encode_trajectory_token_ids(prompt_token_ids, completions),
+                    "application/json",
+                )
+            )
+            logprobs_blob = to_bytea(
+                await store_or_inline(
+                    self._blobs,
+                    encode_trajectory_logprobs(completions),
+                    "application/json",
+                )
+            )
+
         async with self._sessions() as session:
             await session.execute(
                 text(
-                    "INSERT INTO trajectory (attempt_id, provenance, model_id, sampling, seed, "
-                    "steps_blob, n_steps) VALUES (:id, CAST(:prov AS provenance_class), :model, "
-                    "CAST(:sampling AS jsonb), :seed, :steps, :n)"
+                    "INSERT INTO trajectory (attempt_id, provenance, model_id, "
+                    "model_weights_hash, tokenizer_revision, sampling, seed, steps_blob, "
+                    "token_ids_blob, logprobs_blob, n_steps) VALUES "
+                    "(:id, CAST(:prov AS provenance_class), :model, :weights, :tokenizer, "
+                    "CAST(:sampling AS jsonb), :seed, :steps, :tokens, :logprobs, :n)"
                 ),
                 {
                     "id": attempt_id,
                     "prov": provenance.value,
                     "model": model_id,
+                    "weights": model_weights_hash,
+                    "tokenizer": tokenizer_revision,
                     "sampling": json.dumps(sampling or {}, sort_keys=True),
                     "seed": seed,
                     "steps": steps_blob,
+                    "tokens": token_ids_blob,
+                    "logprobs": logprobs_blob,
                     "n": len(steps),
                 },
             )
@@ -189,11 +263,17 @@ class PolicyExecutor:
         lean: LeanService,
         trajectories: TrajectoryWriter,
         context_loader: ContextLoader,
+        completions: CompletionService | None = None,
     ) -> None:
         self._policy = policy
         self._lean = lean
         self._trajectories = trajectories
         self._load_context = context_loader
+        #: `None` for a policy that asks for none -- `SymbolicPortfolio` is the whole of Phase 2 --
+        #: which is what keeps "zero model calls anywhere in the codebase" true by construction
+        #: rather than by discipline: with no service wired up, a `RequestCompletion` cannot be
+        #: performed even by mistake.
+        self._completions = completions
 
     async def execute(
         self, *, attempt_id: uuid.UUID, ctx: ObligationContext, budget: Budget
@@ -209,6 +289,16 @@ class PolicyExecutor:
         kernel_ms = 0
         completions = 0
         outcome = ObligationOutcome.RETRYABLE_FAILURE
+        model_provenance: ProvenanceClass | None = None
+        model_id: str | None = None
+        model_weights_hash: str | None = None
+        tokenizer_revision: str | None = None
+        sampling: dict[str, object] | None = None
+        seed: int | None = None
+        prompt_token_ids: tuple[int, ...] = ()
+        sampled: list[Completion] = []
+        tokens_in = 0
+        tokens_out = 0
 
         async for action in self._policy.propose(ctx, budget):
             match action:
@@ -307,14 +397,62 @@ class PolicyExecutor:
                         "inserted and its bundle materialized (M2.6/M2.7), not just /v1/decompose"
                     )
                 case RequestCompletion():
-                    raise PolicyContractError(
-                        f"policy {self._policy.id} requested completions from role "
-                        f"{action.role!r}, but no model layer exists (Phase 2 is zero model calls)"
+                    if action.role not in self._policy.roles:
+                        raise PolicyContractError(
+                            f"policy {self._policy.id} requested role {action.role.value!r}, "
+                            f"which is outside its own declared roles "
+                            f"{sorted(r.value for r in self._policy.roles)}. `Policy.roles` is "
+                            "what a router checks before the run starts, so a policy that asks "
+                            "for more than it declared makes that check meaningless."
+                        )
+                    if self._completions is None:
+                        raise PolicyContractError(
+                            f"policy {self._policy.id} requested completions from role "
+                            f"{action.role.value!r}, but this executor has no completion service. "
+                            "A policy declaring roles needs one wired up."
+                        )
+
+                    sample = await self._completions.complete(action)
+                    completions += 1
+                    # Every sample's cost is counted, not just a winner's -- the same principle as
+                    # kernel time above, and the reason §7.5 reports "pass@k with the budget that
+                    # produced it".
+                    tokens_in += len(sample.prompt_token_ids)
+                    tokens_out += sum(len(c.token_ids) for c in sample.completions)
+                    sampled.extend(sample.completions)
+                    prompt_token_ids = sample.prompt_token_ids or prompt_token_ids
+                    model_id = sample.model_id
+                    model_weights_hash = sample.model_weights_hash or model_weights_hash
+                    tokenizer_revision = sample.tokenizer_revision or tokenizer_revision
+                    model_provenance = self._completions.provenance_for(action.role)
+                    sampling = dict(action.sampling) or sampling
+                    seed = action.seed if action.seed is not None else seed
+                    steps.append(
+                        TrajectoryStep(
+                            label=action.role.value,
+                            action="RequestCompletion",
+                            ok=True,
+                            detail=f"{len(sample.completions)} sample(s) from {sample.model_id}",
+                        )
                     )
 
-        provenance = resolve_provenance(None, completions)
-        await self._trajectories.write(attempt_id=attempt_id, provenance=provenance, steps=steps)
-        return AttemptResult(outcome=outcome, spend=AttemptSpend(kernel_ms=kernel_ms))
+        provenance = resolve_provenance(model_provenance, completions)
+        await self._trajectories.write(
+            attempt_id=attempt_id,
+            provenance=provenance,
+            steps=steps,
+            sampling=sampling,
+            model_id=model_id,
+            seed=seed,
+            prompt_token_ids=prompt_token_ids,
+            completions=tuple(sampled),
+            model_weights_hash=model_weights_hash,
+            tokenizer_revision=tokenizer_revision,
+        )
+        return AttemptResult(
+            outcome=outcome,
+            spend=AttemptSpend(tokens_in=tokens_in, tokens_out=tokens_out, kernel_ms=kernel_ms),
+        )
 
     def runner(self) -> AttemptRunner:
         """Adapt to M2.4's `AttemptRunner`: the loop hands over a claimed attempt, and everything

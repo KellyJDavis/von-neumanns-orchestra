@@ -19,6 +19,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from lean_agent_core.roles import ModelRole
+
 
 @dataclass(frozen=True)
 class SubmitProof:
@@ -64,13 +66,32 @@ class CallTool:
 
 
 @dataclass(frozen=True)
-class RequestCompletion:
-    """Ask for tokens from a *role*, never a named model (spec §6.5: "Policies request a role,
-    never a model. Switching provers is one TOML line")."""
+class Message:
+    """One chat turn. `role` here is the *conversational* role (`system`/`user`/`assistant`),
+    which has nothing to do with `ModelRole` -- an unfortunate collision inherited from the
+    OpenAI wire format, kept because renaming it would diverge from every chat template."""
 
     role: str
-    prompt: str
+    content: str
+
+
+@dataclass(frozen=True)
+class RequestCompletion:
+    """Ask for tokens from a *model* role, never a named model (spec §6.5: "Policies request a
+    role, never a model. Switching provers is one TOML line").
+
+    `messages` rather than a single prompt string, because a chat model's prompt is not a string:
+    §6.5 requires the chat template be rendered client-side, and a template needs turns to render.
+    A bare string could not express a system prompt, which every prover model this system will run
+    actually uses -- and §6.6's context bands are assembled into turns, not concatenated into one.
+    """
+
+    role: ModelRole
+    messages: tuple[Message, ...]
     sampling: dict[str, Any] = field(default_factory=dict)
+    #: Overrides the backend's configured seed. `None` leaves the deployment's choice alone, which
+    #: for an unseeded sampling policy is what makes each resample genuinely fresh (M3.6).
+    seed: int | None = None
 
 
 @dataclass(frozen=True)

@@ -105,13 +105,18 @@ class RecordingTrajectories:
     async def write(
         self,
         *,
-        attempt_id: uuid.UUID,
         provenance: ProvenanceClass,
         steps: list[TrajectoryStep],
-        sampling: dict[str, object] | None = None,
-        model_id: str | None = None,
-        seed: int | None = None,
+        **_: object,
     ) -> None:
+        """`**_` rather than the writer's full signature, deliberately.
+
+        M3.7 widened `TrajectoryWriter.write` with four model-output arguments and broke this stub,
+        which is the right kind of breakage -- it said the signature had moved. But this test is
+        about the executor's *screening* decision and cares only which steps were recorded, so
+        mirroring every future column here would guarantee it breaks again for reasons it does not
+        test. `tests/db/test_trajectory.py` is what holds the real writer to the real columns.
+        """
         self.steps = list(steps)
         self.provenance = provenance
 
