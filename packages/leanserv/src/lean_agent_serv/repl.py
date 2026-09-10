@@ -28,6 +28,15 @@ from typing import Any, NoReturn, Self
 #: Spec §6.2's default: 300 s per command, overridable per request.
 DEFAULT_TIMEOUT_MS = 300_000
 
+#: Largest response line accepted from a worker, in bytes. One response is one JSON object on one
+#: line, so this is the cap on a single `check`/`seal`/`decompose`/`link` reply -- diagnostics
+#: included. Ordinary traffic is nowhere near it: across all 488 miniF2F problems the largest
+#: `decompose` response measured 1,964 bytes. What blows past `asyncio`'s own 64 KiB default is a
+#: *suggestion* tactic -- `apply?`/`exact?` emit a "Try this" block per candidate, and on a goal
+#: they cannot close there are many. 32 MiB leaves room for that while staying well short of
+#: "unbounded", which is what the default was protecting against and what this must not become.
+STDOUT_LINE_LIMIT = 32 * 1024 * 1024
+
 
 class ReplCrashed(Exception):
     """Base for any condition that leaves this worker unusable -- the caller (eventually
@@ -74,6 +83,12 @@ class CheckResult:
 
     ok: bool
     diagnostics: tuple[str, ...] = field(default_factory=tuple)
+    #: Union of the transitive axiom cones of everything the body newly declared, empty when it
+    #: did not elaborate. `ok` alone cannot tell a proof from a `sorry`: a `sorry` -- explicit, or
+    #: left behind by a tactic like `apply?` that only partially closes the goal -- is a *warning*,
+    #: so such a body still reports `ok=True`. Any caller screening proof candidates must look
+    #: here; see `Serve.lean`'s `CheckResponse.axioms`.
+    axioms: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -233,6 +248,15 @@ class ReplWorker:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # asyncio's default StreamReader limit is 64 KiB, and a response line is one JSON
+            # object however large -- a real Mathlib `decompose` blows straight through it, and
+            # the failure is a bare `ValueError("Separator is not found, and chunk exceed the
+            # limit")` from inside `readline`, outside this module's crash taxonomy entirely.
+            # Found by the miniF2F survey (M2.10), which is exactly the sort of traffic production
+            # sees and the `Init`-only tests never generate. Raised rather than removed: an
+            # unbounded reader turns a runaway `#eval` print loop -- whose output Lean routes into
+            # the *response* rather than to stderr (M1.8.2) -- into an unbounded allocation.
+            limit=STDOUT_LINE_LIMIT,
             # `lake exe` does not exec-replace itself -- it forks the actual `leankernel` binary
             # as its own child and stays alive supervising it (confirmed empirically: `ps aux`
             # during a hung check showed two separate PIDs, `lake exe leankernel serve` and
@@ -336,6 +360,17 @@ class ReplWorker:
         try:
             async with asyncio.timeout(timeout_ms / 1000):
                 raw = await stdout.readline()
+        except ValueError as exc:
+            # A response line longer than `STDOUT_LINE_LIMIT`. `readline` has already consumed an
+            # unknown amount of it and cannot skip to the next newline, so the stream is
+            # unrecoverably desynchronized from the request stream -- which is precisely what
+            # `ReplProtocolError` means. Killing is not optional: leaving the worker in the pool
+            # would hand the tail of this response to somebody else's request.
+            await self._kill_and_raise(
+                ReplProtocolError,
+                f"response line exceeded {STDOUT_LINE_LIMIT} bytes ({exc}) -- worker "
+                "desynchronized",
+            )
         except TimeoutError:
             self._kill()
             await self._process.wait()
@@ -377,7 +412,9 @@ class ReplWorker:
         """
         response = await self._request({"body": body}, timeout_ms)
         return CheckResult(
-            ok=bool(response.get("ok")), diagnostics=tuple(response.get("diagnostics", []))
+            ok=bool(response.get("ok")),
+            diagnostics=tuple(response.get("diagnostics", [])),
+            axioms=tuple(response.get("axioms", [])),
         )
 
     async def seal(

@@ -68,6 +68,7 @@ set_option autoImplicit false
 set_option relaxedAutoImplicit false
 namespace LeanAgent.Goals
 def G_add_zero : Sort _ := ∀ n : Nat, n + 0 = n
+def G_comm : Sort _ := ∀ n m : Nat, n + m = m + n
 def G_poly : Sort _ := PUnit
 end LeanAgent.Goals
 """

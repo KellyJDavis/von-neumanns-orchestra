@@ -104,6 +104,7 @@ class LeanServiceClient:
             diagnostics=tuple(data["diagnostics"]),
             cache_hit=data["cache_hit"],
             elapsed_ms=data["elapsed_ms"],
+            axioms=tuple(data.get("axioms", ())),
         )
 
     async def seal(

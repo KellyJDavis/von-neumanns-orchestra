@@ -61,6 +61,14 @@ from lean_agent_core.worker import AttemptResult, AttemptRunner, AttemptSpend
 #: how the other gets its database connection.
 ContextLoader = Callable[[uuid.UUID, uuid.UUID], Awaitable[tuple[ObligationContext, Budget]]]
 
+#: Lean's axiom for `sorry`. Named directly, which is safe here for the reason `Audit.lean` gives:
+#: it is Lean's one stable, version-independent axiom name -- unlike the `native_decide` axioms
+#: spec §4.4 warns about, which were silently renamed in 4.29 and are why the *audit* is an
+#: allowlist rather than a name list. This is not the audit: it is a screen deciding whether a
+#: candidate is worth spending the attempt's one verdict on, and the run's real allowlist is still
+#: applied by `/v1/link`. A candidate rejected here would have been rejected there.
+SORRY_AXIOM = "sorryAx"
+
 logger = logging.getLogger(__name__)
 
 
@@ -219,6 +227,33 @@ class PolicyExecutor:
                                 action="SubmitProof/check",
                                 ok=False,
                                 detail=_first(screened.diagnostics),
+                            )
+                        )
+                        continue
+                    if SORRY_AXIOM in screened.axioms and not ctx.allow_sorry:
+                        # `ok` is true and the candidate is still not a proof. A `sorry` is a
+                        # *warning* in Lean, so a body that leaves the goal open elaborates
+                        # cleanly -- and the search tactics do this constantly: `apply?` reports
+                        # "found a partial proof", emits its suggestions, and lets Lean's error
+                        # recovery fill the hole with `sorryAx`.
+                        #
+                        # Screening on `ok` alone therefore spent this attempt's *one* verdict on
+                        # a candidate the audit was always going to reject, and the `break` below
+                        # then ended the attempt -- so with `exact?`/`apply?`/`rw?` sitting ahead
+                        # of `linarith` in the portfolio, the tactics that would actually have
+                        # closed the goal were unreachable. Found by M2.10's miniF2F gate; every
+                        # tactic after the first suggestion tactic was dead code before this.
+                        #
+                        # Gated on the run's own `allow_sorry` so this screen says exactly what
+                        # the audit will say: a run that permits `sorryAx` would have accepted
+                        # this candidate, and skipping it here would deny that run a result it
+                        # asked for.
+                        steps.append(
+                            TrajectoryStep(
+                                label=action.label,
+                                action="SubmitProof/check",
+                                ok=False,
+                                detail=f"elaborated but depends on {SORRY_AXIOM}",
                             )
                         )
                         continue

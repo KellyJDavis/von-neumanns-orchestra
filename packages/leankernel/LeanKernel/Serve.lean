@@ -41,6 +41,22 @@ structure CheckResponse where
   id          : Option String := none
   ok          : Bool
   diagnostics : Array String := #[]
+  /-- The union of the transitive axiom cones of everything this body newly declared.
+
+  Reported because `ok` cannot carry what a screening caller needs: a `sorry` -- explicit, or
+  inserted by Lean's own error recovery when a tactic leaves the goal open -- produces a *warning*,
+  never an error, so a `sorry`-backed development elaborates with `ok := true` (M1.1's finding,
+  which M1.9 pinned as a known limitation of plain `check`). That is right for "did this
+  elaborate" and actively harmful for the one caller that screens proof candidates: `apply?`,
+  `exact?` and `rw?` routinely leave a partial proof plus `warning: declaration uses 'sorry'`, and
+  a screen reading `ok` alone takes that for a proof.
+
+  Structural rather than a scan of `diagnostics` for the warning text, so it cannot be defeated by
+  a message-format change; and the axiom *set* rather than a `usesSorry` flag, because that is what
+  spec's own `verification_cache.axioms` column is for and it survives a cache hit unchanged.
+  This stays reporting, never enforcement -- what is *permitted* remains the run's allowlist,
+  applied at `/v1/link`. -/
+  axioms      : Array String := #[]
   deriving ToJson
 
 /-- One goal to seal: `name` is the unqualified declaration name (the bundle puts it under
@@ -104,15 +120,35 @@ def goalDeclSource (goal : SealGoal) : String :=
     else s!".\{{String.intercalate ", " goal.levelParams.toList}}"
   s!"def {goal.name}{universes} : Sort _ := {goal.statement}"
 
+/-- Every constant in `env` absent from `baseEnv` -- the same new-vs-base delta `Replay.lean`
+computes, reused here to check what a goal's own elaboration actually introduced. -/
+def newConstantNames (baseEnv env : Environment) : Array Name :=
+  env.constants.fold (init := #[]) fun acc n _ =>
+    if baseEnv.constants.contains n then acc else acc.push n
+
 /-- Elaborate `body` against `baseEnv` fresh each call -- `Lean.Elab.process` returns a new
 environment rather than mutating `baseEnv` in place, so one request's declarations never leak
 into the next. This is the isolation different agent attempts checked against the same warm
 worker need: two unrelated submissions must never see each other's names. -/
 def checkAgainst (baseEnv : Environment) (body : String) : IO CheckResponse := do
   try
-    let (_env, messages) ← Lean.Elab.process body baseEnv {}
+    let (env, messages) ← Lean.Elab.process body baseEnv {}
     let diagnostics ← messages.toList.toArray.mapM (·.toString)
-    return { ok := !messages.hasErrors, diagnostics }
+    let ok := !messages.hasErrors
+    -- Only computed when the body elaborated: `collectAxioms` walks the whole transitive
+    -- dependency cone of every new declaration -- the dominant per-declaration cost in gate 7's
+    -- fuzz harness -- and a body that already failed has nothing worth screening.
+    let axioms ← if !ok then pure #[] else do
+      let coreCtx : Core.Context := { fileName := "<check>", fileMap := FileMap.ofString body }
+      let collect : CoreM (Array String) := do
+        let mut seen : Array Name := #[]
+        for decl in newConstantNames baseEnv env do
+          for ax in (← auditAxioms decl #[]).axioms do
+            if !seen.contains ax then
+              seen := seen.push ax
+        return seen.map toString
+      collect.toIO' coreCtx { env, messages }
+    return { ok, diagnostics, axioms }
   catch ex =>
     return { ok := false, diagnostics := #[toString ex] }
 
@@ -124,12 +160,6 @@ without risking a different quoting convention (e.g. escaping reserved-word comp
 `«...»`, which neither a module path nor a generated goal name ever needs). -/
 def dottedName (s : String) : Name :=
   (s.splitOn ".").foldl Name.mkStr Name.anonymous
-
-/-- Every constant in `env` absent from `baseEnv` -- the same new-vs-base delta `Replay.lean`
-computes, reused here to check what a goal's own elaboration actually introduced. -/
-def newConstantNames (baseEnv env : Environment) : Array Name :=
-  env.constants.fold (init := #[]) fun acc n _ =>
-    if baseEnv.constants.contains n then acc else acc.push n
 
 /-- Whether `s` is acceptable as a goal's unqualified declaration name: a single identifier
 component, allowlisted character by character (leading letter or `_`, then letters, digits, `_`,

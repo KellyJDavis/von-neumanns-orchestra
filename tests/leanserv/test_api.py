@@ -133,6 +133,54 @@ def test_check_second_call_is_a_cache_hit(client: TestClient, registered_base_en
     assert second["ok"] == first["ok"]
 
 
+def test_check_reports_the_axiom_cone_and_a_sorry_survives_the_cache(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """`ok` cannot tell a proof from a `sorry`, so `/v1/check` reports the axiom cone as well.
+
+    A `sorry` is a *warning* in Lean, never an error (M1.1), so this body elaborates with
+    `ok=True` and `kind=proved` -- which M1.9 deliberately pinned as plain `check`'s documented
+    behaviour and is not changed here. What is new is that a caller can now tell: the cone carries
+    `sorryAx`. `PolicyExecutor` screens on exactly this, because reading `ok` alone made it spend
+    an attempt's one verdict on the partial proofs `apply?`/`exact?`/`rw?` leave behind.
+
+    The second call asserts the cone survives a cache hit. Without that it would be reported on a
+    cold run and lost on a warm one -- so a screen would accept on the second run what it rejected
+    on the first, and "stable across three runs" would be false in the one place nobody looks.
+    """
+    req = {
+        "base_env_digest": registered_base_env,
+        "body": "theorem t : (1 : Nat) + 1 = 2 := by sorry",
+    }
+    first = client.post("/v1/check", json=req).json()
+    assert first["ok"] is True
+    assert first["kind"] == "proved"
+    assert first["cache_hit"] is False
+    assert "sorryAx" in first["axioms"]
+
+    second = client.post("/v1/check", json=req).json()
+    assert second["cache_hit"] is True
+    assert second["axioms"] == first["axioms"]
+
+
+def test_check_reports_an_empty_cone_for_a_genuine_proof(
+    client: TestClient, registered_base_env: str
+) -> None:
+    """The other half of the discrimination: a real proof of the same statement reports no
+    `sorryAx`. Without this, an implementation that reported `sorryAx` unconditionally would pass
+    the test above."""
+    response = client.post(
+        "/v1/check",
+        json={
+            "base_env_digest": registered_base_env,
+            "body": "theorem t2 : (1 : Nat) + 1 = 2 := by decide",
+        },
+    )
+    body = response.json()
+    assert body["ok"] is True
+    assert "sorryAx" not in body["axioms"]
+
+
 def test_check_unknown_base_env_is_404(client: TestClient) -> None:
     response = client.post(
         "/v1/check", json={"base_env_digest": "ab" * 32, "body": "def foo : Nat := 5"}

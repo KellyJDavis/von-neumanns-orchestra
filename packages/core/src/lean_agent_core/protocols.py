@@ -58,6 +58,12 @@ class CheckOutcome:
     diagnostics: tuple[str, ...] = ()
     cache_hit: bool = False
     elapsed_ms: int = 0
+    #: Transitive axiom cone of everything the body newly declared; empty when it did not
+    #: elaborate. Separate from `ok` because it has to be: a `sorry` is a *warning* in Lean, so a
+    #: body whose proof is `sorry` -- or whose tactic (`apply?`, `exact?`, `rw?`) only partially
+    #: closed the goal and left one behind -- elaborates with `ok=True`. Anything screening proof
+    #: candidates must consult this; `ok` alone will accept a `sorry`.
+    axioms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

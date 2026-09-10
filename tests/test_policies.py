@@ -51,7 +51,9 @@ def test_the_development_unfolds_the_sealed_goal_before_the_tactic() -> None:
     """Without this the tactic faces an opaque `def` and fails for reasons that have nothing to do
     with the mathematics -- `decide` cannot synthesize `Decidable Goals.G_x`, `simp` "made no
     progress", `omega` finds "no usable constraints". Confirmed against the real toolchain."""
-    assert "by unfold LeanAgent.Goals.G_x; omega" in SymbolicPortfolio().development(CTX, "omega")
+    assert "by unfold LeanAgent.Goals.G_x; intros; omega" in SymbolicPortfolio().development(
+        CTX, "omega"
+    )
 
 
 def test_universe_parameters_are_spelled_out_on_both_sides() -> None:

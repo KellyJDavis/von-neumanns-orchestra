@@ -105,6 +105,12 @@ class ObligationContext:
     goal_src: str
     entry: str
     level_params: tuple[str, ...] = ()
+    #: The run's `allow_sorry`, carried here so a policy executor's screen can agree with what
+    #: `/v1/link` will actually enforce. Without it the screen has to guess, and a screen that
+    #: disagrees with the enforcement point is the drift this codebase avoids everywhere else
+    #: (the state machine and the privilege model being two views of one guarantee). Defaults to
+    #: the column's own default, so a caller that does not set it gets the stricter behaviour.
+    allow_sorry: bool = False
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,2947 @@
+{
+ "name": "miniF2F",
+ "provenance": {
+  "repo": "https://github.com/yangky11/miniF2F-lean4",
+  "commit": "5746b7d6c47855ce1294bed87329618ff7f1bc31",
+  "license": "MIT",
+  "copyright": "Copyright (c) Meta Platforms, Inc. and affiliates.",
+  "upstream_toolchain": "leanprover/lean4:v4.24.0"
+ },
+ "header": {
+  "imports": [
+   "Mathlib"
+  ],
+  "opens": "open BigOperators Real Nat Topology Rat"
+ },
+ "problems": [
+  {
+   "id": "aime_1983_p1",
+   "split": "test",
+   "statement": "theorem aime_1983_p1 (x y z w : ℕ) (ht : 1 < x ∧ 1 < y ∧ 1 < z) (hw : 0 ≤ w)\n    (h0 : Real.log w / Real.log x = 24) (h1 : Real.log w / Real.log y = 40)\n    (h2 : Real.log w / Real.log (x * y * z) = 12) : Real.log w / Real.log z = 60 := by",
+   "statement_sha256": "9aa8845ca0d6a590d068945db79762e411f66f208ced6d63524c2eecf9953b4d"
+  },
+  {
+   "id": "aime_1983_p2",
+   "split": "test",
+   "statement": "theorem aime_1983_p2\n  (x p : ℝ)\n  (f : ℝ → ℝ)\n  (h₀ : 0 < p ∧ p < 15)\n  (h₁ : p ≤ x ∧ x ≤ 15)\n  (h₂ : f x = abs (x - p) + abs (x - 15) + abs (x - p - 15)) :\n  15 ≤ f x := by",
+   "statement_sha256": "09803299ed77ae55d2f129eba27bfe69ac8013657803e42272e484cda900d352"
+  },
+  {
+   "id": "aime_1983_p3",
+   "split": "test",
+   "statement": "theorem aime_1983_p3\n  (f : ℝ → ℝ)\n  (h₀ : ∀ x, f x = (x^2 + (18 * x +  30) - 2 * Real.sqrt (x^2 + (18 * x + 45))))\n  (h₁ : Fintype (f⁻¹' {0})) :\n  ∏ x ∈ (f⁻¹' {0}).toFinset, x = 20 := by",
+   "statement_sha256": "adf32ecd1d401f81affe9a2e4626f3cfc60ffda29d1308ff9d59e548a6bc8458"
+  },
+  {
+   "id": "aime_1984_p1",
+   "split": "test",
+   "statement": "theorem aime_1984_p1\n  (u : ℕ → ℚ)\n  (h₀ : ∀ n, u (n + 1) = u n + 1)\n  (h₁ : ∑ k ∈ Finset.range 98, u k.succ = 137) :\n  ∑ k ∈ Finset.range 49, u (2 * k.succ) = 93 := by",
+   "statement_sha256": "d630e9272636a8698d1293afea2319f00a5524b845884cc18d85f9f4f5f13b10"
+  },
+  {
+   "id": "aime_1984_p7",
+   "split": "test",
+   "statement": "theorem aime_1984_p7\n  (f : ℤ → ℤ)\n  (h₀ : ∀ n, 1000 ≤ n → f n = n - 3)\n  (h₁ : ∀ n, n < 1000 → f n = f (f (n + 5))) :\n  f 84 = 997 := by",
+   "statement_sha256": "f7621816ba8fa313dd6547c163aa61c5e239fca379f09f996024fd95bc31121e"
+  },
+  {
+   "id": "aime_1987_p5",
+   "split": "test",
+   "statement": "theorem aime_1987_p5\n  (x y : ℤ)\n  (h₀ : y^2 + 3 * (x^2 * y^2) = 30 * x^2 + 517):\n  3 * (x^2 * y^2) = 588 := by",
+   "statement_sha256": "5119f8b4f8a38144a764586c4678bb30d717ca07767dfc5a7778062e45242dcd"
+  },
+  {
+   "id": "aime_1988_p8",
+   "split": "test",
+   "statement": "theorem aime_1988_p8\n  (f : ℕ → ℕ → ℝ)\n  (h₀ : ∀ x, 0 < x → f x x = x)\n  (h₁ : ∀ x y, (0 < x ∧ 0 < y) → f x y = f y x)\n  (h₂ : ∀ x y, (0 < x ∧ 0 < y) → (↑x + ↑y) * f x y = y * (f x (x + y))) :\n  f 14 52 = 364 := by",
+   "statement_sha256": "3c078fcd24652dabd00014c44db6ada32b45329288b72af2acf84288e908663e"
+  },
+  {
+   "id": "aime_1989_p8",
+   "split": "test",
+   "statement": "theorem aime_1989_p8\n  (a b c d e f g : ℝ)\n  (h₀ : a + 4 * b + 9 * c + 16 * d + 25 * e + 36 * f + 49 * g = 1)\n  (h₁ : 4 * a + 9 * b + 16 * c + 25 * d + 36 * e + 49 * f + 64 * g = 12)\n  (h₂ : 9 * a + 16 * b + 25 * c + 36 * d + 49 * e + 64 * f + 81 * g = 123) :\n  16 * a + 25 * b + 36 * c + 49 * d + 64 * e + 81 * f + 100 * g = 334 := by",
+   "statement_sha256": "a0fe62c78b54aa8e354346b29c1c0b4de957c9f29d69a6f3ec1492ea33626f5c"
+  },
+  {
+   "id": "aime_1990_p15",
+   "split": "test",
+   "statement": "theorem aime_1990_p15\n  (a b x y : ℝ)\n  (h₀ : a * x + b * y = 3)\n  (h₁ : a * x^2 + b * y^2 = 7)\n  (h₂ : a * x^3 + b * y^3 = 16)\n  (h₃ : a * x^4 + b * y^4 = 42) :\n  a * x^5 + b * y^5 = 20 := by",
+   "statement_sha256": "f7226a1ad0a10f2af9722c6d3823155981581efce6d65751f75010fdec177322"
+  },
+  {
+   "id": "aime_1990_p4",
+   "split": "test",
+   "statement": "theorem aime_1990_p4\n  (x : ℝ)\n  (h₀ : 0 < x)\n  (h₁ : x^2 - 10 * x - 29 ≠ 0)\n  (h₂ : x^2 - 10 * x - 45 ≠ 0)\n  (h₃ : x^2 - 10 * x - 69 ≠ 0)\n  (h₄ : 1 / (x^2 - 10 * x - 29) + 1 / (x^2 - 10 * x - 45) - 2 / (x^2 - 10 * x - 69) = 0) :\n  x = 13 := by",
+   "statement_sha256": "d0fc6a57ec16697adab4b8e34a21f877035261297f4a4b914f69cc6a5845d79e"
+  },
+  {
+   "id": "aime_1991_p9",
+   "split": "test",
+   "statement": "theorem aime_1991_p9\n  (x : ℝ)\n  (m : ℚ)\n  (h₀ : 1 / Real.cos x + Real.tan x = 22 / 7)\n  (h₁ : 1 / Real.sin x + 1 / Real.tan x = m) :\n  ↑m.den + m.num = 44 := by",
+   "statement_sha256": "c834de17ea82c608e84359ec54b42b5b099534539aea1205bff49051e8c0617c"
+  },
+  {
+   "id": "aime_1994_p3",
+   "split": "test",
+   "statement": "theorem aime_1994_p3\n  (f : ℤ → ℤ)\n  (h0 : ∀ x, f x + f (x - 1) = x^2)\n  (h1 : f 19 = 94) :\n  f 94 % 1000 = 561 := by",
+   "statement_sha256": "d1d989933a48ff260a5d34b3679cfdda347a409d6a668633ac1646f8b764534a"
+  },
+  {
+   "id": "aime_1995_p7",
+   "split": "test",
+   "statement": "theorem aime_1995_p7\n  (k m n : ℕ)\n  (t : ℝ)\n  (h₀ : 0 < k ∧ 0 < m ∧ 0 < n)\n  (h₁ : Nat.gcd m n = 1)\n  (h₂ : (1 + Real.sin t) * (1 + Real.cos t) = 5/4)\n  (h₃ : (1 - Real.sin t) * (1- Real.cos t) = m/n - Real.sqrt k):\n  k + m + n = 27 := by",
+   "statement_sha256": "f7a3e986ea20a54630f6b9b7fd0c499476f4d877e2f726c462bdb2d6a2c41ece"
+  },
+  {
+   "id": "aime_1997_p9",
+   "split": "test",
+   "statement": "theorem aime_1997_p9\n  (a : ℝ)\n  (h₀ : 0 < a)\n  (h₁ : 1 / a - Int.floor (1 / a) = a^2 - Int.floor (a^2))\n  (h₂ : 2 < a^2)\n  (h₃ : a^2 < 3) :\n  a^12 - 144 * (1 / a) = 233 := by",
+   "statement_sha256": "275fe03b647cbf1970c3e9b003649c7645e4a71ebcd0e2b945745ea994ff1ac3"
+  },
+  {
+   "id": "aime_1999_p11",
+   "split": "test",
+   "statement": "theorem aime_1999_p11\n  (m : ℚ)\n  (h₀ : 0 < m)\n  (h₁ : ∑ k ∈ Finset.Icc (1 : ℕ) 35, Real.sin (5 * k * π / 180) = Real.tan (m * π / 180))\n  (h₂ : (m.num:ℝ) / m.den < 90) :\n  ↑m.den + m.num = 177 := by",
+   "statement_sha256": "018759dc682b2200ccff763ec7d19708d62f57888e426026f7b066fd812de1d0"
+  },
+  {
+   "id": "algebra_2varlineareq_fp3zeq11_3tfm1m5zeqn68_feqn10_zeq7",
+   "split": "test",
+   "statement": "theorem algebra_2varlineareq_fp3zeq11_3tfm1m5zeqn68_feqn10_zeq7\n  (f z: ℂ)\n  (h₀ : f + 3*z = 11)\n  (h₁ : 3*(f - 1) - 5*z = -68) :\n  f = -10 ∧ z = 7 := by",
+   "statement_sha256": "6fd6a2a48021f8e7f38b22d6738f22a2fecd1cc50b9e57fc20e35947adc38e84"
+  },
+  {
+   "id": "algebra_9onxpypzleqsum2onxpy",
+   "split": "test",
+   "statement": "theorem algebra_9onxpypzleqsum2onxpy\n  (x y z : ℝ)\n  (h₀ : 0 < x ∧ 0 < y ∧ 0 < z) :\n  9 / (x + y + z) ≤ 2 / (x + y) + 2 / (y + z) + 2 / (z + x) := by",
+   "statement_sha256": "761487c64c83f08e9d933ab2f1fd99ac47bc16ba2a883c88b2cc356d68c7bd80"
+  },
+  {
+   "id": "algebra_abpbcpcageq3_sumaonsqrtapbgeq3onsqrt2",
+   "split": "test",
+   "statement": "theorem algebra_abpbcpcageq3_sumaonsqrtapbgeq3onsqrt2\n  (a b c : ℝ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : 3 ≤ a * b + b * c + c * a) :\n  3 / Real.sqrt 2 ≤ a / Real.sqrt (a + b) + b / Real.sqrt (b + c) + c / Real.sqrt (c + a) := by",
+   "statement_sha256": "d10cb2e9914b9a47959736236bb0388dcf0b1267328fb3a4dbe5f692bc7a7c88"
+  },
+  {
+   "id": "algebra_absapbon1pabsapbleqsumabsaon1pabsa",
+   "split": "test",
+   "statement": "theorem algebra_absapbon1pabsapbleqsumabsaon1pabsa\n  (a b : ℝ) :\n  abs (a + b) / (1 + abs (a + b)) ≤ abs a / (1 + abs a) + abs b / (1 + abs b) := by",
+   "statement_sha256": "f2e22763eb7afbd6a6b195296092b0f6010971e521ffa5fc780fac7233ced062"
+  },
+  {
+   "id": "algebra_absxm1pabsxpabsxp1eqxp2_0leqxleq1",
+   "split": "test",
+   "statement": "theorem algebra_absxm1pabsxpabsxp1eqxp2_0leqxleq1\n  (x : ℝ)\n  (h₀ : abs (x - 1) + abs x + abs (x + 1) = x + 2) :\n  0 ≤ x ∧ x ≤ 1 := by",
+   "statement_sha256": "fdb524e2dc1152634c22b751ba6eabe3d0c61a2db67f2d486176d34aba310fd5"
+  },
+  {
+   "id": "algebra_amgm_sum1toneqn_prod1tonleq1",
+   "split": "test",
+   "statement": "theorem algebra_amgm_sum1toneqn_prod1tonleq1\n  (a : ℕ → NNReal)\n  (n : ℕ)\n  (h₀ : ∑ x ∈ Finset.range n, a x = n) :\n  ∏ x ∈ Finset.range n, a x ≤ 1 := by",
+   "statement_sha256": "f9e27021a5335c3d55b02961a1e5be6b8098dba0d4ba5be4e0e293ea3ace99fe"
+  },
+  {
+   "id": "algebra_amgm_sumasqdivbgeqsuma",
+   "split": "test",
+   "statement": "theorem algebra_amgm_sumasqdivbgeqsuma\n  (a b c d : ℝ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d) :\n  a^2 / b + b^2 / c + c^2 / d + d^2 / a ≥ a + b + c + d := by",
+   "statement_sha256": "d3fd7fa71a0ab6c073d5fd47929966a71dbb1107e9a6c9d45e51e3f7a864941e"
+  },
+  {
+   "id": "algebra_apbmpcneq0_aeq0anbeq0anceq0",
+   "split": "test",
+   "statement": "theorem algebra_apbmpcneq0_aeq0anbeq0anceq0\n  (a b c : ℚ)\n  (m n : ℝ)\n  (h₀ : 0 < m ∧ 0 < n)\n  (h₁ : m^3 = 2)\n  (h₂ : n^3 = 4)\n  (h₃ : (a:ℝ) + b * m + c * n = 0) :\n  a = 0 ∧ b = 0 ∧ c = 0 := by",
+   "statement_sha256": "ecaa1c7ddd89f03d83c0acb08332f898f410ca1b42eea5fb73e52d3281ab6add"
+  },
+  {
+   "id": "algebra_apbon2pownleqapownpbpowon2",
+   "split": "test",
+   "statement": "theorem algebra_apbon2pownleqapownpbpowon2\n  (a b : ℝ)\n  (n : ℕ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : 0 < n) :\n  ((a + b) / 2)^n ≤ (a^n + b^n) / 2 := by",
+   "statement_sha256": "0878c836201326f9bf4ce704818301252e3b44544c96c31e7abc8fc4b0b948ec"
+  },
+  {
+   "id": "algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3",
+   "split": "test",
+   "statement": "theorem algebra_apbpceq2_abpbcpcaeq1_aleq1on3anbleq1ancleq4on3\n  (a b c : ℝ)\n  (h₀ : a ≤ b ∧ b ≤ c)\n  (h₁ : a + b + c = 2)\n  (h₂ : a * b + b * c + c * a = 1) :\n  0 ≤ a ∧ a ≤ 1 / 3 ∧ 1 / 3 ≤ b ∧ b ≤ 1 ∧ 1 ≤ c ∧ c ≤ 4 / 3 := by",
+   "statement_sha256": "c388d7fd1535b10cb5cffed7fe3a35d736fab57c78951c8b8f87b51705fea2b6"
+  },
+  {
+   "id": "algebra_bleqa_apbon2msqrtableqambsqon8b",
+   "split": "test",
+   "statement": "theorem algebra_bleqa_apbon2msqrtableqambsqon8b\n  (a b : ℝ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : b ≤ a) :\n  (a + b) / 2 - Real.sqrt (a * b) ≤ (a - b)^2 / (8 * b) := by",
+   "statement_sha256": "67af2eb3cec8a15cea9c19bfae53d729116df601b5239ddaa63b35df8569fe15"
+  },
+  {
+   "id": "algebra_cubrtrp1oncubrtreq3_rcubp1onrcubeq5778",
+   "split": "test",
+   "statement": "theorem algebra_cubrtrp1oncubrtreq3_rcubp1onrcubeq5778\n  (r : ℝ)\n  (h₀ : r^(1 / 3: ℝ) + 1 / r^(1 / 3: ℝ) = 3) :\n  r^3 + 1 / r^3 = 5778 := by",
+   "statement_sha256": "9e6f33d1815cf80ddd96af9a626c67e782a3d0a716ca05fc0696809bd3b95ffe"
+  },
+  {
+   "id": "algebra_ineq_nto1onlt2m1on",
+   "split": "test",
+   "statement": "theorem algebra_ineq_nto1onlt2m1on\n  (n : ℕ) :\n  (n : ℝ) ^ (1 / n : ℝ) ≤ 2 - 1 / n := by",
+   "statement_sha256": "d342067c84b1ac843b69846a798a7fce2264019db2fac6613614ff9e297349e0"
+  },
+  {
+   "id": "algebra_others_exirrpowirrrat",
+   "split": "test",
+   "statement": "theorem algebra_others_exirrpowirrrat :\n  ∃ a b, Irrational a ∧ Irrational b ∧ ¬ Irrational (a^b) := by",
+   "statement_sha256": "edb298b02d13d764456fa83bcdca5ba8f76531c5f294bfe486aeb76a00dd449d"
+  },
+  {
+   "id": "algebra_sqineq_at2malt1",
+   "split": "test",
+   "statement": "theorem algebra_sqineq_at2malt1\n  (a : ℝ) :\n  a * (2 - a) ≤ 1 := by",
+   "statement_sha256": "d8c5556f0f9ddf0cb3d7291d3e2cee9ecddc103b645153ad24c49072b177f789"
+  },
+  {
+   "id": "algebra_sqineq_unitcircatbpabsamblt1",
+   "split": "test",
+   "statement": "theorem algebra_sqineq_unitcircatbpabsamblt1\n  (a b: ℝ)\n  (h₀ : a^2 + b^2 = 1) :\n  a * b + |a - b| ≤ 1 := by",
+   "statement_sha256": "84d2a254a6c9d9e37945f6de977978c697173dc1cad631c013d4b1fae49eae7a"
+  },
+  {
+   "id": "algebra_sqineq_unitcircatbpamblt1",
+   "split": "test",
+   "statement": "theorem algebra_sqineq_unitcircatbpamblt1\n  (a b: ℝ)\n  (h₀ : a^2 + b^2 = 1) :\n  a * b + (a - b) ≤ 1 := by",
+   "statement_sha256": "0378f1a1e1537691375d6046035951fc3823e3d7ceb169897003725d4fca844f"
+  },
+  {
+   "id": "algebra_sum1onsqrt2to1onsqrt10000lt198",
+   "split": "test",
+   "statement": "theorem algebra_sum1onsqrt2to1onsqrt10000lt198 :\n  ∑ k ∈ (Finset.Icc (2 : ℕ) 10000), (1 / Real.sqrt k) < 198 := by",
+   "statement_sha256": "a45ba3471d6b3a96b3a283f8659494b5813a79424db630fb9252a62221a2f006"
+  },
+  {
+   "id": "amc12_2000_p1",
+   "split": "test",
+   "statement": "theorem amc12_2000_p1\n  (i m o : ℕ)\n  (h₀ : i ≠ m ∧ m ≠ o ∧ o ≠ i)\n  (h₁ : i*m*o = 2001) :\n  i+m+o ≤ 671 := by",
+   "statement_sha256": "087e08c9dfcc8bc9238c1005f83b7fc010da714352efadb40ee027eb7d166d0a"
+  },
+  {
+   "id": "amc12_2000_p12",
+   "split": "test",
+   "statement": "theorem amc12_2000_p12\n  (a m c : ℕ)\n  (h₀ : a + m + c = 12) :\n  a*m*c + a*m + m*c + a*c ≤ 112 := by",
+   "statement_sha256": "4ed1e29b3552a42caf4332a1ad7f5c9dea8f5d9d3f5d4052b3543d23a7b1d3e3"
+  },
+  {
+   "id": "amc12_2000_p20",
+   "split": "test",
+   "statement": "theorem amc12_2000_p20\n  (x y z : ℝ)\n  (h₀ : 0 < x ∧ 0 < y ∧ 0 < z)\n  (h₁ : x + 1/y = 4)\n  (h₂ : y + 1/z = 1)\n  (h₃ : z + 1/x = 7/3) :\n  x*y*z = 1 := by",
+   "statement_sha256": "a441acd061ade677b0a8ae5d2b1ea74e9e353684c42a0145539bee2ac5997572"
+  },
+  {
+   "id": "amc12_2000_p6",
+   "split": "test",
+   "statement": "theorem amc12_2000_p6\n  (p q : ℕ)\n  (h₀ : Nat.Prime p ∧ Nat.Prime q)\n  (h₁ : 4 ≤ p ∧ p ≤ 18)\n  (h₂ : 4 ≤ q ∧ q ≤ 18) :\n  p * q - (p + q) ≠ 194 := by",
+   "statement_sha256": "74e6a300ab140729d5d11579f16094b9acb20e68f2e95ff4ee636a62c504b979"
+  },
+  {
+   "id": "amc12_2001_p21",
+   "split": "test",
+   "statement": "theorem amc12_2001_p21\n  (a b c d : ℕ)\n  (h₀ : a * b * c * d = Nat.factorial 8)\n  (h₁ : a * b + a + b = 524)\n  (h₂ : b * c + b + c = 146)\n  (h₃ : c * d + c + d = 104) :\n  ↑a - ↑d = (10 : ℤ) := by",
+   "statement_sha256": "6499df068188900dc90f41de11c4e94e3e330a20ca3863221f6cdb9666add0fd"
+  },
+  {
+   "id": "amc12_2001_p5",
+   "split": "test",
+   "statement": "theorem amc12_2001_p5 :\n  Finset.prod (Finset.filter (λ x => ¬ Even x) (Finset.range 10000)) (id : ℕ → ℕ) = (10000!) / ((2^5000) * (5000!)) := by",
+   "statement_sha256": "ff4cf6e06f92b0ffe0fedea5a9d6aa44effce2a1598b537bd8c65c5f4551c4f7"
+  },
+  {
+   "id": "amc12a_2002_p13",
+   "split": "test",
+   "statement": "theorem amc12a_2002_p13\n  (a b : ℝ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : a ≠ b)\n  (h₂ : abs (a - 1/a) = 1)\n  (h₃ : abs (b - 1/b) = 1) :\n  a + b = Real.sqrt 5 := by",
+   "statement_sha256": "9df20728fb98e35d60adc93ede1b2411d500ba218aa6488d99e4b851fe207b9b"
+  },
+  {
+   "id": "amc12a_2002_p6",
+   "split": "test",
+   "statement": "theorem amc12a_2002_p6\n  (n : ℕ)\n  (h₀ : 0 < n) :\n  ∃ m, (m > n ∧ ∃ p, m * p ≤ m + p) := by",
+   "statement_sha256": "62ad26b9b6e8f7da95b83084e1e59c9da507fd1ca94130f844103f23b17cb312"
+  },
+  {
+   "id": "amc12a_2003_p23",
+   "split": "test",
+   "statement": "theorem amc12a_2003_p23\n  (S : Finset ℕ)\n  (h₀ : ∀ (k : ℕ), k ∈ S ↔ 0 < k ∧ ((k * k) : ℕ) ∣ (∏ i ∈ (Finset.Icc 1 9), i !)) :\n  S.card = 672 := by",
+   "statement_sha256": "2a8291ed432a60ef6f23406d0989562f1df8f95e6d2d71f139987d676b03da52"
+  },
+  {
+   "id": "amc12a_2003_p5",
+   "split": "test",
+   "statement": "theorem amc12a_2003_p5\n  (A M C : ℕ)\n  (h₀ : A ≤ 9 ∧ M ≤ 9 ∧ C ≤ 9)\n  (h₁ : Nat.ofDigits 10 [0,1,C,M,A] + Nat.ofDigits 10 [2,1,C,M,A] = 123422) :\n  A + M + C = 14 := by",
+   "statement_sha256": "00ca91883d5acd4f53ab0c15be90e81127dacd69ea32b5ee5308b80f656340e1"
+  },
+  {
+   "id": "amc12a_2008_p25",
+   "split": "test",
+   "statement": "theorem amc12a_2008_p25\n  (a b : ℕ → ℝ)\n  (h₀ : ∀ n, a (n + 1) = Real.sqrt 3 * a n - b n)\n  (h₁ : ∀ n, b (n + 1) = Real.sqrt 3 * b n + a n)\n  (h₂ : a 100 = 2)\n  (h₃ : b 100 = 4) :\n  a 1 + b 1 = 1 / (2^98) := by",
+   "statement_sha256": "048b6d37344c784739691746c055907a1968ad4139cb001e605e33a6ba9c431f"
+  },
+  {
+   "id": "amc12a_2009_p6",
+   "split": "test",
+   "statement": "theorem amc12a_2009_p6\n  (m n p q : ℝ)\n  (h₀ : p = 2 ^ m)\n  (h₁ : q = 3 ^ n) :\n  p^(2 * n) * (q^m) = 12^(m * n) := by",
+   "statement_sha256": "72b4f9bede191833e7b8944b87b98c0469b46f29ba1f3b1efc09d23f46107c6e"
+  },
+  {
+   "id": "amc12a_2009_p7",
+   "split": "test",
+   "statement": "theorem amc12a_2009_p7\n  (x : ℝ)\n  (n : ℕ)\n  (a : ℕ → ℝ)\n  (h₁ : ∀ m, a (m + 1) - a m = a (m + 2) - a (m + 1))\n  (h₂ : a 1 = 2 * x - 3)\n  (h₃ : a 2 = 5 * x - 11)\n  (h₄ : a 3 = 3 * x + 1)\n  (h₅ : a n = 2009) :\n  n = 502 := by",
+   "statement_sha256": "219b797de78ea4f33714a4da39b298bf0984cadbd895ab1b1f005e6130883ba9"
+  },
+  {
+   "id": "amc12a_2013_p4",
+   "split": "test",
+   "statement": "theorem amc12a_2013_p4 :\n  (2^2014 + 2^2012) / (2^2014 - 2^2012) = (5:ℝ) / 3 := by",
+   "statement_sha256": "e3b94cb6ea012be4552a37dc8db23e85083f3bd7c132e0f9e3138e9df4c2ec2b"
+  },
+  {
+   "id": "amc12a_2019_p12",
+   "split": "test",
+   "statement": "theorem amc12a_2019_p12 (x y : ℝ) (h : x > 0 ∧ y > 0) (h₀ : x ≠ 1 ∧ y ≠ 1)\n    (h₁ : Real.log x / Real.log 2 = Real.log 16 / Real.log y) (h₂ : x * y = 64) :\n    (Real.log (x / y) / Real.log 2) ^ 2 = 20 := by",
+   "statement_sha256": "91f134750d6235a43707b0441f55797d92c3157a1e9696ec1ce4bceb6565991d"
+  },
+  {
+   "id": "amc12a_2020_p10",
+   "split": "test",
+   "statement": "theorem amc12a_2020_p10\n  (n : ℕ)\n  (h₀ : 1 < n)\n  (h₁ : Real.logb 2 (Real.logb 16 n) = Real.logb 4 (Real.logb 4 n)) :\n  (Nat.digits 10 n).sum = 13 := by",
+   "statement_sha256": "4db005afc3d509a1b105dfa3447f609aac0c9cc1f18afd55f8d68ccb7f665ea1"
+  },
+  {
+   "id": "amc12a_2020_p15",
+   "split": "test",
+   "statement": "theorem amc12a_2020_p15\n  (a b : ℂ)\n  (h₀ : a^3 - 8 = 0)\n  (h₁ : b^3 - 8 * b^2 - 8 * b + 64 = 0) :\n  ‖a - b‖ ≤ 2 * Real.sqrt 21 := by",
+   "statement_sha256": "d65fb1b50f7d0efcb47247e16b2d6c8d5870c269f894bc4d94056c3983ea0c42"
+  },
+  {
+   "id": "amc12a_2020_p25",
+   "split": "test",
+   "statement": "theorem amc12a_2020_p25\n  (a : ℚ)\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ ↑⌊x⌋ * (x - ↑⌊x⌋) = ↑a * x ^ 2)\n  (h₁ : ∑ k ∈ S, k = 420) :\n  ↑a.den + a.num = 929 := by",
+   "statement_sha256": "35de7d9335986660fc14bd254c4fde806619d35e194f831a6a8441c91e006ffd"
+  },
+  {
+   "id": "amc12a_2020_p4",
+   "split": "test",
+   "statement": "theorem amc12a_2020_p4\n  (S : Finset ℕ)\n  (h₀ : ∀ (n : ℕ), n ∈ S ↔ 1000 ≤ n ∧ n ≤ 9999 ∧ (∀ (d : ℕ), d ∈ Nat.digits 10 n → Even d) ∧ 5 ∣ n) :\n  S.card = 100 := by",
+   "statement_sha256": "44a078afa889bbe79e8dcc507db49b0c93704c359964e49741ee846ff575d0dc"
+  },
+  {
+   "id": "amc12a_2020_p7",
+   "split": "test",
+   "statement": "theorem amc12a_2020_p7\n  (a : ℕ → ℕ)\n  (h₀ : (a 0)^3 = 1)\n  (h₁ : (a 1)^3 = 8)\n  (h₂ : (a 2)^3 = 27)\n  (h₃ : (a 3)^3 = 64)\n  (h₄ : (a 4)^3 = 125)\n  (h₅ : (a 5)^3 = 216)\n  (h₆ : (a 6)^3 = 343) :\n  ∑ k ∈ Finset.range 7, (6 * (a k)^2) - ↑(2 * ∑ k ∈ Finset.range 6, (a k)^2) = 658 := by",
+   "statement_sha256": "e1774dafbbb0300b389de5518d9d898532bdd904d6be93fb4c5e672e88254aed"
+  },
+  {
+   "id": "amc12a_2020_p9",
+   "split": "test",
+   "statement": "theorem amc12a_2020_p9\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 ≤ x ∧ x ≤ 2 * Real.pi ∧ Real.tan (2 * x) = Real.cos (x / 2)) :\n  S.card = 5 := by",
+   "statement_sha256": "82d8344fe0319236380265b1fcaca0d8f541ef052521e88d3b23a65c2efb610c"
+  },
+  {
+   "id": "amc12a_2021_p12",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p12\n  (a b c d : ℝ)\n  (f : ℂ → ℂ)\n  (h₀ : ∀ z, f z = z^6 - 10 * z^5 + a * z^4 + b * z^3 + c * z^2 + d * z + 16)\n  (h₁ : ∀ z, f z = 0 → (z.im = 0 ∧ 0 < z.re ∧ ↑(Int.floor z.re) = z.re)) :\n  b = -88 := by",
+   "statement_sha256": "84aa99ec151f68bb2141014ca4e0f2a25bd55f38624a2c28b61ef0e43ba65407"
+  },
+  {
+   "id": "amc12a_2021_p14",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p14 :\n  (∑ k ∈ (Finset.Icc 1 20), (Real.logb (5^k) (3^(k^2)))) * (∑ k ∈ (Finset.Icc 1 100), (Real.logb (9^k) (25^k))) = 21000 := by",
+   "statement_sha256": "c0efe95f4972b277619d431aa28de4e5fa9d3b901cd068ff6f9d8f86f6fc95a2"
+  },
+  {
+   "id": "amc12a_2021_p18",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p18\n  (f : ℚ → ℝ)\n  (h₀ : ∀x>0, ∀y>0, f (x * y) = f x + f y)\n  (h₁ : ∀p, Nat.Prime p → f p = p) :\n  f (25 / 11) < 0 := by",
+   "statement_sha256": "4e4784132c8a397677a1b46c878366769aa3221dc6bcb8b841a3c6d99f671480"
+  },
+  {
+   "id": "amc12a_2021_p19",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p19\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 ≤ x ∧ x ≤ Real.pi ∧ Real.sin (Real.pi / 2 * Real.cos x) = Real.cos (Real.pi / 2 * Real.sin x)) :\n  S.card = 2 := by",
+   "statement_sha256": "a8eaf8564584f978243c69ca002cebcb65a5d926f56e9b22f9c69da1d535561d"
+  },
+  {
+   "id": "amc12a_2021_p22",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p22\n  (a b c : ℝ)\n  (f : ℝ → ℝ)\n  (h₀ : ∀ x, f x = x^3 + a * x^2 + b * x + c)\n  (h₁ : f⁻¹' {0} = {Real.cos (2 * Real.pi / 7), Real.cos (4 * Real.pi / 7), Real.cos (6 * Real.pi / 7)}) :\n  a * b * c = 1 / 32 := by",
+   "statement_sha256": "26fe7739b8d29662b58b4dd8ef849232e82141ce9a5404e103806733ca2a7942"
+  },
+  {
+   "id": "amc12a_2021_p25",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p25\n  (N : ℕ)\n  (hN : N > 0)\n  (f : ℕ → ℝ)\n  (h₀ : ∀ n, 0 < n → f n = ((Nat.divisors n).card)/(n^((1:ℝ)/3)))\n  (h₁ : ∀ n ≠ N, 0 < n → f n < f N) :\n  (Nat.digits 10 N).sum = 9 := by",
+   "statement_sha256": "20fe7ec95a58af3d159ff83f9f121299fb9a1d8aa90a0035e38d861a7959e409"
+  },
+  {
+   "id": "amc12a_2021_p3",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p3\n  (x y : ℕ)\n  (h₀ : x + y = 17402)\n  (h₁ : 10∣x)\n  (h₂ : x / 10 = y) :\n  ↑x - ↑y = (14238:ℤ) := by",
+   "statement_sha256": "acd23be26c051a17cdd4e64b7aba9075d3b3f942c8474e0d91448b7aa3a744ce"
+  },
+  {
+   "id": "amc12a_2021_p8",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p8\n  (d : ℕ → ℕ)\n  (h₀ : d 0 = 0)\n  (h₁ : d 1 = 0)\n  (h₂ : d 2 = 1)\n  (h₃ : ∀ n≥3, d n = d (n - 1) + d (n - 3)) :\n  Even (d 2021) ∧ Odd (d 2022) ∧ Even (d 2023) := by",
+   "statement_sha256": "f215dc8272c3ef24f251878787303e6aceea4d89d536d1a3edac67c8271c1ea4"
+  },
+  {
+   "id": "amc12a_2021_p9",
+   "split": "test",
+   "statement": "theorem amc12a_2021_p9 :\n  ∏ k ∈ Finset.range 7, (2^(2^k) + 3^(2^k)) = 3^128 - 2^128 := by",
+   "statement_sha256": "11d03d5f9b90fb6b2d895704c7ea910879c8f7a25941b622ea50bf9860aef144"
+  },
+  {
+   "id": "amc12b_2002_p19",
+   "split": "test",
+   "statement": "theorem amc12b_2002_p19\n  (a b c: ℝ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : a * (b + c) = 152)\n  (h₂ : b * (c + a) = 162)\n  (h₃ : c * (a + b) = 170) :\n  a * b * c = 720 := by",
+   "statement_sha256": "e8cfa1e14c5e932971db8b6201fc18d46a7b382ae2b7161d203828384c7173b9"
+  },
+  {
+   "id": "amc12b_2002_p2",
+   "split": "test",
+   "statement": "theorem amc12b_2002_p2\n  (x : ℤ)\n  (h₀ : x = 4) :\n  (3 * x - 2) * (4 * x + 1) - (3 * x - 2) * (4 * x) + 1 = 11 := by",
+   "statement_sha256": "d915193e4913f674a66e0a67db7a41949b799bd72b8dfddf07472ad902f1c524"
+  },
+  {
+   "id": "amc12b_2002_p4",
+   "split": "test",
+   "statement": "theorem amc12b_2002_p4\n  (n : ℕ)\n  (h₀ : 0 < n)\n  (h₁ : ((1 / 2 + 1 / 3 + 1 / 7 + 1 / n) : ℚ).den = 1) :\n  n = 42 := by",
+   "statement_sha256": "3b697eeaf447478b780041b1094d712d2e891bf7cae037fb67b83228931f7d81"
+  },
+  {
+   "id": "amc12b_2002_p7",
+   "split": "test",
+   "statement": "theorem amc12b_2002_p7\n  (a b c : ℕ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : b = a + 1)\n  (h₂ : c = b + 1)\n  (h₃ : a * b * c = 8 * (a + b + c)) :\n  a^2 + (b^2 + c^2) = 77 := by",
+   "statement_sha256": "7e27a62b6841cef4b05ba8b5da7f49f1aa20f8c4d785bd56ad6e5d1655cab1d9"
+  },
+  {
+   "id": "amc12b_2020_p13",
+   "split": "test",
+   "statement": "theorem amc12b_2020_p13 :\n  Real.sqrt (Real.log 6 / Real.log 2 + Real.log 6 / Real.log 3) = Real.sqrt (Real.log 3 / Real.log 2) + Real.sqrt (Real.log 2 / Real.log 3) := by",
+   "statement_sha256": "fdbbbe6a2fe322d2f8dcf06e673fbe1e70ba33764d530581cea978db29cfc126"
+  },
+  {
+   "id": "amc12b_2020_p2",
+   "split": "test",
+   "statement": "theorem amc12b_2020_p2 :\n  ((100 ^ 2 - 7 ^ 2):ℝ) / (70 ^ 2 - 11 ^ 2) * ((70 - 11) * (70 + 11) / ((100 - 7) * (100 + 7))) = 1 := by",
+   "statement_sha256": "106a0dea3f41bd45a90b988cfdf73a0cbe7388c6a0200c6c3a675e0dbc320505"
+  },
+  {
+   "id": "amc12b_2020_p21",
+   "split": "test",
+   "statement": "theorem amc12b_2020_p21\n  (S : Finset ℕ)\n  (h₀ : ∀ (n : ℕ), n ∈ S ↔ 0 < n ∧ (↑n + (1000 : ℝ)) / 70 = Int.floor (Real.sqrt n)) :\n  S.card = 6 := by",
+   "statement_sha256": "548993f0b93079710b91a859abdb801050911c87489382391fcbf4cd52279760"
+  },
+  {
+   "id": "amc12b_2020_p22",
+   "split": "test",
+   "statement": "theorem amc12b_2020_p22\n  (t : ℝ) :\n  ((2^t - 3 * t) * t) / (4^t) ≤ 1 / 12 := by",
+   "statement_sha256": "1bd3b039067425b1599cc053588cf5efd8e15ab7437a4a4e0613964ad3be9782"
+  },
+  {
+   "id": "amc12b_2020_p6",
+   "split": "test",
+   "statement": "theorem amc12b_2020_p6\n  (n : ℕ)\n  (h₀ : 9 ≤ n) :\n  ∃ (x : ℕ), (x : ℝ)^2 = (Nat.factorial (n + 2) - Nat.factorial (n + 1)) / n ! := by",
+   "statement_sha256": "0d88e318389947a40e0745b338abe9678aea5af4d0a576bcfaeef2f14d0892de"
+  },
+  {
+   "id": "amc12b_2021_p1",
+   "split": "test",
+   "statement": "theorem amc12b_2021_p1\n  (S : Finset ℤ)\n  (h₀ : ∀ (x : ℤ), x ∈ S ↔ ↑(abs x) < 3 * Real.pi):\n  S.card = 19 := by",
+   "statement_sha256": "b28422d63bf39f42980e785889bdae91414ff2c6f7bad891043f569f1206a37f"
+  },
+  {
+   "id": "amc12b_2021_p13",
+   "split": "test",
+   "statement": "theorem amc12b_2021_p13\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ 0 < x ∧ x ≤ 2 * Real.pi ∧ 1 - 3 * Real.sin x + 5 * Real.cos (3 * x) = 0) :\n  S.card = 6 := by",
+   "statement_sha256": "0e53334ab0dcc5dbdeca3d53c83227a2dcd2790d0c41d5d6a587bae144047146"
+  },
+  {
+   "id": "amc12b_2021_p18",
+   "split": "test",
+   "statement": "theorem amc12b_2021_p18\n  (z : ℂ)\n  (h₀ : 12 * Complex.normSq z = 2 * Complex.normSq (z + 2) + Complex.normSq (z^2 + 1) + 31) :\n  z + 6 / z = -2 := by",
+   "statement_sha256": "4c1b3b8499885a815207889b4899d4f13b6fd78d9aae4cb86a6b037580ab90c4"
+  },
+  {
+   "id": "amc12b_2021_p3",
+   "split": "test",
+   "statement": "theorem amc12b_2021_p3\n  (x : ℝ)\n  (h₀ : 2 + 1 / (1 + 1 / (2 + 2 / (3 + x))) = 144 / 53) :\n  x = 3 / 4 := by",
+   "statement_sha256": "3c79ed0b52eb53ebb2f5a24fbbfb838ff891214b5bf3c3f64a3995d2d1cff537"
+  },
+  {
+   "id": "amc12b_2021_p4",
+   "split": "test",
+   "statement": "theorem amc12b_2021_p4\n  (m a : ℕ)\n  (h₀ : 0 < m ∧ 0 < a)\n  (h₁ : ↑m / ↑a = (3:ℝ) / 4) :\n  (84 * ↑m + 70 * ↑a) / (↑m + ↑a) = (76:ℝ) := by",
+   "statement_sha256": "1828697d5293ada4d10b4789f33c51d0ce1c12a8ff6a7b8d7bcdaaf366033072"
+  },
+  {
+   "id": "amc12b_2021_p9",
+   "split": "test",
+   "statement": "theorem amc12b_2021_p9 :\n  (Real.log 80 / Real.log 2) / (Real.log 2 / Real.log 40) - (Real.log 160 / Real.log 2) / (Real.log 2 / Real.log 20) = 2 := by",
+   "statement_sha256": "86096f41c7150458bf5a51689866be6f06fcb3bf9d67da89a3c2a2c5faa66155"
+  },
+  {
+   "id": "imo_1959_p1",
+   "split": "test",
+   "statement": "theorem imo_1959_p1\n  (n : ℕ)\n  (h₀ : 0 < n) :\n  Nat.gcd (21*n + 4) (14*n + 3) = 1 := by",
+   "statement_sha256": "e5d8ee91715372f4a0302453732b4da84e047c99951ab722d886d7095a7a4518"
+  },
+  {
+   "id": "imo_1960_p2",
+   "split": "test",
+   "statement": "theorem imo_1960_p2\n  (x : ℝ)\n  (h₀ : 0 ≤ 1 + 2 * x)\n  (h₁ : (1 - Real.sqrt (1 + 2 * x))^2 ≠ 0)\n  (h₂ : (4 * x^2) / (1 - Real.sqrt (1 + 2*x))^2 < 2*x + 9)\n  (h₃ : x ≠ 0) :\n  -(1 / 2) ≤ x ∧ x < 45 / 8 := by",
+   "statement_sha256": "16fe22ee8ab2287b69dc95fc3eb3471d013c253ef26734bfeecbb4eb1de468ae"
+  },
+  {
+   "id": "imo_1962_p2",
+   "split": "test",
+   "statement": "theorem imo_1962_p2\n  (x : ℝ)\n  (h₀ : 0 ≤ 3 - x)\n  (h₁ : 0 ≤ x + 1)\n  (h₂ : 1 / 2 < Real.sqrt (3 - x) - Real.sqrt (x + 1)) :\n  -1 ≤ x ∧ x < 1 - Real.sqrt 31 / 8 := by",
+   "statement_sha256": "58e4338b370235b122da9b658bc3bf53cbdfcd89f931c016331684e52af9b1dc"
+  },
+  {
+   "id": "imo_1963_p5",
+   "split": "test",
+   "statement": "theorem imo_1963_p5 :\n  Real.cos (π / 7) - Real.cos (2 * π / 7) + Real.cos (3 * π / 7) = 1 / 2 := by",
+   "statement_sha256": "5b2290d930eadc7ad38ef163bd93f90e7d2b6b68c7631b41be9740567f27ef62"
+  },
+  {
+   "id": "imo_1964_p2",
+   "split": "test",
+   "statement": "theorem imo_1964_p2\n  (a b c : ℝ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : c < a + b)\n  (h₂ : b < a + c)\n  (h₃ : a < b + c) :\n  a^2 * (b + c - a) + b^2 * (c + a - b) + c^2 * (a + b - c) ≤ 3 * a * b * c := by",
+   "statement_sha256": "fcad1ca0abe3bead2896d5ca9c545ae255d98cabf81a7b4ea662bb7d33a7201a"
+  },
+  {
+   "id": "imo_1965_p2",
+   "split": "test",
+   "statement": "theorem imo_1965_p2\n  (x y z : ℝ)\n  (a : ℕ → ℝ)\n  (h₀ : 0 < a 0 ∧ 0 < a 4 ∧ 0 < a 8)\n  (h₁ : a 1 < 0 ∧ a 2 < 0)\n  (h₂ : a 3 < 0 ∧ a 5 < 0)\n  (h₃ : a 6 < 0 ∧ a 7 < 0)\n  (h₄ : 0 < a 0 + a 1 + a 2)\n  (h₅ : 0 < a 3 + a 4 + a 5)\n  (h₆ : 0 < a 6 + a 7 + a 8)\n  (h₇ : a 0 * x + a 1 * y + a 2 * z = 0)\n  (h₈ : a 3 * x + a 4 * y + a 5 * z = 0)\n  (h₉ : a 6 * x + a 7 * y + a 8 * z = 0) :\n  x = 0 ∧ y = 0 ∧ z = 0 := by",
+   "statement_sha256": "ee67c8cea757d4f293e35fe98fec0cfa97f331c0dfeab7a67e4120ff62eecf3d"
+  },
+  {
+   "id": "imo_1968_p5_1",
+   "split": "test",
+   "statement": "theorem imo_1968_p5_1\n  (a : ℝ)\n  (f : ℝ → ℝ)\n  (h₀ : 0 < a)\n  (h₁ : ∀ x, f (x + a) = 1 / 2 + Real.sqrt (f x - (f x)^2)) :\n  ∃ b > 0, ∀ x, f (x + b) = f x := by",
+   "statement_sha256": "070af351ac69273f3c2a043ddefc651a461436cd82656f7c5ca71cf58924a3a9"
+  },
+  {
+   "id": "imo_1969_p2",
+   "split": "test",
+   "statement": "theorem imo_1969_p2\n  (m n : ℝ)\n  (k : ℕ)\n  (a : ℕ → ℝ)\n  (y : ℝ → ℝ)\n  (h₀ : 0 < k)\n  (h₁ : ∀ x, y x = ∑ i ∈ Finset.range k, ((Real.cos (a i + x)) / (2^i)))\n  (h₂ : y m = 0)\n  (h₃ : y n = 0) :\n  ∃ t : ℤ, m - n = t * π := by",
+   "statement_sha256": "87cf256026241e59dc3e789bb67781712cbdba23de17796476d8cdaefe7b0595"
+  },
+  {
+   "id": "imo_1974_p3",
+   "split": "test",
+   "statement": "theorem imo_1974_p3\n  (n : ℕ) :\n  ¬ 5∣∑ k ∈ Finset.range (n + 1), (Nat.choose (2 * n + 1) (2 * k + 1)) * (2^(3 * k)) := by",
+   "statement_sha256": "ffcca896f245475b615a9a11d3d85c25605cc21f15b858a6cc2c0fb7a9a578a3"
+  },
+  {
+   "id": "imo_1977_p6",
+   "split": "test",
+   "statement": "theorem imo_1977_p6\n  (f : ℕ → ℕ)\n  (h₀ : ∀ n, 0 < f n)\n  (h₁ : ∀ n, 0 < n → f (f n) < f (n + 1)) :\n  ∀ n, 0 < n → f n = n := by",
+   "statement_sha256": "dd9affdef6b2c400713d60e629c798e5eb96a422e616befae8d8dccd94d47050"
+  },
+  {
+   "id": "imo_1981_p6",
+   "split": "test",
+   "statement": "theorem imo_1981_p6\n  (f : ℕ → ℕ → ℕ)\n  (g : ℕ → ℕ)\n  (h₀ : ∀ y, f 0 y = y + 1)\n  (h₁ : ∀ x, f (x + 1) 0 = f x 1)\n  (h₂ : ∀ x y, f (x + 1) (y + 1) = f x (f (x + 1) y))\n  (h₃ : g 0 = 2)\n  (h₄ : ∀ n, g (n + 1) = 2^(g n)) :\n  f 4 1981 = g 1983 - 3 := by",
+   "statement_sha256": "b62bed936cb0ca9233dcc079f9864f0902ff28acca661fedbe48fb5972414099"
+  },
+  {
+   "id": "imo_1982_p1",
+   "split": "test",
+   "statement": "theorem imo_1982_p1\n  (f : ℕ → ℕ)\n  (h₀ : ∀ m n, (0 < m ∧ 0 < n) → f (m + n) - f m - f n = (0 : ℤ) ∨ f (m + n) - f m - f n = (1 : ℤ))\n  (h₁ : f 2 = 0)\n  (h₂ : 0 < f 3)\n  (h₃ : f 9999 = 3333) :\n  f 1982 = 660 := by",
+   "statement_sha256": "8eaedaa49c1e1b6be9d4840af4981a770f671ec471845b65fbc809fea66c26d9"
+  },
+  {
+   "id": "imo_1983_p6",
+   "split": "test",
+   "statement": "theorem imo_1983_p6\n  (a b c : ℝ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : c < a + b)\n  (h₂ : b < a + c)\n  (h₃ : a < b + c) :\n  0 ≤ a^2 * b * (a - b) + b^2 * c * (b - c) + c^2 * a * (c - a) := by",
+   "statement_sha256": "234721202614752c8a9d735daf5e3383f7cd596a99e09baaacc4ae2f3d839f48"
+  },
+  {
+   "id": "imo_1984_p6",
+   "split": "test",
+   "statement": "theorem imo_1984_p6\n  (a b c d k m : ℕ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d)\n  (h₁ : Odd a ∧ Odd b ∧ Odd c ∧ Odd d)\n  (h₂ : a < b ∧ b < c ∧ c < d)\n  (h₃ : a * d = b * c)\n  (h₄ : a + d = 2^k)\n  (h₅ : b + c = 2^m) :\n  a = 1 := by",
+   "statement_sha256": "ecd4f82df25c1764e2e1c8308a40918b2c558abd1e88819f587526710139157b"
+  },
+  {
+   "id": "imo_1985_p6",
+   "split": "test",
+   "statement": "theorem imo_1985_p6\n  (f : ℕ → NNReal → ℝ)\n  (h₀ : ∀ x, f 1 x = x)\n  (h₁ : ∀ x n, f (n + 1) x = f n x * (f n x + 1 / n)) :\n  ∃! a, ∀ n, 0 < n → 0 < f n a ∧ f n a < f (n + 1) a ∧ f (n + 1) a < 1 := by",
+   "statement_sha256": "10b7374be166598de68ff7d47b66da40b9850fc00a3369def833483cc63bb3cf"
+  },
+  {
+   "id": "imo_1992_p1",
+   "split": "test",
+   "statement": "theorem imo_1992_p1\n  (p q r : ℤ)\n  (h₀ : 1 < p ∧ p < q ∧ q < r)\n  (h₁ : (p - 1) * (q - 1) * (r - 1)∣(p * q * r - 1)) :\n  (p, q, r) = (2, 4, 8) ∨ (p, q, r) = (3, 5, 15) := by",
+   "statement_sha256": "5a68900f6ed2fc5f330c90b568f24960230822d1e169b090d94f650889c0fed5"
+  },
+  {
+   "id": "imo_1997_p5",
+   "split": "test",
+   "statement": "theorem imo_1997_p5\n  (x y : ℕ)\n  (h₀ : 0 < x ∧ 0 < y)\n  (h₁ : x^(y^2) = y^x) :\n  (x, y) = (1, 1) ∨ (x, y) = (16, 2) ∨ (x, y) = (27, 3) := by",
+   "statement_sha256": "a94376939623b9724dd06de1680ce07a0a805a665dbb8e1302729b75ce8f242c"
+  },
+  {
+   "id": "imo_2001_p6",
+   "split": "test",
+   "statement": "theorem imo_2001_p6\n  (a b c d : ℕ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d)\n  (h₁ : d < c)\n  (h₂ : c < b)\n  (h₃ : b < a)\n  (h₄ : a * c + b * d = (b + d + a - c) * (b + d + c - a)) :\n  ¬ Nat.Prime (a * b + c * d) := by",
+   "statement_sha256": "1bfab250d18765c5fa386a599e8cc4caa8ff5558bdccd7f87591ae156f927f41"
+  },
+  {
+   "id": "imo_2019_p1",
+   "split": "test",
+   "statement": "theorem imo_2019_p1\n  (f : ℤ → ℤ) :\n  ((∀ a b, f (2 * a) + (2 * f b) = f (f (a + b))) ↔ (∀ z, f z = 0 \\/ ∃ c, ∀ z, f z = 2 * z + c)) := by",
+   "statement_sha256": "7d76fe77d71b4ca33744e571700cc9ce8e597f85fc6c652c254687c67ed4b221"
+  },
+  {
+   "id": "imosl_2007_algebra_p6",
+   "split": "test",
+   "statement": "theorem imosl_2007_algebra_p6\n  (a : ℕ → NNReal)\n  (h₀ : ∑ x ∈ Finset.range 100, ((a (x + 1))^2) = 1) :\n  ∑ x ∈ Finset.range 99, ((a (x + 1))^2 * a (x + 2)) + (a 100)^2 * a 1 < 12 / 25 := by",
+   "statement_sha256": "8c96169f78f7fd36abea1e380b68db2140a15505c739600b0b31c9a78173a825"
+  },
+  {
+   "id": "induction_11div10tonmn1ton",
+   "split": "test",
+   "statement": "theorem induction_11div10tonmn1ton\n  (n : ℕ) :\n  11 ∣ (10^n - (-1 : ℤ)^n) := by",
+   "statement_sha256": "ee19f1d87cff813d01110ea8ca4e0ebfb40f3f3a6150ebf4693f9ebdb2aa7d18"
+  },
+  {
+   "id": "induction_12dvd4expnp1p20",
+   "split": "test",
+   "statement": "theorem induction_12dvd4expnp1p20\n  (n : ℕ) :\n  12 ∣ 4^(n+1) + 20 := by",
+   "statement_sha256": "a00459712047b72b613106bc4998bd65c0fa631eefb944eb5f67e8e940ca5589"
+  },
+  {
+   "id": "induction_1pxpownlt1pnx",
+   "split": "test",
+   "statement": "theorem induction_1pxpownlt1pnx\n  (x : ℝ)\n  (n : ℕ)\n  (h₀ : -1 < x)\n  (h₁ : 0 < n) :\n  (1 + ↑n*x) ≤ (1 + x)^(n:ℕ) := by",
+   "statement_sha256": "8f03ddd336c284d4d318240cfcb5367a957a07571463fcfe9edcfdcd85afd274"
+  },
+  {
+   "id": "induction_nfactltnexpnm1ngt3",
+   "split": "test",
+   "statement": "theorem induction_nfactltnexpnm1ngt3\n  (n : ℕ)\n  (h₀ : 3 ≤ n) :\n  (n)! < n^(n - 1) := by",
+   "statement_sha256": "ae8f93c2033efa30902b8242746ae03101c1ae7cc2ba3bc3c9158f35a18b7c91"
+  },
+  {
+   "id": "induction_pord1p1on2powklt5on2",
+   "split": "test",
+   "statement": "theorem induction_pord1p1on2powklt5on2\n  (n : ℕ)\n  (h₀ : 0 < n) :\n  ∏ k ∈ Finset.Icc 1 n, (1 + (1:ℝ) / 2^k) < 5 / 2 := by",
+   "statement_sha256": "b0deab9bb034ebc8183fb5e8020655a78af85569d20741973c2551bbc8c775c1"
+  },
+  {
+   "id": "induction_pprime_pdvdapowpma",
+   "split": "test",
+   "statement": "theorem induction_pprime_pdvdapowpma\n  (p a : ℕ)\n  (h₀ : 0 < a)\n  (h₁ : Nat.Prime p) :\n  p ∣ (a^p - a) := by",
+   "statement_sha256": "8bcc751452aba813eda20d6bd381c04dbe7618c595790f1ca47e77ccb9dc7191"
+  },
+  {
+   "id": "induction_prod1p1onk3le3m1onn",
+   "split": "test",
+   "statement": "theorem induction_prod1p1onk3le3m1onn\n  (n : ℕ)\n  (h₀ : 0 < n) :\n  ∏ k ∈ Finset.Icc 1 n, (1 + (1:ℝ) / k^3) ≤ (3:ℝ) - 1 / ↑n := by",
+   "statement_sha256": "a5dabed396644d96cadfa12e930027c6540ee3965f1918ac2891057c41a2d7e7"
+  },
+  {
+   "id": "induction_sumkexp3eqsumksq",
+   "split": "test",
+   "statement": "theorem induction_sumkexp3eqsumksq\n  (n : ℕ) :\n  ∑ k ∈ Finset.range n, k^3 = (∑ k ∈ Finset.range n, k)^2 := by",
+   "statement_sha256": "04614c3e9c5a41116c50304a57434c0ab710624cf4e352531d89c2d5303ebaa5"
+  },
+  {
+   "id": "mathd_algebra_107",
+   "split": "test",
+   "statement": "theorem mathd_algebra_107\n  (x y : ℝ)\n  (h₀ : x^2 + 8 * x + y^2 - 6 * y = 0) :\n  (x + 4)^2 + (y-3)^2 = 5^2 := by",
+   "statement_sha256": "4fe15b2d623c6a79929d6e057667ee856484df307932242d53f34da84066f83e"
+  },
+  {
+   "id": "mathd_algebra_113",
+   "split": "test",
+   "statement": "theorem mathd_algebra_113\n  (x : ℝ) :\n  x^2 - 14 * x + 3 ≥ 7^2 - 14 * 7 + 3 := by",
+   "statement_sha256": "7229379ae4cc18f47ed07d8878edf215ec9d8a033eb70b73cd587935e4f1391c"
+  },
+  {
+   "id": "mathd_algebra_114",
+   "split": "test",
+   "statement": "theorem mathd_algebra_114\n  (a : ℝ)\n  (h₀ : a = 8) :\n  (16 * (a^2) ^ (1 / 3 : ℝ)) ^ (1 / 3 : ℝ) = 4 := by",
+   "statement_sha256": "e9b58cb17337fb7971a5131264bdfc6b2d5e4c5af17ccadbb651a17392e92b74"
+  },
+  {
+   "id": "mathd_algebra_125",
+   "split": "test",
+   "statement": "theorem mathd_algebra_125\n  (x y : ℕ)\n  (h₀ : 0 < x ∧ 0 < y)\n  (h₁ : 5 * x = y)\n  (h₂ : (↑x - (3:ℤ)) + (y - (3:ℤ)) = 30) :\n  x = 6 := by",
+   "statement_sha256": "00bff17274f2a1b5742262bf65687d2be4419cd3afb0a0811103be7a5e385de7"
+  },
+  {
+   "id": "mathd_algebra_129",
+   "split": "test",
+   "statement": "theorem mathd_algebra_129\n  (a : ℝ)\n  (h₀ : a ≠ 0)\n  (h₁ : 8⁻¹ / 4⁻¹ - a⁻¹ = 1) :\n  a = -2 := by",
+   "statement_sha256": "fa0223f48458e59803f1b72d2cf879f302b62071b94b3e18c73165e0576ec073"
+  },
+  {
+   "id": "mathd_algebra_137",
+   "split": "test",
+   "statement": "theorem mathd_algebra_137\n  (x : ℕ)\n  (h₀ : ↑x + (4:ℝ) / (100:ℝ) * ↑x = 598) :\n  x = 575 := by",
+   "statement_sha256": "55464dbc88c6829930e890755ff1210a1bea3c12a4a41b623412050df2cdb776"
+  },
+  {
+   "id": "mathd_algebra_139",
+   "split": "test",
+   "statement": "theorem mathd_algebra_139\n  (s : ℝ → ℝ → ℝ)\n  (h₀ : ∀ x, ∀ y, x≠0 -> y≠0 -> s x y = (1/y - 1/x) / (x-y)) :\n  s 3 11 = 1/33 := by",
+   "statement_sha256": "036c49010006d108008b2f2fe9750713b28c4b13bbd2e928ad584860e9a88559"
+  },
+  {
+   "id": "mathd_algebra_141",
+   "split": "test",
+   "statement": "theorem mathd_algebra_141\n  (a b : ℝ)\n  (h₁ : (a * b)=180)\n  (h₂ : 2 * (a + b)=54) :\n  (a^2 + b^2) = 369 := by",
+   "statement_sha256": "38e8b9f1fc271e39207d3ac638f2b4a04e462f26a430a4077b0483cb805069a3"
+  },
+  {
+   "id": "mathd_algebra_142",
+   "split": "test",
+   "statement": "theorem mathd_algebra_142\n  (m b : ℝ)\n  (h₀ : m * 7 + b = -1)\n  (h₁ : m * (-1) + b = 7) :\n  m + b = 5 := by",
+   "statement_sha256": "253f11f5b6fdc000224063ab00bb71bc1389dea0f503b25361f6947a0e4482ea"
+  },
+  {
+   "id": "mathd_algebra_143",
+   "split": "test",
+   "statement": "theorem mathd_algebra_143\n  (f g : ℝ → ℝ)\n  (h₀ : ∀ x, f x = x + 1)\n  (h₁ : ∀ x, g x = x^2 + 3) :\n  f (g 2) = 8 := by",
+   "statement_sha256": "fc16894f131d0f689f8c3df33ef0bde4f7640155e7d5e0f0029c535ec0589d77"
+  },
+  {
+   "id": "mathd_algebra_148",
+   "split": "test",
+   "statement": "theorem mathd_algebra_148\n  (c : ℝ)\n  (f : ℝ → ℝ)\n  (h₀ : ∀ x, f x = c * x^3 - 9 * x + 3)\n  (h₁ : f 2 = 9) :\n  c = 3 := by",
+   "statement_sha256": "88eecd041939bd27341c4547c4267c7e620c7856109539055ceaccda4883da29"
+  },
+  {
+   "id": "mathd_algebra_153",
+   "split": "test",
+   "statement": "theorem mathd_algebra_153\n  (n : ℝ)\n  (h₀ : n = 1 / 3) :\n  Int.floor (10 * n) + Int.floor (100 * n) + Int.floor (1000 * n) + Int.floor (10000 * n) = 3702 := by",
+   "statement_sha256": "d14dccfbaaaa0df7c6911fa683a9b78f4572b43bc18dea7a2b576c1e289cbb54"
+  },
+  {
+   "id": "mathd_algebra_156",
+   "split": "test",
+   "statement": "theorem mathd_algebra_156\n  (x y : ℝ)\n  (f g : ℝ → ℝ)\n  (h₀ : ∀t, f t = t^4)\n  (h₁ : ∀t, g t = 5 * t^2 - 6)\n  (h₂ : f x = g x)\n  (h₃ : f y = g y)\n  (h₄ : x^2 < y^2) :\n  y^2 - x^2 = 1 := by",
+   "statement_sha256": "3b3f471f2658d7982f4ac2eae9f00740d22ee8077a9471422d9033477957070c"
+  },
+  {
+   "id": "mathd_algebra_158",
+   "split": "test",
+   "statement": "theorem mathd_algebra_158\n  (a : ℕ)\n  (h₀ : Even a)\n  (h₁ : ∑ k ∈ Finset.range 8, (2 * k + 1) - ∑ k ∈ Finset.range 5, (a + 2 * k) = (4:ℤ)) :\n  a = 8 := by",
+   "statement_sha256": "292ac5a6bf95a9747f0962b44af12e0cb552d51032d99c3ffbf7c9ca9ebef739"
+  },
+  {
+   "id": "mathd_algebra_160",
+   "split": "test",
+   "statement": "theorem mathd_algebra_160\n  (n x : ℝ)\n  (h₀ : n + x = 97)\n  (h₁ : n + 5 * x = 265) :\n  n + 2 * x = 139 := by",
+   "statement_sha256": "e3aa5af17aa24f22c0c2b6732bc60d4b154c0bb253bae8f9c9168d9b97340e7c"
+  },
+  {
+   "id": "mathd_algebra_17",
+   "split": "test",
+   "statement": "theorem mathd_algebra_17\n  (a : ℝ)\n  (h₀ : Real.sqrt (4 + Real.sqrt (16 + 16 * a)) + Real.sqrt (1 + Real.sqrt (1 + a)) = 6) :\n  a = 8 := by",
+   "statement_sha256": "49c41f4d0f99beb88a857be75b3e70bb1cb0533deb96f9e2f4267447627e9057"
+  },
+  {
+   "id": "mathd_algebra_170",
+   "split": "test",
+   "statement": "theorem mathd_algebra_170\n  (S : Finset ℤ)\n  (h₀ : ∀ (n : ℤ), n ∈ S ↔ abs (n - 2) ≤ 5 + 6 / 10) :\n  S.card = 11 := by",
+   "statement_sha256": "9648f15c7dae8b989e8f545ce1c6220c70a25011673df529be3a10828d92bbb0"
+  },
+  {
+   "id": "mathd_algebra_171",
+   "split": "test",
+   "statement": "theorem mathd_algebra_171\n  (f : ℝ → ℝ)\n  (h₀ : ∀x, f x = 5 * x + 4) :\n  f 1 = 9 := by",
+   "statement_sha256": "8da0d1479c9001cc7bccebf23b51bc1ee893615374523ed4ce13ab0f78c618f1"
+  },
+  {
+   "id": "mathd_algebra_176",
+   "split": "test",
+   "statement": "theorem mathd_algebra_176\n  (x : ℝ) :\n  (x + 1)^2 * x = x^3 + 2 * x^2 + x := by",
+   "statement_sha256": "dd4c0d9edd1f088f117c3b1fe1d691a7bc1b1ac64343cb34d2cbebb1f32bff4e"
+  },
+  {
+   "id": "mathd_algebra_184",
+   "split": "test",
+   "statement": "theorem mathd_algebra_184\n  (a b : NNReal)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : (a^2) = 6*b)\n  (h₂ : (a^2) = 54/b) :\n  a = 3 * NNReal.sqrt 2 := by",
+   "statement_sha256": "4cc955da1a59d4d7fe289f63bcf5581919b48319c287905e0a528d0372c2ea55"
+  },
+  {
+   "id": "mathd_algebra_188",
+   "split": "test",
+   "statement": "theorem mathd_algebra_188\n  (σ : Equiv ℝ ℝ)\n  (h : σ.1 2 = σ.2 2) :\n  σ.1 (σ.1 2) = 2 := by",
+   "statement_sha256": "ab089a0e8654f00afe647c469826d148932abe18624de6997aeb8a40ad8da583"
+  },
+  {
+   "id": "mathd_algebra_196",
+   "split": "test",
+   "statement": "theorem mathd_algebra_196\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ abs (2 - x) = 3) :\n  ∑ k ∈ S, k = 4 := by",
+   "statement_sha256": "e2b164b0dd6434b55e427f006ecb2c558823e3c371bc678ee9bef6024abd24a3"
+  },
+  {
+   "id": "mathd_algebra_208",
+   "split": "test",
+   "statement": "theorem mathd_algebra_208 :\n  Real.sqrt 1000000 - 1000000^(1/3) = 900 := by",
+   "statement_sha256": "6c91fd8a5490826d3e955a7be87310011de8f90badf70e2ae26f14d543fd5f65"
+  },
+  {
+   "id": "mathd_algebra_209",
+   "split": "test",
+   "statement": "theorem mathd_algebra_209\n  (σ : Equiv ℝ ℝ)\n  (h₀ : σ.2 2 = 10)\n  (h₁ : σ.2 10 = 1)\n  (h₂ : σ.2 1 = 2) :\n  σ.1 (σ.1 10) = 1 := by",
+   "statement_sha256": "591afa3964de60dd529a1cbd0257a00f39e9460d91db7e471245a20162f78352"
+  },
+  {
+   "id": "mathd_algebra_215",
+   "split": "test",
+   "statement": "theorem mathd_algebra_215\n  (S : Finset ℝ)\n  (h₀ : ∀ (x : ℝ), x ∈ S ↔ (x + 3)^2 = 121) :\n  ∑ k ∈ S, k = -6 := by",
+   "statement_sha256": "871949df4381c2124f47ab565242c5483bffdd1501eb66c97c32e4a89d37b621"
+  },
+  {
+   "id": "mathd_algebra_24",
+   "split": "test",
+   "statement": "theorem mathd_algebra_24\n  (x : ℝ)\n  (h₀ : x / 50 = 40) :\n  x = 2000 := by",
+   "statement_sha256": "300c739740ea5ec30df042a3fbc3c61441c6d928b34c1301a1e34d5d55964afd"
+  },
+  {
+   "id": "mathd_algebra_246",
+   "split": "test",
+   "statement": "theorem mathd_algebra_246\n  (a b : ℝ)\n  (f : ℝ → ℝ)\n  (h₀ : ∀ x, f x = a * x^4 - b * x^2 + x + 5)\n  (h₂ : f (-3) = 2) :\n  f 3 = 8 := by",
+   "statement_sha256": "3e3454d831914e40abf7f0e59efb5cec6ed829068af42923673b410d58738856"
+  },
+  {
+   "id": "mathd_algebra_263",
+   "split": "test",
+   "statement": "theorem mathd_algebra_263\n  (y : ℝ)\n  (h₀ : 0 ≤ 19 + 3 * y)\n  (h₁ : Real.sqrt (19 + 3 * y) = 7) :\n  y = 10 := by",
+   "statement_sha256": "ab904c3f83bee0390d3ca7f3092e959f01463fbfff8998a1776244a9ef858b58"
+  },
+  {
+   "id": "mathd_algebra_270",
+   "split": "test",
+   "statement": "theorem mathd_algebra_270\n  (f : ℝ → ℝ)\n  (h₀ : ∀ x, x ≠ -2 -> f x = 1 / (x + 2)) :\n  f (f 1) = 3/7 := by",
+   "statement_sha256": "4797b15ba30b030b08ae89fb317ab951cb6af4c62c036b50f57a2c11355799e8"
+  },
+  {
+   "id": "mathd_algebra_275",
+   "split": "test",
+   "statement": "theorem mathd_algebra_275\n  (x : ℝ)\n  (h : ((11:ℝ)^(1 / 4))^(3 * x - 3) = 1 / 5) :\n  ((11:ℝ)^(1 / 4))^(6 * x + 2) = 121 / 25 := by",
+   "statement_sha256": "60a60cb76a278ebd99d4ce0fa236e9ea26218c101895c53d300b62446bf6e21c"
+  },
+  {
+   "id": "mathd_algebra_276",
+   "split": "test",
+   "statement": "theorem mathd_algebra_276\n  (a b : ℤ)\n  (h₀ : ∀ x : ℝ, 10 * x^2 - x - 24 = (a * x - 8) * (b * x + 3)) :\n  a * b + b = 12 := by",
+   "statement_sha256": "138116ae7dbf5af09d60725930f9d05b37672efed6d53f369583770f5a645173"
+  },
+  {
+   "id": "mathd_algebra_288",
+   "split": "test",
+   "statement": "theorem mathd_algebra_288\n  (x y : ℝ)\n  (n : NNReal)\n  (h₀ : x < 0 ∧ y < 0)\n  (h₁ : abs y = 6)\n  (h₂ : Real.sqrt ((x - 8)^2 + (y - 3)^2) = 15)\n  (h₃ : Real.sqrt (x^2 + y^2) = Real.sqrt n) :\n  n = 52 := by",
+   "statement_sha256": "4eb75f2f63160ff5b6d8942e436f3a3c2b55419b364f5ea7d76f26bff4b88f77"
+  },
+  {
+   "id": "mathd_algebra_289",
+   "split": "test",
+   "statement": "theorem mathd_algebra_289\n  (k t m n : ℕ)\n  (h₀ : Nat.Prime m ∧ Nat.Prime n)\n  (h₁ : t < k)\n  (h₂ : k^2 - m * k + n = 0)\n  (h₃ : t^2 - m * t + n = 0) :\n  m^n + n^m + k^t + t^k = 20 := by",
+   "statement_sha256": "56b5c7b98a0fff5c093bd64f54ed28097169cfde43ad107a52e18d062104620d"
+  },
+  {
+   "id": "mathd_algebra_293",
+   "split": "test",
+   "statement": "theorem mathd_algebra_293\n  (x : NNReal) :\n  Real.sqrt (60 * x) * Real.sqrt (12 * x) * Real.sqrt (63 * x) = 36 * x * Real.sqrt (35 * x) := by",
+   "statement_sha256": "064cb69a7b4423c3779e3341f41b7e5df45dad37aec5280103d08116e92ab656"
+  },
+  {
+   "id": "mathd_algebra_296",
+   "split": "test",
+   "statement": "theorem mathd_algebra_296 :\n  abs (((3491 - 60) * (3491 + 60) - 3491^2):ℤ) = 3600 := by",
+   "statement_sha256": "d89ad4b0fbce99b1a2cb96e438588dc6424688d576b7ea512c311e17d63472f4"
+  },
+  {
+   "id": "mathd_algebra_302",
+   "split": "test",
+   "statement": "theorem mathd_algebra_302 :\n  (Complex.I / 2)^2 = -(1 / 4) := by",
+   "statement_sha256": "f3d28635888e195c697ffc70b50ebc06d14909d581b8ed176971e0cf52aecefc"
+  },
+  {
+   "id": "mathd_algebra_304",
+   "split": "test",
+   "statement": "theorem mathd_algebra_304 :\n  91^2 = 8281 := by",
+   "statement_sha256": "573e8f902dd0d96b9a5b0be4d2a1eda9255a6004cae82d7fad2efc3619d4dff2"
+  },
+  {
+   "id": "mathd_algebra_313",
+   "split": "test",
+   "statement": "theorem mathd_algebra_313\n  (v i z : ℂ)\n  (h₀ : v = i * z)\n  (h₁ : v = 1 + Complex.I)\n  (h₂ : z = 2 - Complex.I) :\n  i = 1/5 + 3/5 * Complex.I := by",
+   "statement_sha256": "54589d6fedecdf588b610015733b921394ce34c484d62dca6672cb0abcbfba1a"
+  },
+  {
+   "id": "mathd_algebra_314",
+   "split": "test",
+   "statement": "theorem mathd_algebra_314\n  (n : ℕ)\n  (h₀ : n = 11) :\n  (1 / 4)^(n + 1) * 2^(2 * n) = 1 / 4 := by",
+   "statement_sha256": "c16a5c6ae2ee28bc1fd8133f7085829747a26147ffafd1c971bb2f4a9efa58a0"
+  },
+  {
+   "id": "mathd_algebra_320",
+   "split": "test",
+   "statement": "theorem mathd_algebra_320\n  (x : ℝ)\n  (a b c : ℕ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 ≤ x)\n  (h₁ : 2 * x^2 = 4 * x + 9)\n  (h₂ : x = (a + Real.sqrt b) / c)\n  (h₃ : c = 2) :\n  a + b + c = 26 := by",
+   "statement_sha256": "412038f2270c280a560c68f440b4561b895edcec1545fd2586e22cebcce6b015"
+  },
+  {
+   "id": "mathd_algebra_329",
+   "split": "test",
+   "statement": "theorem mathd_algebra_329\n  (x y : ℝ)\n  (h₀ : 3 * y = x)\n  (h₁ : 2 * x + 5 * y = 11) :\n  x + y = 4 := by",
+   "statement_sha256": "0d8f4b91d6c092daf935e3e25d16d638e84e86ac5d4be4585fc43cb11cfcb5dd"
+  },
+  {
+   "id": "mathd_algebra_33",
+   "split": "test",
+   "statement": "theorem mathd_algebra_33\n  (x y z : ℝ)\n  (h₀ : x ≠ 0)\n  (h₁ : 2 * x = 5 * y)\n  (h₂ : 7 * y = 10 * z) :\n  z / x = 7 / 25 := by",
+   "statement_sha256": "d29985ad8c53d819cd3fb71f2dcf537100d0dd0a418662236cbbc50b65403ca3"
+  },
+  {
+   "id": "mathd_algebra_332",
+   "split": "test",
+   "statement": "theorem mathd_algebra_332\n  (x y : ℝ)\n  (h₀ : (x + y) / 2 = 7)\n  (h₁ : Real.sqrt (x * y) = Real.sqrt 19) :\n  x^2 + y^2 = 158 := by",
+   "statement_sha256": "6dea403315463f501d815c36c6d70ed046feb2cec781e76b4c2db0a906e502e9"
+  },
+  {
+   "id": "mathd_algebra_338",
+   "split": "test",
+   "statement": "theorem mathd_algebra_338\n  (a b c : ℝ)\n  (h₀ : 3 * a + b + c = -3)\n  (h₁ : a + 3 * b + c = 9)\n  (h₂ : a + b + 3 * c = 19) :\n  a * b * c = -56 := by",
+   "statement_sha256": "e41c2e758b73b44c5cdeb5ab41888213b7d805ce00553e97ecb54e3e1ddc9d49"
+  },
+  {
+   "id": "mathd_algebra_342",
+   "split": "test",
+   "statement": "theorem mathd_algebra_342\n  (a d: ℝ)\n  (h₀ : ∑ k ∈ (Finset.range 5), (a + k * d) = 70)\n  (h₁ : ∑ k ∈ (Finset.range 10), (a + k * d) = 210) :\n  a = 42/5 := by",
+   "statement_sha256": "db34366d553d33f30253f3e500728e752d9d5986be55c883f5c0cebcffed8089"
+  },
+  {
+   "id": "mathd_algebra_346",
+   "split": "test",
+   "statement": "theorem mathd_algebra_346\n  (f g : ℝ → ℝ)\n  (h₀ : ∀ x, f x = 2 * x - 3)\n  (h₁ : ∀ x, g x = x + 1) :\n  g (f 5 - 1) = 7 := by",
+   "statement_sha256": "39d16586cf4e4e3b3ebfc4c49282c4e293a34da31df3c77b785bc20b3f8b1249"
+  },
+  {
+   "id": "mathd_algebra_354",
+   "split": "test",
+   "statement": "theorem mathd_algebra_354\n  (a d : ℝ)\n  (h₀ : a + 6 * d = 30)\n  (h₁ : a + 10 * d = 60) :\n  a + 20 * d = 135 := by",
+   "statement_sha256": "daac1b97573dd19e35b0cba6c45ebbebd707eb1aeb8baef408c180e3f027afe9"
+  },
+  {
+   "id": "mathd_algebra_359",
+   "split": "test",
+   "statement": "theorem mathd_algebra_359\n  (y : ℝ)\n  (h₀ : y + 6 + y = 2 * 12) :\n  y = 9 := by",
+   "statement_sha256": "4730bb0f5ec610f16aa05c9124fce7944b19fb63b2897665904643168efd68a0"
+  },
+  {
+   "id": "mathd_algebra_362",
+   "split": "test",
+   "statement": "theorem mathd_algebra_362\n  (a b : ℝ)\n  (h₀ : a^2 * b^3 = 32 / 27)\n  (h₁ : a / b^3 = 27 / 4) :\n  a + b = 8 / 3 := by",
+   "statement_sha256": "d8e1f795391cd1cdac4be0562b57f4ad1d6382c36712e4fc1f7c031c11ad0080"
+  },
+  {
+   "id": "mathd_algebra_388",
+   "split": "test",
+   "statement": "theorem mathd_algebra_388\n  (x y z : ℝ)\n  (h₀ : 3 * x + 4 * y - 12 * z = 10)\n  (h₁ : -2 * x - 3 * y + 9 * z = -4) :\n  x = 14 := by",
+   "statement_sha256": "dde842359b4625bf1d403d9fa534ee4a8371e0970c64631f9d786c8474651fa0"
+  },
+  {
+   "id": "mathd_algebra_392",
+   "split": "test",
+   "statement": "theorem mathd_algebra_392\n  (n : ℕ)\n  (h₀ : Even n)\n  (h₁ : ((n:ℤ) - 2)^2 + (n:ℤ)^2 + ((n:ℤ) + 2)^2 = 12296) :\n  ((n - 2) * n * (n + 2)) / 8 = 32736 := by",
+   "statement_sha256": "9776ffd9d82f6e650f2257508329fa5bc0335cdd8b02a3959f778a6fb412ed4e"
+  },
+  {
+   "id": "mathd_algebra_398",
+   "split": "test",
+   "statement": "theorem mathd_algebra_398\n  (a b c : ℝ)\n  (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : 9 * b = 20 * c)\n  (h₂ : 7 * a = 4 * b) :\n  63 * a = 80 * c := by",
+   "statement_sha256": "2801ba20e22e4ab2654f0acf5605506730cd573b77908427d8379a9e4affc93e"
+  },
+  {
+   "id": "mathd_algebra_400",
+   "split": "test",
+   "statement": "theorem mathd_algebra_400\n  (x : ℝ)\n  (h₀ : 5 + 500 / 100 * 10 = 110 / 100 * x) :\n  x = 50 := by",
+   "statement_sha256": "73c8577346274c92aa619d5c8c064db9f37db86b327fd4fcc129ed24b5516aec"
+  },
+  {
+   "id": "mathd_algebra_412",
+   "split": "test",
+   "statement": "theorem mathd_algebra_412\n  (x y : ℝ)\n  (h₀ : x + y = 25)\n  (h₁ : x - y = 11) :\n  x = 18 := by",
+   "statement_sha256": "5755cbdf0816565a045ccf1acf60dc6f8793f29e2c80b2adffb922be4aa264cd"
+  },
+  {
+   "id": "mathd_algebra_419",
+   "split": "test",
+   "statement": "theorem mathd_algebra_419\n  (a b : ℝ)\n  (h₀ : a = -1)\n  (h₁ : b = 5) :\n  -a - b^2 + 3 * (a * b) = -39 := by",
+   "statement_sha256": "e5ca23c1111ce23ac3d3d1952295219e88c7f5e7f4cf64a9efd3bd8598100c76"
+  },
+  {
+   "id": "mathd_algebra_427",
+   "split": "test",
+   "statement": "theorem mathd_algebra_427\n  (x y z : ℝ)\n  (h₀ : 3 * x + y = 17)\n  (h₁ : 5 * y + z = 14)\n  (h₂ : 3 * x + 5 * z = 41) :\n  x + y + z = 12 := by",
+   "statement_sha256": "68ee9c4f26eaea0af1354fafded1f8b36adf74f10e0c284141f7ad71b7a623de"
+  },
+  {
+   "id": "mathd_algebra_432",
+   "split": "test",
+   "statement": "theorem mathd_algebra_432\n  (x : ℝ) :\n  (x + 3) * (2 * x - 6) = 2 * x^2 - 18 := by",
+   "statement_sha256": "7317e25053a6281bbad35f9cf61f6c1e6315a90597f5ada151ce2e0770be7107"
+  },
+  {
+   "id": "mathd_algebra_44",
+   "split": "test",
+   "statement": "theorem mathd_algebra_44\n  (s t : ℝ)\n  (h₀ : s = 9 - 2 * t)\n  (h₁ : t = 3 * s + 1) :\n  s = 1 ∧ t = 4 := by",
+   "statement_sha256": "7622552103d6aa0f96e9cb7b79e8634a69a38d8bcd043462c3ba33dad5849ae3"
+  },
+  {
+   "id": "mathd_algebra_440",
+   "split": "test",
+   "statement": "theorem mathd_algebra_440\n  (x : ℝ)\n  (h₀ : 3 / 2 / 3 = x / 10) :\n  x = 5 := by",
+   "statement_sha256": "41c88758dc66dba3664c2706fbb0f57b5c24ab438714edda0cdf86e883fe20f7"
+  },
+  {
+   "id": "mathd_algebra_441",
+   "split": "test",
+   "statement": "theorem mathd_algebra_441\n  (x : ℝ)\n  (h₀ : x ≠ 0) :\n  12 / (x * x) * (x^4 / (14 * x)) * (35 / (3 * x)) = 10 := by",
+   "statement_sha256": "f700b241b74bf6dfef0971cd24545cd252abdcafb323be01daa0f0c4cdc7053b"
+  },
+  {
+   "id": "mathd_algebra_452",
+   "split": "test",
+   "statement": "theorem mathd_algebra_452\n  (a : ℕ → ℝ)\n  (h₀ : ∀ n, a (n + 2) - a (n + 1) = a (n + 1) - a n)\n  (h₁ : a 1 = 2 / 3)\n  (h₂ : a 9 = 4 / 5) :\n  a 5 = 11 / 15 := by",
+   "statement_sha256": "5c2adc71a9d586910df172f26d86ff54d2df360f92c252c90a3b0e55e7b7387a"
+  },
+  {
+   "id": "mathd_algebra_459",
+   "split": "test",
+   "statement": "theorem mathd_algebra_459\n  (a b c d : ℚ)\n  (h₀ : 3 * a = b + c + d)\n  (h₁ : 4 * b = a + c + d)\n  (h₂ : 2 * c = a + b + d)\n  (h₃ : 8 * a + 10 * b + 6 * c = 24) :\n  ↑d.den + d.num = 28 := by",
+   "statement_sha256": "188a4ad7b9cabc2f597f2e2ac827e95f94d015e624c8c1fb8fa4d336806e2d68"
+  },
+  {
+   "id": "mathd_algebra_478",
+   "split": "test",
+   "statement": "theorem mathd_algebra_478\n  (b h v : ℝ)\n  (h₀ : 0 < b ∧ 0 < h ∧ 0 < v)\n  (h₁ : v = 1 / 3 * (b * h))\n  (h₂ : b = 30)\n  (h₃ : h = 13 / 2) :\n  v = 65 := by",
+   "statement_sha256": "97b84e894fb7bd2b1e4c0f901aec5a2356ddc71e4334b0c45df3e5c184cdc286"
+  },
+  {
+   "id": "mathd_algebra_484",
+   "split": "test",
+   "statement": "theorem mathd_algebra_484 :\n  Real.log 27 / Real.log 3 = 3 := by",
+   "statement_sha256": "08258c3d71bbf1041c34b4648dba615eeeca5e32cf573408fe4814fe5bbcf4f5"
+  },
+  {
+   "id": "mathd_algebra_487",
+   "split": "test",
+   "statement": "theorem mathd_algebra_487\n  (a b c d : ℝ)\n  (h₀ : b = a^2)\n  (h₁ : a + b = 1)\n  (h₂ : d = c^2)\n  (h₃ : c + d = 1)\n  (h₄ : a ≠ c) :\n  Real.sqrt ((a - c)^2 + (b - d)^2)= Real.sqrt 10 := by",
+   "statement_sha256": "a721352936b9b8257aeb8a54ef1f890c2a621d928131bef6813f8bfab6704285"
+  },
+  {
+   "id": "mathd_algebra_513",
+   "split": "test",
+   "statement": "theorem mathd_algebra_513\n  (a b : ℝ)\n  (h₀ : 3 * a + 2 * b = 5)\n  (h₁ : a + b = 2) :\n  a = 1 ∧ b = 1 := by",
+   "statement_sha256": "cf85164edd4e712f33abc204e8f9d1fd28818b1a310275bf64d7ce4416c4967f"
+  },
+  {
+   "id": "mathd_algebra_598",
+   "split": "test",
+   "statement": "theorem mathd_algebra_598\n  (a b c d : ℝ)\n  (h₁ : ((4:ℝ)^a) = 5)\n  (h₂ : ((5:ℝ)^b) = 6)\n  (h₃ : ((6:ℝ)^c) = 7)\n  (h₄ : ((7:ℝ)^d) = 8) :\n  a * b * c * d = 3 / 2 := by",
+   "statement_sha256": "e0c100c391e25a3e1b670b20fb6c563051306bced4416d2eee25c754c73f9be0"
+  },
+  {
+   "id": "mathd_algebra_756",
+   "split": "test",
+   "statement": "theorem mathd_algebra_756\n  (a b : ℝ)\n  (h₀ : (2:ℝ)^a = 32)\n  (h₁ : a^b = 125) :\n  b^a = 243 := by",
+   "statement_sha256": "06e01df6b41b8d959e93dd5186f4c564d8686f280a08e31b82f310138c65a359"
+  },
+  {
+   "id": "mathd_algebra_76",
+   "split": "test",
+   "statement": "theorem mathd_algebra_76\n  (f : ℤ → ℤ)\n  (h₀ : ∀n, Odd n → f n = n^2)\n  (h₁ : ∀ n, Even n → f n = n^2 - 4*n -1) :\n  f 4 = -1 := by",
+   "statement_sha256": "b44c0223d108ac0514fac096dfa120cf21d12816bbf1d8ddc4674a497c643471"
+  },
+  {
+   "id": "mathd_algebra_80",
+   "split": "test",
+   "statement": "theorem mathd_algebra_80\n  (x : ℝ)\n  (h₀ : x ≠ -1)\n  (h₁ : (x - 9) / (x + 1) = 2) :\n  x = -11 := by",
+   "statement_sha256": "630fc709cfd26b39463b10a8bcc82b37f9b61cccc99b213bc8535e7c76fb6aba"
+  },
+  {
+   "id": "mathd_numbertheory_100",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_100\n  (n : ℕ)\n  (h₀ : 0 < n)\n  (h₁ : Nat.gcd n 40 = 10)\n  (h₂ : Nat.lcm n 40 = 280) :\n  n = 70 := by",
+   "statement_sha256": "17c4f12dbd68507650347ff810920a0b056feb07073ce8092fd8f26869f14cfb"
+  },
+  {
+   "id": "mathd_numbertheory_1124",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_1124\n  (n : ℕ)\n  (h₀ : n ≤ 9)\n  (h₁ : 18∣374 * 10 + n) :\n  n = 4 := by",
+   "statement_sha256": "bc9ed0e9bbc9de721d21f31857f1d555e5645f1e08cb17097c316cbbac14afc1"
+  },
+  {
+   "id": "mathd_numbertheory_12",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_12 :\n  Finset.card (Finset.filter (λ x => 20∣x) (Finset.Icc 15 85)) = 4 := by",
+   "statement_sha256": "8fb0e704345df4943a1dfb79fd84047523156b14d2fca13d254be8e13a6cb740"
+  },
+  {
+   "id": "mathd_numbertheory_127",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_127 :\n  (∑ k ∈ (Finset.range 101), 2^k) % 7 = 3 := by",
+   "statement_sha256": "b73ba60d342a4371e544df154217c76a2f79904c7b9e9bd3e5c5b94e2514f7c6"
+  },
+  {
+   "id": "mathd_numbertheory_135",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_135\n  (n A B C : ℕ)\n  (h₀ : n = 3^17 + 3^10)\n  (h₁ : 11 ∣ (n + 1))\n  (h₂ : [A,B,C].Pairwise (·≠·))\n  (h₃ : {A,B,C} ⊂ Finset.Icc 0 9)\n  (h₄ : Odd A ∧ Odd C)\n  (h₅ : ¬ 3 ∣ B)\n  (h₆ : Nat.digits 10 n = [B,A,B,C,C,A,C,B,A]) :\n  100 * A + 10 * B + C = 129 := by",
+   "statement_sha256": "1b94553b618cba778641988a565a6e1ab22e91f9dd268802bbdcc9b4d775da49"
+  },
+  {
+   "id": "mathd_numbertheory_150",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_150\n  (n : ℕ)\n  (h₀ : ¬ Nat.Prime (7 + 30 * n)) :\n  6 ≤ n := by",
+   "statement_sha256": "264bac9ea21ae3474d75a369f999da43eaa318d4e5c17c6081e4f3d86248feda"
+  },
+  {
+   "id": "mathd_numbertheory_175",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_175 :\n  (2^2010) % 10 = 4 := by",
+   "statement_sha256": "baf0c27aa26e786b3afb20535ece69dcab1b91456f2015e57067d144da95878a"
+  },
+  {
+   "id": "mathd_numbertheory_185",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_185\n  (n : ℕ)\n  (h₀ : n % 5 = 3) :\n  (2 * n) % 5 = 1 := by",
+   "statement_sha256": "44192faedea37d4b96ea7b0533d5e5e6612a122f8dd375ff716c8ebe7028a30a"
+  },
+  {
+   "id": "mathd_numbertheory_207",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_207 :\n  8 * 9^2 + 5 * 9 + 2 = 695 := by",
+   "statement_sha256": "6200c58c6d050ba99fcbae1f202d488c706d73560238a7ec617fced021a80b92"
+  },
+  {
+   "id": "mathd_numbertheory_212",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_212 :\n  (16^17 * 17^18 * 18^19) % 10 = 8 := by",
+   "statement_sha256": "af2b8bce47d87ebb0dd21809188f9bbb66f41ddb8ae5177d596d99fe49588704"
+  },
+  {
+   "id": "mathd_numbertheory_222",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_222\n  (b : ℕ)\n  (h₀ : Nat.lcm 120 b = 3720)\n  (h₁ : Nat.gcd 120 b = 8) :\n  b = 248 := by",
+   "statement_sha256": "abbf5f49ee1345bb98d4470ecd43bc5abd1527a353b4aeb6c8f193cd7c8c7bf0"
+  },
+  {
+   "id": "mathd_numbertheory_227",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_227\n  (x y n : ℕ+)\n  (h₀ : ↑x / (4:ℝ) + y / 6 = (x + y) / n) :\n  n = 5 := by",
+   "statement_sha256": "2884ed79ee5e0e7f29b099f5fcbb953ce188cd29225427755bc30d68b7ba513c"
+  },
+  {
+   "id": "mathd_numbertheory_229",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_229 :\n  (5^30) % 7 = 1 := by",
+   "statement_sha256": "8e3ed9d4d83bb0217a8d0dd9c7390bccf8d2287600734e0d3e5d88957fce7256"
+  },
+  {
+   "id": "mathd_numbertheory_233",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_233\n  (b :  ZMod (11^2))\n  (h₀ : b = 24⁻¹) :\n  b = 116 := by",
+   "statement_sha256": "98ea13743ec2bdd7181f1a5556a2c7fd5606ab76298614b54b37f7aa521795f2"
+  },
+  {
+   "id": "mathd_numbertheory_234",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_234\n  (a b : ℕ)\n  (h₀ : 1 ≤ a ∧ a ≤ 9 ∧ b ≤ 9)\n  (h₁ : (10 * a + b)^3 = 912673) :\n  a + b = 16 := by",
+   "statement_sha256": "618ad21c524f04c8e117719fd4c090960bb3612eab98dd9dd9479fc5e2d1fe95"
+  },
+  {
+   "id": "mathd_numbertheory_235",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_235 :\n  (29 * 79 + 31 * 81) % 10 = 2 := by",
+   "statement_sha256": "159ac70138ce4008824a2e497195c2eb1168ebf0f575c4cc89742edb36d159c8"
+  },
+  {
+   "id": "mathd_numbertheory_237",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_237 :\n  (∑ k ∈ (Finset.range 101), k) % 6 = 4 := by",
+   "statement_sha256": "21ab1cc17f354ce998eae4d8ae2c8ae156f1825c25cc52d42ddb648b1c0cd8ce"
+  },
+  {
+   "id": "mathd_numbertheory_239",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_239 :\n  (∑ k ∈ Finset.Icc 1 12, k) % 4 = 2 := by",
+   "statement_sha256": "b2bc172ec78731665b47d85228a741f742d7b04f996a50654b98a14031f8de0b"
+  },
+  {
+   "id": "mathd_numbertheory_247",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_247\n  (n : ℕ)\n  (h₀ : (3 * n) % 11 = 2) :\n  n % 11 = 8 := by",
+   "statement_sha256": "ae3b2a245d98f7f04b8f90002d931eab46e735398ed0d62c6b62cfd6a2d03834"
+  },
+  {
+   "id": "mathd_numbertheory_254",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_254 :\n  (239 + 174 + 83) % 10 = 6 := by",
+   "statement_sha256": "7fb6ff2ad3c97b9c7ab989bb0950c71594992b2321e45c0c723f70d86e2601fe"
+  },
+  {
+   "id": "mathd_numbertheory_277",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_277\n  (m n : ℕ)\n  (h₀ : Nat.gcd m n = 6)\n  (h₁ : Nat.lcm m n = 126) :\n  60 ≤ m + n := by",
+   "statement_sha256": "9501cec62defb61456d5e23618e77e898bf495557a81f03c9e6e9748a8297c99"
+  },
+  {
+   "id": "mathd_numbertheory_293",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_293\n  (n : ℕ)\n  (h₀ : n ≤ 9)\n  (h₁ : 11∣20 * 100 + 10 * n + 7) :\n  n = 5 := by",
+   "statement_sha256": "d674f3381b390b61f6fcd1ed42a5b618a3bc6df9760067506722e65c2c0f16ee"
+  },
+  {
+   "id": "mathd_numbertheory_296",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_296\n  (n : ℕ)\n  (h₀ : 2 ≤ n)\n  (h₁ : ∃ x, x^3 = n)\n  (h₂ : ∃ t, t^4 = n) :\n  4096 ≤ n := by",
+   "statement_sha256": "c88fdcfae34a8af62ddaddbb33844bf6e545017d614f071357be26f5be5fc9b1"
+  },
+  {
+   "id": "mathd_numbertheory_299",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_299 :\n  (1 * 3 * 5 * 7 * 9 * 11 * 13) % 10 = 5 := by",
+   "statement_sha256": "0cc0d112748fa46fb30b61c4ef68aebfe5877ba453cff53731fb8ae26c9f24d2"
+  },
+  {
+   "id": "mathd_numbertheory_3",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_3 :\n  (∑ x ∈ Finset.range 10, ((x + 1)^2)) % 10 = 5 := by",
+   "statement_sha256": "33334191140091be2720c0da28eb7772eba65bd89f920211b015cf77ec5b097a"
+  },
+  {
+   "id": "mathd_numbertheory_314",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_314\n  (r n : ℕ)\n  (h₀ : r = 1342 % 13)\n  (h₁ : 0 < n)\n  (h₂ : 1342∣n)\n  (h₃ : n % 13 < r) :\n  6710 ≤ n := by",
+   "statement_sha256": "a7eff5aedc88808bfbcdf5d053ff52177abc9c58af2ec5660fcec1c8726bc6cd"
+  },
+  {
+   "id": "mathd_numbertheory_320",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_320\n  (n : ℕ)\n  (h₀ : n < 101)\n  (h₁ : 101 ∣ (123456 - n)) :\n  n = 34 := by",
+   "statement_sha256": "7dd351708163987409019e4b8471678b7f06855cf1e3ce789247aa6cfb323c17"
+  },
+  {
+   "id": "mathd_numbertheory_321",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_321\n  (n :  ZMod 1399)\n  (h₁ : n = 160⁻¹) :\n  n = 1058 := by",
+   "statement_sha256": "de9d4d5912396aa383529dd9563ce75a42a5be55a4b8245206433c973ddae909"
+  },
+  {
+   "id": "mathd_numbertheory_328",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_328 :\n  (5^999999) % 7 = 6 := by",
+   "statement_sha256": "ad75c8fcea58a7097037967a3040a05c1786902d926799ac7081f0620f7f1eac"
+  },
+  {
+   "id": "mathd_numbertheory_34",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_34\n  (x: ℕ)\n  (h₀ : x < 100)\n  (h₁ : x*9 % 100 = 1) :\n  x = 89 := by",
+   "statement_sha256": "e5497aa559bbd056190f67525dce42463e7a7ce47817c7b7e96ea79c83e476de"
+  },
+  {
+   "id": "mathd_numbertheory_341",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_341\n  (a b c : ℕ)\n  (h₀ : a ≤ 9 ∧ b ≤ 9 ∧ c ≤ 9)\n  (h₁ : Nat.digits 10 ((5^100) % 1000) = [c,b,a]) :\n  a + b + c = 13 := by",
+   "statement_sha256": "b760c78f15c41e837b6d1e12a5f66653436e72b265c24dec33257e6f82c548f4"
+  },
+  {
+   "id": "mathd_numbertheory_342",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_342 :\n  54 % 6 = 0 := by",
+   "statement_sha256": "e02c69319e8707e8e271f87996506fe26c0b7177bd90b3591edccecf079d4d4a"
+  },
+  {
+   "id": "mathd_numbertheory_343",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_343 :\n  (∏ k ∈ Finset.range 6, (2 * k + 1)) % 10 = 5 := by",
+   "statement_sha256": "0a41e1f45dc30d51eff55e8b91662f01aca00aaf1d1e967434f1f1ee8bf4224d"
+  },
+  {
+   "id": "mathd_numbertheory_345",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_345 :\n  (2000 + 2001 + 2002 + 2003 + 2004 + 2005 + 2006) % 7 = 0 := by",
+   "statement_sha256": "83a9a739a90009e7889ed508fa162d9b07fe5ff22c433bb443a0fa4d6fcbfdb2"
+  },
+  {
+   "id": "mathd_numbertheory_353",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_353\n  (s : ℕ)\n  (h₀ : s = ∑ k ∈ Finset.Icc 2010 4018, k) :\n  s % 2009 = 0 := by",
+   "statement_sha256": "ca10cbe5a7710b82b8cc2a26a89e4187f1a7486461c2fe193b9dba36de499a98"
+  },
+  {
+   "id": "mathd_numbertheory_427",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_427\n  (a : ℕ)\n  (h₀ : a = (∑ k ∈ (Nat.divisors 500), k)) :\n  ∑ k ∈ Finset.filter (λ x => Nat.Prime x) (Nat.divisors a), k = 25 := by",
+   "statement_sha256": "6be83943e0e58ccc849e1e47733034e8dc2a352832f6f9693ad3a87be7ac1539"
+  },
+  {
+   "id": "mathd_numbertheory_430",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_430\n  (a b c : ℕ)\n  (h₀ : 1 ≤ a ∧ a ≤ 9)\n  (h₁ : 1 ≤ b ∧ b ≤ 9)\n  (h₂ : 1 ≤ c ∧ c ≤ 9)\n  (h₃ : a ≠ b)\n  (h₄ : a ≠ c)\n  (h₅ : b ≠ c)\n  (h₆ : a + b = c)\n  (h₇ : 10 * a + a - b = 2 * c)\n  (h₈ : c * b = 10 * a + a + a) :\n  a + b + c = 8 := by",
+   "statement_sha256": "f1c4ae3de332c736f50ef8f9f7fcd1b02035468f6d1d3e1729065f47c6c9984d"
+  },
+  {
+   "id": "mathd_numbertheory_435",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_435\n  (k : ℕ)\n  (h₀ : 0 < k)\n  (h₁ : ∀ n, Nat.gcd (6 * n + k) (6 * n + 3) = 1)\n  (h₂ : ∀ n, Nat.gcd (6 * n + k) (6 * n + 2) = 1)\n  (h₃ : ∀ n, Nat.gcd (6 * n + k) (6 * n + 1) = 1) :\n  5 ≤ k := by",
+   "statement_sha256": "02d50624ea1364bdbdcc8e714a1681054139996ccbe8bb070c7fb269e27010fb"
+  },
+  {
+   "id": "mathd_numbertheory_447",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_447 :\n  ∑ k ∈ Finset.filter (λ x => 3∣x) (Finset.Icc 1 49), (k % 10) = 78 := by",
+   "statement_sha256": "5fe6457bfc1a0f736264c3b971848f83e9386f35afe5cb62e66d6c185b20ca35"
+  },
+  {
+   "id": "mathd_numbertheory_451",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_451\n  (S : Finset ℕ)\n  (h₀ : ∀ (n : ℕ), n ∈ S ↔ 2010 ≤ n ∧ n ≤ 2019 ∧ ∃ m, ((Nat.divisors m).card = 4 ∧ ∑ p ∈ (Nat.divisors m), p = n)) :\n  ∑ k ∈ S, k = 2016 := by",
+   "statement_sha256": "f1bc31551c4759def75433ee4098b8e07f8175d659a3371d98a80293df2d7e7f"
+  },
+  {
+   "id": "mathd_numbertheory_457",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_457\n  (n : ℕ)\n  (h₀ : 0 < n)\n  (h₁ : 80325∣(n !)) :\n  17 ≤ n := by",
+   "statement_sha256": "a3581af9dbf824546d0344bd984feef7d28d76c8e4a0ad98baee95971929f4b8"
+  },
+  {
+   "id": "mathd_numbertheory_483",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_483\n  (a : ℕ → ℕ)\n  (h₀ : a 1 = 1)\n  (h₁ : a 2 = 1)\n  (h₂ : ∀ n, a (n + 2) = a (n + 1) + a n) :\n  (a 100) % 4 = 3 := by",
+   "statement_sha256": "2a16fed0d63a5e0181813ee302dbf03f86d78e01e768f9b1cfb61ca4c20bbf0a"
+  },
+  {
+   "id": "mathd_numbertheory_495",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_495\n  (a b : ℕ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : a % 10 = 2)\n  (h₂ : b % 10 = 4)\n  (h₃ : Nat.gcd a b = 6) :\n  108 ≤ Nat.lcm a b := by",
+   "statement_sha256": "f01c5345f72f1aae96de2ff311c6b89326b1cc5c59daaafecd8c7e30367d8055"
+  },
+  {
+   "id": "mathd_numbertheory_5",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_5\n  (n : ℕ)\n  (h₀ : 10 ≤ n)\n  (h₁ : ∃ x, x^2 = n)\n  (h₂ : ∃ t, t^3 = n) :\n  64 ≤ n := by",
+   "statement_sha256": "17de0c1109a114525403820762d51cd6398dd1043f8f61fff7500544dbf7ae2c"
+  },
+  {
+   "id": "mathd_numbertheory_517",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_517 :\n  (121 * 122 * 123) % 4 = 2 := by",
+   "statement_sha256": "b1c66e47d57338ef6c47c43116f6061c389d006cb2ffeb6b67dbeed168b22008"
+  },
+  {
+   "id": "mathd_numbertheory_521",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_521\n  (m n : ℕ)\n  (h₀ : Even m)\n  (h₁ : Even n)\n  (h₂ : m - n = 2)\n  (h₃ : m * n = 288) :\n  m = 18 := by",
+   "statement_sha256": "032185348c694697af1ff00ad9adcb7875b9946799026ea42bbab1af0a56994f"
+  },
+  {
+   "id": "mathd_numbertheory_541",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_541\n  (m n : ℕ)\n  (h₀ : 1 < m)\n  (h₁ : 1 < n)\n  (h₂ : m * n = 2005) :\n  m + n = 406 := by",
+   "statement_sha256": "f5df166ec70274ac46f6eae8c541875f03ceedda5c3a65743a3d2ae86ad5fa51"
+  },
+  {
+   "id": "mathd_numbertheory_551",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_551 :\n  1529 % 6 = 5 := by",
+   "statement_sha256": "eed9341d3dea9566c2aa6bdebb831355ffef620356ae811b5acd0771e08c1677"
+  },
+  {
+   "id": "mathd_numbertheory_552",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_552\n  (f g h : ℕ+ → ℕ)\n  (h₀ : ∀ x, f x = 12 * x + 7)\n  (h₁ : ∀ x, g x = 5 * x + 2)\n  (h₂ : ∀ x, h x = Nat.gcd (f x) (g x))\n  (h₃ : Fintype (Set.range h)) :\n  ∑ k ∈ (Set.range h).toFinset, k = 12 := by",
+   "statement_sha256": "92558ea681d3dd41f7ac97e77eb53f3327004be834663d18a2dd47cf6e531f02"
+  },
+  {
+   "id": "mathd_numbertheory_559",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_559\n  (x y : ℕ)\n  (h₀ : x % 3 = 2)\n  (h₁ : y % 5 = 4)\n  (h₂ : x % 10 = y % 10) :\n  14 ≤ x := by",
+   "statement_sha256": "75cfdef6bc4d15bbca85cfa72d70cf00b215d2bc99004c23084c800292687ce3"
+  },
+  {
+   "id": "mathd_numbertheory_582",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_582\n  (n : ℕ)\n  (h₀ : 0 < n)\n  (h₁ : 3∣n) :\n  ((n + 4) + (n + 6) + (n + 8)) % 9 = 0 := by",
+   "statement_sha256": "fb64dfb06457f10a3473b4dcd07fe999b3d8015770b02d23695cfaffdb79c263"
+  },
+  {
+   "id": "mathd_numbertheory_618",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_618\n  (n : ℕ)\n  (hn : n > 0)\n  (p : ℕ → ℕ)\n  (h₀ : ∀ x, p x = x^2 - x + 41)\n  (h₁ : 1 < Nat.gcd (p n) (p (n+1))) :\n  41 ≤ n := by",
+   "statement_sha256": "111e9ca152d9015bff4ce1cd4334ce6863b900f8ee4941e818d59fb75ef95a40"
+  },
+  {
+   "id": "mathd_numbertheory_66",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_66 :\n  194 % 11 = 7 := by",
+   "statement_sha256": "c8029b3e802b05fc148f949b326afb7c7a0c1efe885869c53a420a7d373ee312"
+  },
+  {
+   "id": "mathd_numbertheory_711",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_711\n  (m n : ℕ)\n  (h₀ : 0 < m ∧ 0 < n)\n  (h₁ : Nat.gcd m n = 8)\n  (h₂ : Nat.lcm m n = 112) :\n  72 ≤ m + n := by",
+   "statement_sha256": "e8346e99fdecf58621c645d73198efa11ce9cc8263068318774d3d5657cbfdb8"
+  },
+  {
+   "id": "mathd_numbertheory_728",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_728 :\n  (29^13 - 5^13) % 7 = 3 := by",
+   "statement_sha256": "301dcc612e2c2d437bfd1f676d7c1e0f035c33dfcf60435a9b3522bc6a384f5e"
+  },
+  {
+   "id": "mathd_numbertheory_764",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_764\n  (p : ℕ)\n  (h₀ : Nat.Prime p)\n  (h₁ : 7 ≤ p) :\n  ∑ k ∈ Finset.Icc 1 (p-2), ((k: ZMod p)⁻¹ * ((k: ZMod p) + 1)⁻¹) = 2 := by",
+   "statement_sha256": "a38a89a00da3198480a2cfe6d0e087309a271b1e78fd1913f87a5cd8887f2d45"
+  },
+  {
+   "id": "mathd_numbertheory_765",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_765\n  (x : ℤ)\n  (h₀ : x < 0)\n  (h₁ : (24 * x) % 1199 = 15) :\n  x ≤ -449 := by",
+   "statement_sha256": "9d30977650f7b51e8d42fad17f0024f4be587fb5d786a37ab8ccd1fc4753089f"
+  },
+  {
+   "id": "mathd_numbertheory_769",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_769 :\n  (129^34 + 96^38) % 11 = 9 := by",
+   "statement_sha256": "a00e995dae81bd4443a8baadd6719f104ad0ab37235f45c0b1cd2ba685655e34"
+  },
+  {
+   "id": "mathd_numbertheory_85",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_85 :\n  1 * 3^3 + 2 * 3^2 + 2*3 + 2 = 53 := by",
+   "statement_sha256": "450b52f42b8e6850612925c364a99ac980850ad6eaf1b51352d8abf49d82ef36"
+  },
+  {
+   "id": "mathd_numbertheory_99",
+   "split": "test",
+   "statement": "theorem mathd_numbertheory_99\n  (n : ℕ)\n  (h₀ : (2 * n) % 47 = 15) :\n  n % 47 = 31 := by",
+   "statement_sha256": "a6de9f8ee3a6ac750aeb24a25f14f8cb2d6a813e45030de074e110ed6d8a0d9e"
+  },
+  {
+   "id": "numbertheory_2pownm1prime_nprime",
+   "split": "test",
+   "statement": "theorem numbertheory_2pownm1prime_nprime\n  (n : ℕ)\n  (h₀ : 0 < n)\n  (h₁ : Nat.Prime (2^n - 1)) :\n  Nat.Prime n := by",
+   "statement_sha256": "025352e79bcf86a8ec22ce49ab4c7898902c175f6adacebd1a3fe16076a81fdf"
+  },
+  {
+   "id": "numbertheory_3pow2pownm1mod2pownp3eq2pownp2",
+   "split": "test",
+   "statement": "theorem numbertheory_3pow2pownm1mod2pownp3eq2pownp2\n  (n : ℕ)\n  (h₀ : 0 < n) :\n  (3^(2^n) - 1) % (2^(n + 3)) = 2^(n + 2) := by",
+   "statement_sha256": "ed15a3234de726ee54f2f137bad0b57cb93e74a00f02fcb1a137629067f04f95"
+  },
+  {
+   "id": "numbertheory_4x3m7y3neq2003",
+   "split": "test",
+   "statement": "theorem numbertheory_4x3m7y3neq2003\n  (x y : ℤ) :\n  4 * x^3 - 7 * y^3 ≠ 2003 := by",
+   "statement_sha256": "1f156dc8e474cee56dab6aa41524a018869f79403ea6b7ebd9f6a02bfbfe2f19"
+  },
+  {
+   "id": "numbertheory_aoddbdiv4asqpbsqmod8eq1",
+   "split": "test",
+   "statement": "theorem numbertheory_aoddbdiv4asqpbsqmod8eq1\n  (a : ℤ)\n  (b : ℤ)\n  (h₀ : Odd a)\n  (h₁ : 4 ∣ b)\n  (h₂ : b >= 0) :\n  (a^2 + b^2) % 8 = 1 := by",
+   "statement_sha256": "c82ee12dedd040252c14d8ffd054a7351c929cd591288bdac46e5a8f0252fd77"
+  },
+  {
+   "id": "numbertheory_exk2powkeqapb2mulbpa2_aeq1",
+   "split": "test",
+   "statement": "theorem numbertheory_exk2powkeqapb2mulbpa2_aeq1\n  (a b : ℕ)\n  (h₀ : 0 < a ∧ 0 < b)\n  (h₁ : ∃ k > 0, 2^k = (a + b^2) * (b + a^2)) :\n  a = 1 := by",
+   "statement_sha256": "05d574c8c0b4b02077b648573a86c746ff82886dfabdfda09a723c10e8a4aefd"
+  },
+  {
+   "id": "numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown",
+   "split": "test",
+   "statement": "theorem numbertheory_fxeq4powxp6powxp9powx_f2powmdvdf2pown\n  (m n : ℕ)\n  (f : ℕ → ℕ)\n  (h₀ : ∀ x, f x = 4^x + 6^x + 9^x)\n  (h₁ : 0 < m ∧ 0 < n)\n  (h₂ : m ≤ n) :\n  f (2^m)∣f (2^n) := by",
+   "statement_sha256": "d3a1833cde120ef6397951c5c788e6d269d6712218f9775b742a49dae6ddc367"
+  },
+  {
+   "id": "numbertheory_notEquiv2i2jasqbsqdiv8",
+   "split": "test",
+   "statement": "theorem numbertheory_notEquiv2i2jasqbsqdiv8 :\n  ¬ (∀ a b : ℤ, (∃ i j, a = 2*i ∧ b=2*j) ↔ (∃ k, a^2 + b^2 = 8*k)) := by",
+   "statement_sha256": "0ffdb151360ae487b750cadccb25d965644bb2bf57fe83183e85e1a3043e4431"
+  },
+  {
+   "id": "numbertheory_x5neqy2p4",
+   "split": "test",
+   "statement": "theorem numbertheory_x5neqy2p4\n  (x y : ℤ) :\n  x^5 ≠ y^2 + 4 := by",
+   "statement_sha256": "010bfb073412d29b035744fa87622e8bb41512fe241d3241b85d28e1cb5a5b09"
+  },
+  {
+   "id": "aimeII_2001_p3",
+   "split": "valid",
+   "statement": "theorem aimeII_2001_p3 (x : ℕ → ℤ) (h₀ : x 1 = 211) (h₂ : x 2 = 375) (h₃ : x 3 = 420)\n  (h₄ : x 4 = 523) (h₆ : ∀ n ≥ 5, x n = x (n - 1) - x (n - 2) + x (n - 3) - x (n - 4)) :\n  x 531 + x 753 + x 975 = 898 := by",
+   "statement_sha256": "c379c1d46143193851f0bcce87cd29fce48f954b38fecd78939f80c8b2c7ee98"
+  },
+  {
+   "id": "aimeII_2020_p6",
+   "split": "valid",
+   "statement": "theorem aimeII_2020_p6 (t : ℕ → ℚ) (h₀ : t 1 = 20) (h₁ : t 2 = 21)\n  (h₂ : ∀ n ≥ 3, t n = (5 * t (n - 1) + 1) / (25 * t (n - 2))) :\n  ↑(t 2020).den + (t 2020).num = 626 := by",
+   "statement_sha256": "a71d26d316fb057699fee1ba9512544b425dbc1afb53d6c7f9979a69ad0ba157"
+  },
+  {
+   "id": "aimeI_2000_p7",
+   "split": "valid",
+   "statement": "theorem aimeI_2000_p7 (x y z : ℝ) (m : ℚ) (h₀ : 0 < x ∧ 0 < y ∧ 0 < z) (h₁ : x * y * z = 1)\n  (h₂ : x + 1 / z = 5) (h₃ : y + 1 / x = 29) (h₄ : z + 1 / y = m) (h₅ : 0 < m) :\n  ↑m.den + m.num = 5 := by",
+   "statement_sha256": "9c691ae3a12e3c05d9f6425164c3b2421824d4ad94c5899b8af9887f5764596c"
+  },
+  {
+   "id": "aime_1983_p9",
+   "split": "valid",
+   "statement": "theorem aime_1983_p9 (x : ℝ) (h₀ : 0 < x ∧ x < Real.pi) :\n  12 ≤ (9 * (x ^ 2 * Real.sin x ^ 2) + 4) / (x * Real.sin x) := by",
+   "statement_sha256": "38c7a4e6efc070f4234c5cf615460d76d929829f73869701409cddd0ff4dd9fb"
+  },
+  {
+   "id": "aime_1984_p15",
+   "split": "valid",
+   "statement": "theorem aime_1984_p15 (x y z w : ℝ)\n    (h₀ :\n      x ^ 2 / (2 ^ 2 - 1) + y ^ 2 / (2 ^ 2 - 3 ^ 2) + z ^ 2 / (2 ^ 2 - 5 ^ 2) +\n          w ^ 2 / (2 ^ 2 - 7 ^ 2) =\n        1)\n    (h₁ :\n      x ^ 2 / (4 ^ 2 - 1) + y ^ 2 / (4 ^ 2 - 3 ^ 2) + z ^ 2 / (4 ^ 2 - 5 ^ 2) +\n          w ^ 2 / (4 ^ 2 - 7 ^ 2) =\n        1)\n    (h₂ :\n      x ^ 2 / (6 ^ 2 - 1) + y ^ 2 / (6 ^ 2 - 3 ^ 2) + z ^ 2 / (6 ^ 2 - 5 ^ 2) +\n          w ^ 2 / (6 ^ 2 - 7 ^ 2) =\n        1)\n    (h₃ :\n      x ^ 2 / (8 ^ 2 - 1) + y ^ 2 / (8 ^ 2 - 3 ^ 2) + z ^ 2 / (8 ^ 2 - 5 ^ 2) +\n          w ^ 2 / (8 ^ 2 - 7 ^ 2) =\n        1) :\n    x ^ 2 + y ^ 2 + z ^ 2 + w ^ 2 = 36 := by",
+   "statement_sha256": "fb7dbc1df7e9219a1ed5fd6203bc40c43599425f87d3bdbee4127d19d8a3d618"
+  },
+  {
+   "id": "aime_1984_p5",
+   "split": "valid",
+   "statement": "theorem aime_1984_p5 (a b : ℝ) (h₀ : Real.logb 8 a + Real.logb 4 (b ^ 2) = 5)\n  (h₁ : Real.logb 8 b + Real.logb 4 (a ^ 2) = 7) : a * b = 512 := by",
+   "statement_sha256": "f30f37c3296aaeaaac629628e4e306c0eb715ac04b6627c5dfd543d3b95b20ef"
+  },
+  {
+   "id": "aime_1987_p8",
+   "split": "valid",
+   "statement": "theorem aime_1987_p8 :\n  IsGreatest { n : ℕ | 0 < n ∧ ∃! k : ℕ, (8 : ℝ) / 15 < n / (n + k) ∧ (n : ℝ) / (n + k) < 7 / 13 } 112 := by",
+   "statement_sha256": "cbf58b47a04f94c289e804767505cc25fec7a4434aabcd1b903cf08fdf2a09b3"
+  },
+  {
+   "id": "aime_1988_p3",
+   "split": "valid",
+   "statement": "theorem aime_1988_p3 (x : ℝ) (h₀ : 0 < x)\n  (h₁ : Real.logb 2 (Real.logb 8 x) = Real.logb 8 (Real.logb 2 x)) : Real.logb 2 x ^ 2 = 27 := by",
+   "statement_sha256": "03158b1904817dea9541f0a3b023a4718403a98331083bb50dd30757730cd3ba"
+  },
+  {
+   "id": "aime_1988_p4",
+   "split": "valid",
+   "statement": "theorem aime_1988_p4 (n : ℕ) (a : ℕ → ℝ) (h₀ : ∀ n, abs (a n) < 1)\n  (h₁ : (∑ k ∈ Finset.range n, abs (a k)) = 19 + abs (∑ k ∈ Finset.range n, a k)) : 20 ≤ n := by",
+   "statement_sha256": "478d96139d543d1ec9e4dd8a8a8094ceaa623a478cc45b38704dc6e4edb125e5"
+  },
+  {
+   "id": "aime_1990_p2",
+   "split": "valid",
+   "statement": "theorem aime_1990_p2 :\n  (52 + 6 * Real.sqrt 43) ^ ((3 : ℝ) / 2) - (52 - 6 * Real.sqrt 43) ^ ((3 : ℝ) / 2) = 828 := by",
+   "statement_sha256": "26b760d3933fe4183417d0d0e3160c4fd2c8fc628313f93d0cefd79878859fd4"
+  },
+  {
+   "id": "aime_1991_p1",
+   "split": "valid",
+   "statement": "theorem aime_1991_p1 (x y : ℕ) (h₀ : 0 < x ∧ 0 < y) (h₁ : x * y + (x + y) = 71)\n  (h₂ : x ^ 2 * y + x * y ^ 2 = 880) : x ^ 2 + y ^ 2 = 146 := by",
+   "statement_sha256": "ffd1f093e8ec163f95b0e75d3a0395b9104848df7030376ad281d329c5f81a4b"
+  },
+  {
+   "id": "aime_1991_p6",
+   "split": "valid",
+   "statement": "theorem aime_1991_p6 (r : ℝ) (h₀ : (∑ k ∈ Finset.Icc (19 : ℕ) 91, Int.floor (r + k / 100)) = 546) :\n  Int.floor (100 * r) = 743 := by",
+   "statement_sha256": "482cd8090b5a33b20567d3325b52082ce185ebf94ba4c18c3e15c4297c0e0666"
+  },
+  {
+   "id": "aime_1994_p4",
+   "split": "valid",
+   "statement": "theorem aime_1994_p4 (n : ℕ) (h₀ : 0 < n)\n  (h₀ : (∑ k ∈ Finset.Icc 1 n, Int.floor (Real.logb 2 k)) = 1994) : n = 312 := by",
+   "statement_sha256": "d74862f82c2600e544fbb1031d5e536478cacdda6c267da8429a25bdc30a7df7"
+  },
+  {
+   "id": "aime_1996_p5",
+   "split": "valid",
+   "statement": "theorem aime_1996_p5 (a b c r s t : ℝ) (f g : ℝ → ℝ)\n  (h₀ : ∀ x, f x = x ^ 3 + 3 * x ^ 2 + 4 * x - 11) (h₁ : ∀ x, g x = x ^ 3 + r * x ^ 2 + s * x + t)\n  (h₂ : f a = 0) (h₃ : f b = 0) (h₄ : f c = 0) (h₅ : g (a + b) = 0) (h₆ : g (b + c) = 0)\n  (h₇ : g (c + a) = 0) (h₈ : List.Pairwise (· ≠ ·) [a, b, c]) : t = 23 := by",
+   "statement_sha256": "39dd8a9fb81cc5f0da3d4a1538fdfa68eb8d5eb8a2670bc2aa2a63304f6b56f8"
+  },
+  {
+   "id": "aime_1997_p11",
+   "split": "valid",
+   "statement": "theorem aime_1997_p11 (x : ℝ)\n    (h₀ :\n      x =\n        (∑ n ∈ Finset.Icc (1 : ℕ) 44, Real.cos (n * π / 180)) /\n          ∑ n ∈ Finset.Icc (1 : ℕ) 44, Real.sin (n * π / 180)) :\n    Int.floor (100 * x) = 241 := by",
+   "statement_sha256": "0358c47e05781a8b97126e16ba1e9167e241d7d440e91a99c852d5d3d6fa5635"
+  },
+  {
+   "id": "algebra_2complexrootspoly_xsqp49eqxp7itxpn7i",
+   "split": "valid",
+   "statement": "theorem algebra_2complexrootspoly_xsqp49eqxp7itxpn7i (x : ℂ) :\n    x ^ 2 + 49 = (x + 7 * Complex.I) * (x + -7 * Complex.I) := by",
+   "statement_sha256": "41d9857ea71c9fc5303d1593a5b01dd5d4a6fcda0ca9bcd0ac05aa824c3a868f"
+  },
+  {
+   "id": "algebra_2rootsintpoly_am10tap11eqasqpam110",
+   "split": "valid",
+   "statement": "theorem algebra_2rootsintpoly_am10tap11eqasqpam110 (a : ℂ) :\n    (a - 10) * (a + 11) = a ^ 2 + a - 110 := by",
+   "statement_sha256": "fe2cefcb5c4e1dd19bb89d89925be6a1d0358db2c807ef3702012d68dad55450"
+  },
+  {
+   "id": "algebra_2rootspoly_apatapbeq2asqp2ab",
+   "split": "valid",
+   "statement": "theorem algebra_2rootspoly_apatapbeq2asqp2ab (a b : ℂ) :\n    (a + a) * (a + b) = 2 * a ^ 2 + 2 * (a * b) := by",
+   "statement_sha256": "33a739109b8e32671ad2ede514441fc6bd2cfcc3aae0886137e17a9b424cd93c"
+  },
+  {
+   "id": "algebra_2varlineareq_xpeeq7_2xpeeq3_eeq11_xeqn4",
+   "split": "valid",
+   "statement": "theorem algebra_2varlineareq_xpeeq7_2xpeeq3_eeq11_xeqn4 (x e : ℂ) (h₀ : x + e = 7)\n  (h₁ : 2 * x + e = 3) : e = 11 ∧ x = -4 := by",
+   "statement_sha256": "b1f157a89d15623dcbeb0455d1e92a887176b942d03e65ca46990816e330e58b"
+  },
+  {
+   "id": "algebra_3rootspoly_amdtamctambeqnasqmbpctapcbtdpasqmbpctapcbta",
+   "split": "valid",
+   "statement": "theorem algebra_3rootspoly_amdtamctambeqnasqmbpctapcbtdpasqmbpctapcbta (b c d a : ℂ) :\n    (a - d) * (a - c) * (a - b) =\n      -((a ^ 2 - (b + c) * a + c * b) * d) + (a ^ 2 - (b + c) * a + c * b) * a := by",
+   "statement_sha256": "44ec25a9b540e1b56c7942d2366010456648a5360d47a5b4292dd663711e3961"
+  },
+  {
+   "id": "algebra_amgm_faxinrrp2msqrt2geq2mxm1div2x",
+   "split": "valid",
+   "statement": "theorem algebra_amgm_faxinrrp2msqrt2geq2mxm1div2x :\n  ∀ x > 0, 2 - Real.sqrt 2 ≥ 2 - x - 1 / (2 * x) := by",
+   "statement_sha256": "5daf4c87e11b4ab430cebccffa84cea77ae8f8977a29b208cae831463064c5ad"
+  },
+  {
+   "id": "algebra_amgm_prod1toneq1_sum1tongeqn",
+   "split": "valid",
+   "statement": "theorem algebra_amgm_prod1toneq1_sum1tongeqn (a : ℕ → NNReal) (n : ℕ)\n  (h₀ : Finset.prod (Finset.range n) a = 1) : Finset.sum (Finset.range n) a ≥ n := by",
+   "statement_sha256": "dc0dabb98fe8fc586a70373f77126fd60a7053694dcec276c2d958a1dd5e6b0b"
+  },
+  {
+   "id": "algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4",
+   "split": "valid",
+   "statement": "theorem algebra_amgm_sqrtxymulxmyeqxpy_xpygeq4 (x y : ℝ) (h₀ : 0 < x ∧ 0 < y) (h₁ : y ≤ x)\n  (h₂ : Real.sqrt (x * y) * (x - y) = x + y) : x + y ≥ 4 := by",
+   "statement_sha256": "b3842d646884e0a378bc4d1f85cf5f930bbede9bd3edb8d935dc55c04010b192"
+  },
+  {
+   "id": "algebra_amgm_sumasqdivbsqgeqsumbdiva",
+   "split": "valid",
+   "statement": "theorem algebra_amgm_sumasqdivbsqgeqsumbdiva (a b c : ℝ) (h₀ : 0 < a ∧ 0 < b ∧ 0 < c) :\n  a ^ 2 / b ^ 2 + b ^ 2 / c ^ 2 + c ^ 2 / a ^ 2 ≥ b / a + c / b + a / c := by",
+   "statement_sha256": "30203d5f2a782d597e61e76033db2de8a4c9d523ad547dc45205d4d1469f76ea"
+  },
+  {
+   "id": "algebra_apb4leq8ta4pb4",
+   "split": "valid",
+   "statement": "theorem algebra_apb4leq8ta4pb4 (a b : ℝ) (h₀ : 0 < a ∧ 0 < b) : (a + b) ^ 4 ≤ 8 * (a ^ 4 + b ^ 4) := by",
+   "statement_sha256": "1888bc8a956f46c60ed02d2f988189eeb62ad475540f3a6dc7f74b3e765dd265"
+  },
+  {
+   "id": "algebra_binomnegdiscrineq_10alt28asqp1",
+   "split": "valid",
+   "statement": "theorem algebra_binomnegdiscrineq_10alt28asqp1 (a : ℝ) : 10 * a ≤ 28 * a ^ 2 + 1 := by",
+   "statement_sha256": "4f9294740fcef7ad1c50ed6167f0563e970ed2651917438aee798d8fee76eb65"
+  },
+  {
+   "id": "algebra_manipexpr_2erprsqpesqeqnrpnesq",
+   "split": "valid",
+   "statement": "theorem algebra_manipexpr_2erprsqpesqeqnrpnesq (e r : ℂ) :\n  2 * (e * r) + (e ^ 2 + r ^ 2) = (-r + -e) ^ 2 := by",
+   "statement_sha256": "4bfbc15066cb2df2ce4debba17438d9ff85a8f3a5ad95c6508d85f8f065986dc"
+  },
+  {
+   "id": "algebra_manipexpr_apbeq2cceqiacpbceqm2",
+   "split": "valid",
+   "statement": "theorem algebra_manipexpr_apbeq2cceqiacpbceqm2 (a b c : ℂ) (h₀ : a + b = 2 * c)\n  (h₁ : c = Complex.I) : a * c + b * c = -2 := by",
+   "statement_sha256": "633461db8cf311ae5a60cceda4be5686827a6fbbd6dd936036e28aac6e53ecfd"
+  },
+  {
+   "id": "algebra_sqineq_2at2pclta2c2p41pc",
+   "split": "valid",
+   "statement": "theorem algebra_sqineq_2at2pclta2c2p41pc (a c : ℝ) :\n  2 * a * (2 + c) ≤ a ^ 2 + c ^ 2 + 4 * (1 + c) := by",
+   "statement_sha256": "46ebffbb878e24342082232db47697bb57807adcfa6698366f5704da43ec5c42"
+  },
+  {
+   "id": "algebra_sqineq_2unitcircatblt1",
+   "split": "valid",
+   "statement": "theorem algebra_sqineq_2unitcircatblt1 (a b : ℝ) (h₀ : a ^ 2 + b ^ 2 = 2) : a * b ≤ 1 := by",
+   "statement_sha256": "74c59a59beb3aecb0b78c99c56a03921b6afbbd17c8959ed4cf1b2390ffdb9d5"
+  },
+  {
+   "id": "algebra_sqineq_36azm9asqle36zsq",
+   "split": "valid",
+   "statement": "theorem algebra_sqineq_36azm9asqle36zsq (z a : ℝ) : 36 * (a * z) - 9 * a ^ 2 ≤ 36 * z ^ 2 := by",
+   "statement_sha256": "93565a9ddb191ba85ef261028dd2603fa461eaac5b7b678df582a9b340a7a03e"
+  },
+  {
+   "id": "algebra_sqineq_4bap1lt4bsqpap1sq",
+   "split": "valid",
+   "statement": "theorem algebra_sqineq_4bap1lt4bsqpap1sq (a b : ℝ) : 4 * b * (a + 1) ≤ 4 * b ^ 2 + (a + 1) ^ 2 := by",
+   "statement_sha256": "1dad87f32234ae78e82fbd909ad62b02def0021424cc23adcd2e8036566c52bc"
+  },
+  {
+   "id": "algebra_xmysqpymzsqpzmxsqeqxyz_xpypzp6dvdx3y3z3",
+   "split": "valid",
+   "statement": "theorem algebra_xmysqpymzsqpzmxsqeqxyz_xpypzp6dvdx3y3z3 (x y z : ℤ)\n  (h₀ : (x - y) ^ 2 + (y - z) ^ 2 + (z - x) ^ 2 = x * y * z) :\n  x + y + z + 6 ∣ x ^ 3 + y ^ 3 + z ^ 3 := by",
+   "statement_sha256": "3cf1443805890ee80fa093cf1494663cf3b0150ef5bb47d45299f4111d0f9229"
+  },
+  {
+   "id": "amc12_2000_p11",
+   "split": "valid",
+   "statement": "theorem amc12_2000_p11 (a b : ℝ) (h₀ : a ≠ 0 ∧ b ≠ 0) (h₁ : a * b = a - b) :\n    a / b + b / a - a * b = 2 := by",
+   "statement_sha256": "1db2300199d7fec34f41fb904cb5ebd76173b1b339dbf1e5c88106ebe97dc73e"
+  },
+  {
+   "id": "amc12_2000_p15",
+   "split": "valid",
+   "statement": "theorem amc12_2000_p15 (f : ℂ → ℂ) (h₀ : ∀ x, f (x / 3) = x ^ 2 + x + 1)\n  (h₁ : Fintype (f ⁻¹' {7})) : (∑ y ∈ (f ⁻¹' {7}).toFinset, y / 3) = -1 / 9 := by",
+   "statement_sha256": "72a5319af4fb5574f53ca6544d777dc6a7b9f99403b964f39ffb6102570b090e"
+  },
+  {
+   "id": "amc12_2000_p5",
+   "split": "valid",
+   "statement": "theorem amc12_2000_p5 (x p : ℝ) (h₀ : x < 2) (h₁ : abs (x - 2) = p) : x - p = 2 - 2 * p := by",
+   "statement_sha256": "bb216492669ed3af023aee5d072e7ba4d11899bb738019aee1c120d5bdca5cad"
+  },
+  {
+   "id": "amc12_2001_p2",
+   "split": "valid",
+   "statement": "theorem amc12_2001_p2 (a b n : ℕ) (h₀ : 1 ≤ a ∧ a ≤ 9) (h₁ : 0 ≤ b ∧ b ≤ 9) (h₂ : n = 10 * a + b)\n  (h₃ : n = a * b + a + b) : b = 9 := by",
+   "statement_sha256": "936e80486bbaac59578741aa2a6fdf118b9899d34a2b3e2a38f0180866a5bc0f"
+  },
+  {
+   "id": "amc12_2001_p9",
+   "split": "valid",
+   "statement": "theorem amc12_2001_p9 (f : ℝ → ℝ) (h₀ : ∀ x > 0, ∀ y > 0, f (x * y) = f x / y) (h₁ : f 500 = 3) :\n    f 600 = 5 / 2 := by",
+   "statement_sha256": "ba6b25eb6f0fc3ff51e7f686b8f15d541c94eae3834fbd0b60295dbfc5d518d1"
+  },
+  {
+   "id": "amc12a_2002_p1",
+   "split": "valid",
+   "statement": "theorem amc12a_2002_p1 (f : ℂ → ℂ) (h₀ : ∀ x, f x = (2 * x + 3) * (x - 4) + (2 * x + 3) * (x - 6))\n  (h₁ : Fintype (f ⁻¹' {0})) : (∑ y ∈ (f ⁻¹' {0}).toFinset, y) = 7 / 2 := by",
+   "statement_sha256": "26ae97ba146f481348a4e80346dae11281e79c94a69d6994f9b000ea4c7f1bc7"
+  },
+  {
+   "id": "amc12a_2002_p12",
+   "split": "valid",
+   "statement": "theorem amc12a_2002_p12 (f : ℝ → ℝ) (k : ℝ) (a b : ℕ) (h₀ : ∀ x, f x = x ^ 2 - 63 * x + k)\n  (h₁ : f a = 0 ∧ f b = 0) (h₂ : a ≠ b) (h₃ : Nat.Prime a ∧ Nat.Prime b) : k = 122 := by",
+   "statement_sha256": "279f22bb2932ed2b24e0da3f008a6c10f1b85233ad58a13f40c9fd4fac0584a4"
+  },
+  {
+   "id": "amc12a_2002_p21",
+   "split": "valid",
+   "statement": "theorem amc12a_2002_p21 (u : ℕ → ℕ) (h₀ : u 0 = 4) (h₁ : u 1 = 7)\n    (h₂ : ∀ n ≥ 2, u (n + 2) = (u n + u (n + 1)) % 10) :\n    ∀ n, (∑ k ∈ Finset.range n, u k) > 10000 → 1999 ≤ n := by",
+   "statement_sha256": "304206748f58572a01cf57373c44b7516c9b7c818f2bef6a1d9abae7c06c7e64"
+  },
+  {
+   "id": "amc12a_2003_p1",
+   "split": "valid",
+   "statement": "theorem amc12a_2003_p1 (u v : ℕ → ℕ) (h₀ : ∀ n, u n = 2 * n + 2) (h₁ : ∀ n, v n = 2 * n + 1) :\n    ((∑ k ∈ Finset.range 2003, u k) - ∑ k ∈ Finset.range 2003, v k) = 2003 := by",
+   "statement_sha256": "79db7a103a5f62d1bf8acd104992eef2173177a1d3278c21b3da237f4f1efca4"
+  },
+  {
+   "id": "amc12a_2003_p24",
+   "split": "valid",
+   "statement": "theorem amc12a_2003_p24 :\n  IsGreatest { y : ℝ | ∃ a b : ℝ, 1 < b ∧ b ≤ a ∧ y = Real.logb a (a / b) + Real.logb b (b / a) }\n    0 := by",
+   "statement_sha256": "6515637e45c702904c05fc7ac59f2493ca15f71232818d85108db49a3c40c3c9"
+  },
+  {
+   "id": "amc12a_2003_p25",
+   "split": "valid",
+   "statement": "theorem amc12a_2003_p25 (a b : ℝ) (f : ℝ → ℝ) (h₀ : 0 < b)\n  (h₁ : ∀ x, f x = Real.sqrt (a * x ^ 2 + b * x)) (h₂ : { x | 0 ≤ f x } = f '' { x | 0 ≤ f x }) :\n  a = 0 ∨ a = -4 := by",
+   "statement_sha256": "03b51a2a0f575c8f3623116c9901364a49d76e97d50409f079ed25e38803cb8d"
+  },
+  {
+   "id": "amc12a_2008_p15",
+   "split": "valid",
+   "statement": "theorem amc12a_2008_p15 (k : ℕ) (h₀ : k = 2008 ^ 2 + 2 ^ 2008) : (k ^ 2 + 2 ^ k) % 10 = 6 := by",
+   "statement_sha256": "8ba99e4dc811bc085a6983cc368ede446406b9ea7e98c97bf4705d36ad455083"
+  },
+  {
+   "id": "amc12a_2008_p2",
+   "split": "valid",
+   "statement": "theorem amc12a_2008_p2 (x : ℝ) (h₀ : x * (1 / 2 + 2 / 3) = 1) : x = 6 / 7 := by",
+   "statement_sha256": "117f8b44622cf4237dcc201b16910af6126aa360ae7a5c72b6af7bc8473fa8b9"
+  },
+  {
+   "id": "amc12a_2008_p4",
+   "split": "valid",
+   "statement": "theorem amc12a_2008_p4 : (∏ k ∈ Finset.Icc (1 : ℕ) 501, ((4 : ℝ) * k + 4) / (4 * k)) = 502 := by",
+   "statement_sha256": "9bd9427cdc1c665568e871ca809b6eb7112b7869b1e548383240457eeb6d2b43"
+  },
+  {
+   "id": "amc12a_2008_p8",
+   "split": "valid",
+   "statement": "theorem amc12a_2008_p8 (x y : ℝ) (h₀ : 0 < x ∧ 0 < y) (h₁ : y ^ 3 = 1)\n  (h₂ : 6 * x ^ 2 = 2 * (6 * y ^ 2)) : x ^ 3 = 2 * Real.sqrt 2 := by",
+   "statement_sha256": "9c4193e0ce30b455f90d811cf561b5a416604d0c380f6fe7ae85a5120f7a84dd"
+  },
+  {
+   "id": "amc12a_2009_p15",
+   "split": "valid",
+   "statement": "theorem amc12a_2009_p15 (n : ℕ) (h₀ : 0 < n)\n  (h₁ : (∑ k ∈ Finset.Icc 1 n, ↑k * Complex.I ^ k) = 48 + 49 * Complex.I) : n = 97 := by",
+   "statement_sha256": "06b35db9e578561e1a902dc38983de183eb65c92133042a71cd03a33dbb54e86"
+  },
+  {
+   "id": "amc12a_2009_p2",
+   "split": "valid",
+   "statement": "theorem amc12a_2009_p2 : 1 + 1 / (1 + 1 / (1 + 1)) = (5 : ℚ) / 3 := by",
+   "statement_sha256": "fbfbb5579de69e34deffe59831bb757bfbf3e218978cf4b6889215643af54b1f"
+  },
+  {
+   "id": "amc12a_2009_p25",
+   "split": "valid",
+   "statement": "theorem amc12a_2009_p25 (a : ℕ → ℝ) (h₀ : a 1 = 1) (h₁ : a 2 = 1 / Real.sqrt 3)\n  (h₂ : ∀ n, 1 ≤ n → a (n + 2) = (a n + a (n + 1)) / (1 - a n * a (n + 1))) : abs (a 2009) = 0 := by",
+   "statement_sha256": "925a08d6074d356768eadfd553977ee0d20dc821d16822f220b4caa1cef85ee5"
+  },
+  {
+   "id": "amc12a_2009_p5",
+   "split": "valid",
+   "statement": "theorem amc12a_2009_p5 (x : ℝ) (h₀ : x ^ 3 - (x + 1) * (x - 1) * x = 5) : x ^ 3 = 125 := by",
+   "statement_sha256": "67ead240fc090dcbf7f26dbb5b98e7a79cb2637df69e35d3ab457b8859e73b75"
+  },
+  {
+   "id": "amc12a_2009_p9",
+   "split": "valid",
+   "statement": "theorem amc12a_2009_p9 (a b c : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f (x + 3) = 3 * x ^ 2 + 7 * x + 4)\n  (h₁ : ∀ x, f x = a * x ^ 2 + b * x + c) : a + b + c = 2 := by",
+   "statement_sha256": "684d924f1ca7bbeb32c7f243628be491e80c68eea665da1b9ab74ee92ef4bee5"
+  },
+  {
+   "id": "amc12a_2010_p10",
+   "split": "valid",
+   "statement": "theorem amc12a_2010_p10 (p q : ℝ) (a : ℕ → ℝ) (h₀ : ∀ n, a (n + 2) - a (n + 1) = a (n + 1) - a n)\n  (h₁ : a 1 = p) (h₂ : a 2 = 9) (h₃ : a 3 = 3 * p - q) (h₄ : a 4 = 3 * p + q) : a 2010 = 8041 := by",
+   "statement_sha256": "c5e16a2a0d2e0d179112a034de1eded07e138a266bd9bda9a63e5d2986d83daa"
+  },
+  {
+   "id": "amc12a_2010_p11",
+   "split": "valid",
+   "statement": "theorem amc12a_2010_p11 (x b : ℝ) (h₀ : 0 < b) (h₁ : (7 : ℝ) ^ (x + 7) = 8 ^ x)\n  (h₂ : x = Real.logb b (7 ^ 7)) : b = 8 / 7 := by",
+   "statement_sha256": "cea35acc3b5edbe43539e7fa1620c5f42b7e101625343a11923049e39bde05e5"
+  },
+  {
+   "id": "amc12a_2010_p22",
+   "split": "valid",
+   "statement": "theorem amc12a_2010_p22 (x : ℝ) : 49 ≤ ∑ k ∈ (Finset.Icc (1:ℤ) (119:ℤ)), abs (k * x - 1) := by",
+   "statement_sha256": "9df394137a2af6460785cc409fda7451512d36b503e0e62e1082820f965f438f"
+  },
+  {
+   "id": "amc12a_2011_p18",
+   "split": "valid",
+   "statement": "theorem amc12a_2011_p18 (x y : ℝ) (h₀ : abs (x + y) + abs (x - y) = 2) :\n  x ^ 2 - 6 * x + y ^ 2 ≤ 8 := by",
+   "statement_sha256": "4135060dce6fe2418376b713366842715e65cbd7bd03b5b61be9080164db1b5b"
+  },
+  {
+   "id": "amc12a_2013_p7",
+   "split": "valid",
+   "statement": "theorem amc12a_2013_p7 (s : ℕ → ℝ) (h₀ : ∀ n, s (n + 2) = s (n + 1) + s n) (h₁ : s 9 = 110)\n    (h₂ : s 7 = 42) : s 4 = 10 := by",
+   "statement_sha256": "43b4b8ac93cc147f2061874ff3b771f57b6cb77cb72d6e513a4380d56ec35b80"
+  },
+  {
+   "id": "amc12a_2013_p8",
+   "split": "valid",
+   "statement": "theorem amc12a_2013_p8 (x y : ℝ) (h₀ : x ≠ 0) (h₁ : y ≠ 0) (h₂ : x ≠ y)\n  (h₃ : x + 2 / x = y + 2 / y) : x * y = 2 := by",
+   "statement_sha256": "56a596d7d10f840dfd4fb22114f71839cec74b11846139089abc311bb0b6a74d"
+  },
+  {
+   "id": "amc12a_2015_p10",
+   "split": "valid",
+   "statement": "theorem amc12a_2015_p10 (x y : ℤ) (h₀ : 0 < y) (h₁ : y < x) (h₂ : x + y + x * y = 80) : x = 26 := by",
+   "statement_sha256": "7d8596e6d323699ea1c3022bde9407ae558f5e4d1c7da687e23e217747209c6a"
+  },
+  {
+   "id": "amc12a_2016_p2",
+   "split": "valid",
+   "statement": "theorem amc12a_2016_p2 (x : ℝ) (h₀ : (10 : ℝ) ^ x * 100 ^ (2 * x) = 1000 ^ 5) : x = 3 := by",
+   "statement_sha256": "00983f6a6215073491408fbb1b0d841e369b74777a4fc2e067c5c8d2b0428a99"
+  },
+  {
+   "id": "amc12a_2016_p3",
+   "split": "valid",
+   "statement": "theorem amc12a_2016_p3 (f : ℝ → ℝ → ℝ)\n  (h₀ : ∀ x, ∀ (y) (_ : y ≠ 0), f x y = x - y * Int.floor (x / y)) :\n  f (3 / 8) (-(2 / 5)) = -(1 / 40) := by",
+   "statement_sha256": "556fb294d963e183621c65b1cff455b8e4c7aae4ef5ffbdfc0545551bc9d990f"
+  },
+  {
+   "id": "amc12a_2017_p2",
+   "split": "valid",
+   "statement": "theorem amc12a_2017_p2 (x y : ℝ) (h₀ : x ≠ 0) (h₁ : y ≠ 0) (h₂ : x + y = 4 * (x * y)) :\n  1 / x + 1 / y = 4 := by",
+   "statement_sha256": "fa35fbdb35afb1e0160cbbb1bb2fdb09b5a1c0f231ead914b6bf396ba6b012f1"
+  },
+  {
+   "id": "amc12a_2017_p7",
+   "split": "valid",
+   "statement": "theorem amc12a_2017_p7 (f : ℕ → ℝ) (h₀ : f 1 = 2) (h₁ : ∀ n, 1 < n ∧ Even n → f n = f (n - 1) + 1)\n  (h₂ : ∀ n, 1 < n ∧ Odd n → f n = f (n - 2) + 2) : f 2017 = 2018 := by",
+   "statement_sha256": "475ec2d1b41378b4feb3e1b45d20c2cc250f3ccca18fbd2dae6abed9d47c784e"
+  },
+  {
+   "id": "amc12a_2019_p21",
+   "split": "valid",
+   "statement": "theorem amc12a_2019_p21 (z : ℂ) (h₀ : z = (1 + Complex.I) / Real.sqrt 2) :\n  ((∑ k ∈ Finset.Icc 1 12, z ^ k ^ 2) * (∑ k ∈ Finset.Icc 1 12, 1 / z ^ k ^ 2)) = 36 := by",
+   "statement_sha256": "64980a8ce7f35745ee282794f6717f14dd398b3e38e715627c36c3a847c664f5"
+  },
+  {
+   "id": "amc12a_2019_p9",
+   "split": "valid",
+   "statement": "theorem amc12a_2019_p9 (a : ℕ → ℚ) (h₀ : a 1 = 1) (h₁ : a 2 = 3 / 7)\n  (h₂ : ∀ n, a (n + 2) = a n * a (n + 1) / (2 * a n - a (n + 1))) :\n  ↑(a 2019).den + (a 2019).num = 8078 := by",
+   "statement_sha256": "593498e2dbb67c0784f936d366c240fad350d0bf43a28378d4c3d48c25361c14"
+  },
+  {
+   "id": "amc12a_2020_p13",
+   "split": "valid",
+   "statement": "theorem amc12a_2020_p13 (a b c : ℕ) (n : NNReal) (h₀ : n ≠ 1) (h₁ : 1 < a ∧ 1 < b ∧ 1 < c)\n  (h₂ : (n * (n * n ^ (1 / c)) ^ (1 / b)) ^ (1 / a) = (n ^ 25) ^ (1 / 36)) : b = 3 := by",
+   "statement_sha256": "cea6d00c44199d2e36280f454dcbb790299271c8b7f2887069b2c5e5a27b9d8a"
+  },
+  {
+   "id": "amc12a_2020_p21",
+   "split": "valid",
+   "statement": "theorem amc12a_2020_p21 (S : Finset ℕ)\n  (h₀ : ∀ n : ℕ, n ∈ S ↔ 5 ∣ n ∧ Nat.lcm 5! n = 5 * Nat.gcd 10! n) : S.card = 48 := by",
+   "statement_sha256": "e78d761ae82007b1952062ddc63971a3da3aae50bcc3262decdc83aa4b577d0a"
+  },
+  {
+   "id": "amc12a_2021_p7",
+   "split": "valid",
+   "statement": "theorem amc12a_2021_p7 (x y : ℝ) : 1 ≤ (x * y - 1) ^ 2 + (x + y) ^ 2 := by",
+   "statement_sha256": "3d12a2fbdce5d5f86a255d3ff0cbaf5a8452bea704d9b3640afb42a2c6cb7f23"
+  },
+  {
+   "id": "amc12b_2002_p11",
+   "split": "valid",
+   "statement": "theorem amc12b_2002_p11 (a b : ℕ) (h₀ : Nat.Prime a) (h₁ : Nat.Prime b) (h₂ : Nat.Prime (a + b))\n  (h₃ : Nat.Prime (a - b)) : Nat.Prime (a + b + (a - b + (a + b))) := by",
+   "statement_sha256": "aefb3032ffda83fc6fb590c9336937e7fbecd56104cf190bb23b27b943d76a04"
+  },
+  {
+   "id": "amc12b_2002_p3",
+   "split": "valid",
+   "statement": "theorem amc12b_2002_p3 (S : Finset ℕ)\n  -- note: we use (n^2 + 2 - 3 * n) over (n^2 - 3 * n + 2) because nat subtraction truncates the latter at 1 and 2\n  (h₀ : ∀ n : ℕ, n ∈ S ↔ 0 < n ∧ Nat.Prime (n ^ 2 + 2 - 3 * n)) :\n  S.card = 1 := by",
+   "statement_sha256": "1d2053efd179759d1f21020538a0a0cff1582b69cda9c0ed0602cbbbab500175"
+  },
+  {
+   "id": "amc12b_2002_p6",
+   "split": "valid",
+   "statement": "theorem amc12b_2002_p6 (a b : ℝ) (h₀ : a ≠ 0 ∧ b ≠ 0)\n  (h₁ : ∀ x, x ^ 2 + a * x + b = (x - a) * (x - b)) : a = 1 ∧ b = -2 := by",
+   "statement_sha256": "f1a0dd98b4f0d81df64e2c505b39a3ee43f21d5f1047c2cb25a203d8e6948955"
+  },
+  {
+   "id": "amc12b_2003_p17",
+   "split": "valid",
+   "statement": "theorem amc12b_2003_p17 (x y : ℝ) (h₀ : 0 < x ∧ 0 < y) (h₁ : Real.log (x * y ^ 3) = 1)\n  (h₂ : Real.log (x ^ 2 * y) = 1) : Real.log (x * y) = 3 / 5 := by",
+   "statement_sha256": "856013927fc33936878f705034baac05840c549e362a3d237270572d5072145a"
+  },
+  {
+   "id": "amc12b_2003_p6",
+   "split": "valid",
+   "statement": "theorem amc12b_2003_p6 (a r : ℝ) (u : ℕ → ℝ) (h₀ : ∀ k, u k = a * r ^ k) (h₁ : u 1 = 2)\n  (h₂ : u 3 = 6) : u 0 = 2 / Real.sqrt 3 ∨ u 0 = -(2 / Real.sqrt 3) := by",
+   "statement_sha256": "53f12e9fa2a4a2bae3d9836f5d0db694ea607027063746b46ce7a94a5e2d0409"
+  },
+  {
+   "id": "amc12b_2003_p9",
+   "split": "valid",
+   "statement": "theorem amc12b_2003_p9 (a b : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f x = a * x + b) (h₁ : f 6 - f 2 = 12) :\n    f 12 - f 2 = 30 := by",
+   "statement_sha256": "dcf23b152d1b33a766fc9386d22e90d5cc75392d655dfe9014e87ef3e1a2cb02"
+  },
+  {
+   "id": "amc12b_2004_p3",
+   "split": "valid",
+   "statement": "theorem amc12b_2004_p3 (x y : ℕ) (h₀ : 2 ^ x * 3 ^ y = 1296) : x + y = 8 := by",
+   "statement_sha256": "5fe9b033fb39071833d1d1ca2fef3d8936fbda768911253c94702191a377db8d"
+  },
+  {
+   "id": "amc12b_2020_p5",
+   "split": "valid",
+   "statement": "theorem amc12b_2020_p5 (a b : ℕ) (h₀ : (5 : ℚ) / 8 * b = 2 / 3 * a + 7)\n  (h₁ : (b : ℚ) - 5 / 8 * b = a - 2 / 3 * a + 7) : a = 42 := by",
+   "statement_sha256": "5e6524662936fa87d47540b831b79ef7848577ee9df66deff58456c2deae6036"
+  },
+  {
+   "id": "amc12b_2021_p21",
+   "split": "valid",
+   "statement": "theorem amc12b_2021_p21 (S : Finset ℝ)\n  (h₀ : ∀ x : ℝ, x ∈ S ↔ 0 < x ∧ x ^ (2 : ℝ) ^ Real.sqrt 2 = Real.sqrt 2 ^ (2 : ℝ) ^ x) :\n  (↑2 ≤ ∑ k ∈ S, k) ∧ (∑ k ∈ S, k) < 6 := by",
+   "statement_sha256": "7a03da74ab1d3ed71074462ab87c06226ff0c79d19d085d070bee4ffa3a350a3"
+  },
+  {
+   "id": "imo_1961_p1",
+   "split": "valid",
+   "statement": "theorem imo_1961_p1 (x y z a b : ℝ) (h₀ : 0 < x ∧ 0 < y ∧ 0 < z) (h₁ : x ≠ y) (h₂ : y ≠ z)\n  (h₃ : z ≠ x) (h₄ : x + y + z = a) (h₅ : x ^ 2 + y ^ 2 + z ^ 2 = b ^ 2) (h₆ : x * y = z ^ 2) :\n  0 < a ∧ b ^ 2 < a ^ 2 ∧ a ^ 2 < 3 * b ^ 2 := by",
+   "statement_sha256": "6ce0539b43027f74fb8279c3123736d9df3706ca59893fdfa8fac815ed8cf5dd"
+  },
+  {
+   "id": "imo_1962_p4",
+   "split": "valid",
+   "statement": "theorem imo_1962_p4 (S : Set ℝ)\n    (h₀ : S = { x : ℝ | Real.cos x ^ 2 + Real.cos (2 * x) ^ 2 + Real.cos (3 * x) ^ 2 = 1 }) :\n    S =\n      { x : ℝ |\n        ∃ m : ℤ,\n          x = π / 2 + m * π ∨\n            x = π / 4 + m * π / 2 ∨ x = π / 6 + m * π / 6 ∨ x = 5 * π / 6 + m * π / 6 } := by",
+   "statement_sha256": "e1c0480d061e16299a9445415a91ecb354586dc1357955628e966be1b48b1c1e"
+  },
+  {
+   "id": "imo_1964_p1_1",
+   "split": "valid",
+   "statement": "theorem imo_1964_p1_1 (n : ℕ) (h₀ : 7 ∣ 2 ^ n - 1) : 3 ∣ n := by",
+   "statement_sha256": "117016a82e9492669e050537e9484b8b37c5cc599adfd6c16c61d31388a3203c"
+  },
+  {
+   "id": "imo_1964_p1_2",
+   "split": "valid",
+   "statement": "theorem imo_1964_p1_2 (n : ℕ) : ¬7 ∣ 2 ^ n + 1 := by",
+   "statement_sha256": "f9ece538c00c62381e3c1cb2ec6fcac6331fd9ad677f7d66b230f9c4edc2510d"
+  },
+  {
+   "id": "imo_1965_p1",
+   "split": "valid",
+   "statement": "theorem imo_1965_p1 (x : ℝ) (h₀ : 0 ≤ x) (h₁ : x ≤ 2 * π)\n  (h₂ : 2 * Real.cos x ≤ abs (Real.sqrt (1 + Real.sin (2 * x)) - Real.sqrt (1 - Real.sin (2 * x))))\n  (h₃ : abs (Real.sqrt (1 + Real.sin (2 * x)) - Real.sqrt (1 - Real.sin (2 * x))) ≤ Real.sqrt 2) :\n  π / 4 ≤ x ∧ x ≤ 7 * π / 4 := by",
+   "statement_sha256": "a20bea8bf351c979b7d7fb08b3bbf19b8cd87c7d23c55f0782ed98a17941c517"
+  },
+  {
+   "id": "imo_1966_p4",
+   "split": "valid",
+   "statement": "theorem imo_1966_p4 (n : ℕ) (x : ℝ) (h₀ : ∀ k : ℕ, 0 < k → ∀ m : ℤ, x ≠ m * π / 2 ^ k)\n  (h₁ : 0 < n) :\n  (∑ k ∈ Finset.Icc 1 n, 1 / Real.sin (2 ^ k * x)) = 1 / Real.tan x - 1 / Real.tan (2 ^ n * x) := by",
+   "statement_sha256": "7db4b70cccfbe21129a0c7805e181ffcd31554c4640222894147e4c850fbdbd0"
+  },
+  {
+   "id": "imo_1966_p5",
+   "split": "valid",
+   "statement": "theorem imo_1966_p5 (x a : ℕ → ℝ) (h₀ : a 1 ≠ a 2) (h₁ : a 1 ≠ a 3) (h₂ : a 1 ≠ a 4)\n  (h₃ : a 2 ≠ a 3) (h₄ : a 2 ≠ a 4) (h₅ : a 3 ≠ a 4) (h₆ : a 1 > a 2) (h₇ : a 2 > a 3)\n  (h₈ : a 3 > a 4)\n  (h₉ : abs (a 1 - a 2) * x 2 + abs (a 1 - a 3) * x 3 + abs (a 1 - a 4) * x 4 = 1)\n  (h₁₀ : abs (a 2 - a 1) * x 1 + abs (a 2 - a 3) * x 3 + abs (a 2 - a 4) * x 4 = 1)\n  (h₁₁ : abs (a 3 - a 1) * x 1 + abs (a 3 - a 2) * x 2 + abs (a 3 - a 4) * x 4 = 1)\n  (h₁₂ : abs (a 4 - a 1) * x 1 + abs (a 4 - a 2) * x 2 + abs (a 4 - a 3) * x 3 = 1) :\n  x 2 = 0 ∧ x 3 = 0 ∧ x 1 = 1 / abs (a 1 - a 4) ∧ x 4 = 1 / abs (a 1 - a 4) := by",
+   "statement_sha256": "679e2cc23dd1eed0c4dda1894b9a8559fd54212f35f39c745ed0c926bc61fc31"
+  },
+  {
+   "id": "imo_1967_p3",
+   "split": "valid",
+   "statement": "theorem imo_1967_p3 (k m n : ℕ) (c : ℕ → ℕ) (h₀ : 0 < k ∧ 0 < m ∧ 0 < n)\n  (h₁ : ∀ s, c s = s * (s + 1)) (h₂ : Nat.Prime (k + m + 1)) (h₃ : n + 1 < k + m + 1) :\n  (∏ i ∈ Finset.Icc 1 n, c i) ∣ ∏ i ∈ Finset.Icc 1 n, c (m + i) - c k := by",
+   "statement_sha256": "51fad18ecdcdb51ea677bca8cc748a1ead8b20dbc901541065dc917db31422b5"
+  },
+  {
+   "id": "imo_1973_p3",
+   "split": "valid",
+   "statement": "theorem imo_1973_p3 (a b : ℝ) (h₀ : ∃ x, x ^ 4 + a * x ^ 3 + b * x ^ 2 + a * x + 1 = 0) :\n  4 / 5 ≤ a ^ 2 + b ^ 2 := by",
+   "statement_sha256": "4a3faf49db41c56805a8e0ee9ad1ca7374e2736cb32cdd753169da601d1ab6fe"
+  },
+  {
+   "id": "imo_1974_p5",
+   "split": "valid",
+   "statement": "theorem imo_1974_p5 (a b c d s : ℝ) (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d)\n  (h₁ : s = a / (a + b + d) + b / (a + b + c) + c / (b + c + d) + d / (a + c + d)) :\n  1 < s ∧ s < 2 := by",
+   "statement_sha256": "b15fed9f7545003adfaff21c3d107a54ddd44cfd38f4e93897c34d4cd4b6f11f"
+  },
+  {
+   "id": "imo_1977_p5",
+   "split": "valid",
+   "statement": "theorem imo_1977_p5 (a b q r : ℕ) (h₀ : r < a + b) (h₁ : a ^ 2 + b ^ 2 = (a + b) * q + r)\n  (h₂ : q ^ 2 + r = 1977) :\n  abs ((a : ℤ) - 22) = 15 ∧ abs ((b : ℤ) - 22) = 28 ∨\n    abs ((a : ℤ) - 22) = 28 ∧ abs ((b : ℤ) - 22) = 15 := by",
+   "statement_sha256": "48ade5bf39187d0c4cdb16c814191940a0ab9c6bacafc1f95bdab7b015aee1fb"
+  },
+  {
+   "id": "imo_1978_p5",
+   "split": "valid",
+   "statement": "theorem imo_1978_p5 (n : ℕ) (a : ℕ → ℕ) (h₀ : Function.Injective a) (h₁ : a 0 = 0) (h₂ : 0 < n) :\n  (∑ k ∈ Finset.Icc 1 n, (1 : ℝ) / k) ≤ ∑ k ∈ Finset.Icc 1 n, (a k : ℝ) / k ^ 2 := by",
+   "statement_sha256": "ca29f80ddc714c9ca891310ffd30f53c559938431b32a2bf1de3b7e855ee3872"
+  },
+  {
+   "id": "imo_1979_p1",
+   "split": "valid",
+   "statement": "theorem imo_1979_p1 (p q : ℕ) (h₀ : 0 < q)\n  (h₁ : (∑ k ∈ Finset.Icc (1 : ℕ) 1319, (-1) ^ (k + 1) * ((1 : ℝ) / k)) = p / q) : 1979 ∣ p := by",
+   "statement_sha256": "0b9915f9f29233e68b317a510cea50bb41c54ce0b278901ed864a3fec8f5b0c3"
+  },
+  {
+   "id": "imo_1984_p2",
+   "split": "valid",
+   "statement": "theorem imo_1984_p2 (a b : ℤ) (h₀ : 0 < a ∧ 0 < b) (h₁ : ¬7 ∣ a) (h₂ : ¬7 ∣ b) (h₃ : ¬7 ∣ a + b)\n  (h₄ : 7 ^ 7 ∣ (a + b) ^ 7 - a ^ 7 - b ^ 7) : 19 ≤ a + b := by",
+   "statement_sha256": "1abad35bcb9e8dd47a88bc3f780343fde038a19e9eb3285556fed158de87f5e1"
+  },
+  {
+   "id": "imo_1987_p4",
+   "split": "valid",
+   "statement": "theorem imo_1987_p4 (f : ℕ → ℕ) : ∃ n, f (f n) ≠ n + 1987 := by",
+   "statement_sha256": "871380e18a0d66e3cb119ceee34c3c7009172d36a84c1060db6391f2177c7bd0"
+  },
+  {
+   "id": "imo_1987_p6",
+   "split": "valid",
+   "statement": "theorem imo_1987_p6 (p : ℕ) (f : ℕ → ℕ) (h₀ : ∀ x, f x = x ^ 2 + x + p)\n  (h₀ : ∀ k : ℕ, k ≤ Nat.floor (Real.sqrt (p / 3)) → Nat.Prime (f k)) :\n   ∀ i ≤ p - 2, Nat.Prime (f i) := by",
+   "statement_sha256": "be97a1e34f4488fb9183f2a17bf45b76d93a5bcc02b3e787095cd2961d32fe9c"
+  },
+  {
+   "id": "imo_1988_p6",
+   "split": "valid",
+   "statement": "theorem imo_1988_p6 (a b : ℕ) (h₀ : 0 < a ∧ 0 < b) (h₁ : a * b + 1 ∣ a ^ 2 + b ^ 2) :\n  ∃ x : ℕ, (x ^ 2 : ℝ) = (a ^ 2 + b ^ 2) / (a * b + 1) := by",
+   "statement_sha256": "e788d6179857725c3b21637a1eb92fb8bd7864e58033f309daa545cea4af5416"
+  },
+  {
+   "id": "imo_1990_p3",
+   "split": "valid",
+   "statement": "theorem imo_1990_p3 (n : ℕ) (h₀ : 2 ≤ n) (h₁ : n ^ 2 ∣ 2 ^ n + 1) : n = 3 := by",
+   "statement_sha256": "a48ef2e17e5fd0dc9b05e3085db4736a80e92b8592c107c54f4a85daf223859b"
+  },
+  {
+   "id": "imo_1993_p5",
+   "split": "valid",
+   "statement": "theorem imo_1993_p5 : ∃ f : ℕ → ℕ, f 1 = 2 ∧ ∀ n, f (f n) = f n + n ∧ ∀ n, f n < f (n + 1) := by",
+   "statement_sha256": "f7eaed247181d371ddb718dfa7c797354963374a387b3da067cefa7961a7ed03"
+  },
+  {
+   "id": "imo_2006_p3",
+   "split": "valid",
+   "statement": "theorem imo_2006_p3 (a b c : ℝ) :\n  a * b * (a ^ 2 - b ^ 2) + b * c * (b ^ 2 - c ^ 2) + c * a * (c ^ 2 - a ^ 2) ≤\n  9 * Real.sqrt 2 / 32 * (a ^ 2 + b ^ 2 + c ^ 2) ^ 2 := by",
+   "statement_sha256": "b1b639e1dc25798987bb2fbb846259edf26b8168ad05a315079f301871252a14"
+  },
+  {
+   "id": "induction_divisibility_3div2tooddnp1",
+   "split": "valid",
+   "statement": "theorem induction_divisibility_3div2tooddnp1 (n : ℕ) : 3 ∣ 2 ^ (2 * n + 1) + 1 := by",
+   "statement_sha256": "cfd6c20b8f4ab887ca04a315e5d17cdf4dd0e22eea091c126e960852701133af"
+  },
+  {
+   "id": "induction_divisibility_3divnto3m2n",
+   "split": "valid",
+   "statement": "theorem induction_divisibility_3divnto3m2n (n : ℕ) : 3 ∣ n ^ 3 + 2 * n := by",
+   "statement_sha256": "0a6726031193e1775ddb47cc83dac6ed67b21a966f25a6de33d78818e1d886f9"
+  },
+  {
+   "id": "induction_divisibility_9div10tonm1",
+   "split": "valid",
+   "statement": "theorem induction_divisibility_9div10tonm1 (n : ℕ) (h₀ : 0 < n) : 9 ∣ 10 ^ n - 1 := by",
+   "statement_sha256": "327076288f14e040e15bf03fe6f391441c5f28b0d4012bb4635bf7fa6faa7b3b"
+  },
+  {
+   "id": "induction_ineq_nsqlefactn",
+   "split": "valid",
+   "statement": "theorem induction_ineq_nsqlefactn (n : ℕ) (h₀ : 4 ≤ n) : n ^ 2 ≤ n ! := by",
+   "statement_sha256": "662e7eea60d4f160f1331d3adeab97405d8ca2d7e8f5a7cea9c2cbb362fda60e"
+  },
+  {
+   "id": "induction_seq_mul2pnp1",
+   "split": "valid",
+   "statement": "theorem induction_seq_mul2pnp1 (n : ℕ) (u : ℕ → ℕ) (h₀ : u 0 = 0)\n  (h₁ : ∀ n, u (n + 1) = 2 * u n + (n + 1)) : u n = 2 ^ (n + 1) - (n + 2) := by",
+   "statement_sha256": "2d35481479ca69c2ebd735a1d06a0008fbe1ab644780c6532ebcadc893071dcb"
+  },
+  {
+   "id": "induction_sum2kp1npqsqm1",
+   "split": "valid",
+   "statement": "theorem induction_sum2kp1npqsqm1 (n : ℕ) :\n  ∑ k ∈ Finset.range n, (2 * k + 3) = (n + 1) ^ 2 - 1 := by",
+   "statement_sha256": "57820dc625655242d12601aa45eca1277af02c8f01b6ac31cc63ab13860037a2"
+  },
+  {
+   "id": "induction_sum_1oktkp1",
+   "split": "valid",
+   "statement": "theorem induction_sum_1oktkp1 (n : ℕ) :\n  (∑ k ∈ Finset.range n, (1 : ℝ) / ((k + 1) * (k + 2))) = n / (n + 1) := by",
+   "statement_sha256": "5649eeb7b74fb4e45ee5ce7533a82562e39bc71d8af1db96e36a3a064c67a900"
+  },
+  {
+   "id": "induction_sum_odd",
+   "split": "valid",
+   "statement": "theorem induction_sum_odd (n : ℕ) : (∑ k ∈ Finset.range n, (2 * k + 1)) = n ^ 2 := by",
+   "statement_sha256": "8926e7d12c9776d83f26a6602b38b591f59cc307bb528b98ee7d1e3c0a3fbaff"
+  },
+  {
+   "id": "mathd_algebra_10",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_10 : abs ((120 : ℝ) / 100 * 30 - 130 / 100 * 20) = 10 := by",
+   "statement_sha256": "6ed70a0de774ff0709098e16e427a0102b20596120f1a2fb36542faea3d27be0"
+  },
+  {
+   "id": "mathd_algebra_101",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_101 (x : ℝ) (h₀ : x ^ 2 - 5 * x - 4 ≤ 10) : x ≥ -2 ∧ x ≤ 7 := by",
+   "statement_sha256": "57219d8191936c444de712090a53b87b118b19ea40ad424588a349b2a415c0a2"
+  },
+  {
+   "id": "mathd_algebra_104",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_104 (x : ℝ) (h₀ : 125 / 8 = x / 12) : x = 375 / 2 := by",
+   "statement_sha256": "c65e5bd1cef020334d2b9c67b6a980b0c3c46083d4d84c066077be660414efdc"
+  },
+  {
+   "id": "mathd_algebra_109",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_109 (a b : ℝ) (h₀ : 3 * a + 2 * b = 12) (h₁ : a = 4) : b = 0 := by",
+   "statement_sha256": "d37173b86e5cb07d3fc39c0493f817f7fd129655f1bc688d6736682bc5097030"
+  },
+  {
+   "id": "mathd_algebra_11",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_11 (a b : ℝ) (h₀ : a ≠ b) (h₁ : a ≠ 2 * b)\n    (h₂ : (4 * a + 3 * b) / (a - 2 * b) = 5) : (a + 11 * b) / (a - b) = 2 := by",
+   "statement_sha256": "26ecd204350429451cdb7342f172cea4c9bf4da47bfe9778786d89f9aa4703b5"
+  },
+  {
+   "id": "mathd_algebra_110",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_110 (q e : ℂ) (h₀ : q = 2 - 2 * Complex.I) (h₁ : e = 5 + 5 * Complex.I) :\n    q * e = 20 := by",
+   "statement_sha256": "88a0e8acaa1cad8e0cdb94ba0e0834e74a115da2d99bb21b33d1741ae1a35ab8"
+  },
+  {
+   "id": "mathd_algebra_116",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_116 (k x : ℝ) (h₀ : x = (13 - Real.sqrt 131) / 4)\n    (h₁ : 2 * x ^ 2 - 13 * x + k = 0) : k = 19 / 4 := by",
+   "statement_sha256": "9c5f992549bf975d6d0c2aa2283fd5940bfd22250b9f846bbcabeceaca8e326e"
+  },
+  {
+   "id": "mathd_algebra_119",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_119 (d e : ℝ) (h₀ : 2 * d = 17 * e - 8) (h₁ : 2 * e = d - 9) : e = 2 := by",
+   "statement_sha256": "a08dadd9bead33af6c7830a53a655e9bf885a7660050faba4fa45d2c4c4c57b6"
+  },
+  {
+   "id": "mathd_algebra_123",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_123 (a b : ℕ) (h₀ : 0 < a ∧ 0 < b) (h₁ : a + b = 20) (h₂ : a = 3 * b) :\n  a - b = 10 := by",
+   "statement_sha256": "46564e9478f954c464695f6a196a230a45c98f0c292a2fc0d7d96147f032fc09"
+  },
+  {
+   "id": "mathd_algebra_126",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_126 (x y : ℝ) (h₀ : 2 * 3 = x - 9) (h₁ : 2 * -5 = y + 1) : x = 15 ∧ y = -11 := by",
+   "statement_sha256": "7192089a4e8df326107968bb94ecce70f7f13f965c35db166123eb1d6320aa1f"
+  },
+  {
+   "id": "mathd_algebra_13",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_13 (a b : ℝ)\n  (h₀ : ∀ x, x - 3 ≠ 0 ∧ x - 5 ≠ 0 → 4 * x / (x ^ 2 - 8 * x + 15) = a / (x - 3) + b / (x - 5)) :\n  a = -6 ∧ b = 10 := by",
+   "statement_sha256": "8fd12cc9fe6356c2ebe9e682ac06cb5bc8854692fc49d48e9594f79cb51dff9a"
+  },
+  {
+   "id": "mathd_algebra_131",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_131 (a b : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f x = 2 * x ^ 2 - 7 * x + 2)\n  (h₁ : f a = 0) (h₂ : f b = 0) (h₃ : a ≠ b) : 1 / (a - 1) + 1 / (b - 1) = -1 := by",
+   "statement_sha256": "7e76847739abfb22e64b8160c88f06347ea06f4570e0e8f3d6e85710c96504b1"
+  },
+  {
+   "id": "mathd_algebra_132",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_132 (x : ℝ) (f g : ℝ → ℝ) (h₀ : ∀ x, f x = x + 2) (h₁ : ∀ x, g x = x ^ 2)\n  (h₂ : f (g x) = g (f x)) : x = -1 / 2 := by",
+   "statement_sha256": "9ae74f23babb739987d49f789fdaf05ec07ce9e2664c5230e3c6f0b92cb457e7"
+  },
+  {
+   "id": "mathd_algebra_140",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_140 (a b c : ℝ) (h₀ : 0 < a ∧ 0 < b ∧ 0 < c)\n  (h₁ : ∀ x, 24 * x ^ 2 - 19 * x - 35 = (a * x - 5) * (2 * (b * x) + c)) : a * b - 3 * c = -9 := by",
+   "statement_sha256": "7408f89d21881838b7b4cce609a4bc2af3c66f22bf8e4c54dd1930c898fc2c73"
+  },
+  {
+   "id": "mathd_algebra_144",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_144 (a b c d : ℕ) (h₀ : 0 < a ∧ 0 < b ∧ 0 < c ∧ 0 < d) (h₀ : (c : ℤ) - b = d)\n    (h₁ : (b : ℤ) - a = d) (h₂ : a + b + c = 60) (h₃ : a + b > c) : d < 10 := by",
+   "statement_sha256": "67ba2fd7fa089e3cd6bf46307becfa80bf551dba701b7e5e096d7bd2e703db2f"
+  },
+  {
+   "id": "mathd_algebra_149",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_149 (f : ℝ → ℝ) (h₀ : ∀ x < -5, f x = x ^ 2 + 5)\n  (h₁ : ∀ x ≥ -5, f x = 3 * x - 8) (h₂ : Fintype (f ⁻¹' {10})) :\n  (∑ k ∈ (f ⁻¹' {10}).toFinset, k) = 6 := by",
+   "statement_sha256": "b43e8ffda7c08f3d21db102308e5bcb1de08396abd4d0754cb7aed27aab3e01b"
+  },
+  {
+   "id": "mathd_algebra_15",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_15 (s : ℕ → ℕ → ℕ)\n    (h₀ : ∀ a b, 0 < a ∧ 0 < b → s a b = a ^ (b : ℕ) + b ^ (a : ℕ)) : s 2 6 = 100 := by",
+   "statement_sha256": "57effa68771d2cdac91d6dc202ca1543430b465f0fbb571c178447a1dc4a85cc"
+  },
+  {
+   "id": "mathd_algebra_151",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_151 : Int.ceil (Real.sqrt 27) - Int.floor (Real.sqrt 26) = 1 := by",
+   "statement_sha256": "454eaa93bde9b8681a6a515bb141098f8b077fdf7c58257ec6bae142fa08aeba"
+  },
+  {
+   "id": "mathd_algebra_159",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_159 (b : ℝ) (f : ℝ → ℝ)\n  (h₀ : ∀ x, f x = 3 * x ^ 4 - 7 * x ^ 3 + 2 * x ^ 2 - b * x + 1) (h₁ : f 1 = 1) : b = -2 := by",
+   "statement_sha256": "b31b83354f78efdc04abd0b8732b6f5f3f8756fc802eb058cb9589673a56c151"
+  },
+  {
+   "id": "mathd_algebra_181",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_181 (n : ℝ) (h₀ : n ≠ 3) (h₁ : (n + 5) / (n - 3) = 2) : n = 11 := by",
+   "statement_sha256": "f90c1ec194823694f93b0acf9d5c83ce514ae604974260ce92b1a34b7b83eb03"
+  },
+  {
+   "id": "mathd_algebra_182",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_182 (y : ℂ) : 7 * (3 * y + 2) = 21 * y + 14 := by",
+   "statement_sha256": "96df7b2ff8d216e4b9752f62f9de89ca77493823344ae2a6fc4e505ebcbb306c"
+  },
+  {
+   "id": "mathd_algebra_185",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_185 (s : Finset ℤ) (f : ℤ → ℤ) (h₀ : ∀ x, f x = abs (x + 4))\n  (h₁ : ∀ x, x ∈ s ↔ f x < 9) : s.card = 17 := by",
+   "statement_sha256": "2e4dfac7aa88a3930d198cb5b641c577fe50065cead37536e10d514ec5ce4b9a"
+  },
+  {
+   "id": "mathd_algebra_190",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_190 : ((3 : ℝ) / 8 + 7 / 8) / (4 / 5) = 25 / 16 := by",
+   "statement_sha256": "24bcb561e84b3b78883db67d67ffcd845ef867de62002c7423003c774092e2ee"
+  },
+  {
+   "id": "mathd_algebra_192",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_192 (q e d : ℂ) (h₀ : q = 11 - 5 * Complex.I) (h₁ : e = 11 + 5 * Complex.I)\n    (h₂ : d = 2 * Complex.I) : q * e * d = 292 * Complex.I := by",
+   "statement_sha256": "2d6ac3c37ad3519d4b769d019476c7aa49f4f55a25c8235941447a7f8e79b5ec"
+  },
+  {
+   "id": "mathd_algebra_206",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_206 (a b : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f x = x ^ 2 + a * x + b) (h₁ : 2 * a ≠ b)\n  (h₂ : f (2 * a) = 0) (h₃ : f b = 0) : a + b = -1 := by",
+   "statement_sha256": "79ff694488aa280549b19a8fce76ed171252a37091e1b1ccd14eb3f0da84491a"
+  },
+  {
+   "id": "mathd_algebra_214",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_214 (a : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f x = a * (x - 2) ^ 2 + 3) (h₁ : f 4 = 4) :\n  f 6 = 7 := by",
+   "statement_sha256": "27b2c5977a4a7f493bcb52bb17f0cf58a9f08f3928669e0212a60a51fbecdbae"
+  },
+  {
+   "id": "mathd_algebra_22",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_22 : Real.logb (5 ^ 2) (5 ^ 4) = 2 := by",
+   "statement_sha256": "40b34eb66e58db001e09a8c4d9135d93ba062afacb1b06b552e7c6cf0972a510"
+  },
+  {
+   "id": "mathd_algebra_224",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_224 (S : Finset ℕ)\n  (h₀ : ∀ n : ℕ, n ∈ S ↔ Real.sqrt n < 7 / 2 ∧ 2 < Real.sqrt n) : S.card = 8 := by",
+   "statement_sha256": "83ac57a0c4787a8351b941cc8dfde3402416ce5f31c19e4e7985f2998a83d6e5"
+  },
+  {
+   "id": "mathd_algebra_234",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_234 (d : ℝ) (h₀ : 27 / 125 * d = 9 / 25) : 3 / 5 * d ^ 3 = 25 / 9 := by",
+   "statement_sha256": "657259385338fa7730aaa6b0bf4ee921024678dcc3d62f3bb92c7e52306abcb2"
+  },
+  {
+   "id": "mathd_algebra_245",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_245 (x : ℝ) (h₀ : x ≠ 0) :\n  (4 / x)⁻¹ * (3 * x ^ 3 / x) ^ 2 * (1 / (2 * x))⁻¹ ^ 3 = 18 * x ^ 8 := by",
+   "statement_sha256": "31b28c2cdaba941dd5797b63a19a684467064aa26f92a6d0541257b7a38feb81"
+  },
+  {
+   "id": "mathd_algebra_247",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_247 (t s : ℝ) (n : ℤ) (h₀ : t = 2 * s - s ^ 2) (h₁ : s = n ^ 2 - 2 ^ n + 1)\n  (_ : n = 3) : t = 0 := by",
+   "statement_sha256": "bfe5edf0ab8a633e337716c517070ceb19e1020eaadded0a7bd1d572b2355a95"
+  },
+  {
+   "id": "mathd_algebra_251",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_251 (x : ℝ) (h₀ : x ≠ 0) (h₁ : 3 + 1 / x = 7 / x) : x = 2 := by",
+   "statement_sha256": "21e16132ccf2854e7a0088ddc367a9103c7ef7868a3de5b62bf791ef8f5e6ee5"
+  },
+  {
+   "id": "mathd_algebra_267",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_267 (x : ℝ) (h₀ : x ≠ 1) (h₁ : x ≠ -2)\n  (h₂ : (x + 1) / (x - 1) = (x - 2) / (x + 2)) : x = 0 := by",
+   "statement_sha256": "393e65eed1801f4e3af783cb77e8bea3d4a4213fce87a37aec5d5803dfddcd11"
+  },
+  {
+   "id": "mathd_algebra_28",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_28 (c : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f x = 2 * x ^ 2 + 5 * x + c)\n  (h₁ : ∃ x, f x ≤ 0) : c ≤ 25 / 8 := by",
+   "statement_sha256": "8efca36f65b4c1d2e45adece4b89a491a7e54aeacb28caf1e295f90a74efddba"
+  },
+  {
+   "id": "mathd_algebra_282",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_282 (f : ℝ → ℝ) (h₀ : ∀ x : ℝ, ¬ (Irrational x) → f x = abs (Int.floor x))\n  (h₁ : ∀ x, Irrational x → f x = (Int.ceil x) ^ 2) :\n  f (8 ^ (1 / 3)) + f (-Real.pi) + f (Real.sqrt 50) + f (9 / 2) = 79 := by",
+   "statement_sha256": "f8d87a2100888ff0c79fd2fa130a6ea30d9a8d1bf32c2dbb3811e748bf0c94bf"
+  },
+  {
+   "id": "mathd_algebra_31",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_31 (x : NNReal) (u : ℕ → NNReal) (h₀ : ∀ n, u (n + 1) = NNReal.sqrt (x + u n))\n  (h₁ : Filter.Tendsto u Filter.atTop (𝓝 9)) : 9 = NNReal.sqrt (x + 9) := by",
+   "statement_sha256": "9520e7e12f71e301cc319532250c08bfaada27569cd6cde470d14c7c54c6ffec"
+  },
+  {
+   "id": "mathd_algebra_323",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_323 (σ : Equiv ℝ ℝ) (h : ∀ x, σ.1 x = x ^ 3 - 8) : σ.2 (σ.1 (σ.2 19)) = 3 := by",
+   "statement_sha256": "32d182f0493c9e30301c945e33ba255716e01c5bdf2b8c75412e5f659558ab3a"
+  },
+  {
+   "id": "mathd_algebra_327",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_327 (a : ℝ) (h₀ : 1 / 5 * abs (9 + 2 * a) < 1) : -7 < a ∧ a < -2 := by",
+   "statement_sha256": "06ed3fc8cc811a48c424b2acd102566d77d52c0bd9d2a75fcd3edcf789b2243c"
+  },
+  {
+   "id": "mathd_algebra_35",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_35 (p q : ℝ → ℝ) (h₀ : ∀ x, p x = 2 - x ^ 2)\n    (h₁ : ∀ x : ℝ, x ≠ 0 → q x = 6 / x) : p (q 2) = -7 := by",
+   "statement_sha256": "65fae89c99ef87616303973db461fffd55667d424ba78d3ca3ca83a5f2a9e3be"
+  },
+  {
+   "id": "mathd_algebra_37",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_37 (x y : ℝ) (h₀ : x + y = 7) (h₁ : 3 * x + y = 45) : x ^ 2 - y ^ 2 = 217 := by",
+   "statement_sha256": "aab37d30e46c5b9234447fd52021f5dfcd286909690711f5bce8d0ae019edcbf"
+  },
+  {
+   "id": "mathd_algebra_393",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_393 (σ : Equiv ℝ ℝ) (h₀ : ∀ x, σ.1 x = 4 * x ^ 3 + 1) : σ.2 33 = 2 := by",
+   "statement_sha256": "82678c40ea3ed56c4939e8084d7b557b7770a804189db91782e84121dbb93323"
+  },
+  {
+   "id": "mathd_algebra_405",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_405 (S : Finset ℕ) (h₀ : ∀ x, x ∈ S ↔ 0 < x ∧ x ^ 2 + 4 * x + 4 < 20) :\n  S.card = 2 := by",
+   "statement_sha256": "ec09e41f628853e01a5e8febc8c1a2f78d48604ffe081c577c5b80f821aa11be"
+  },
+  {
+   "id": "mathd_algebra_410",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_410 (x y : ℝ) (h₀ : y = x ^ 2 - 6 * x + 13) : 4 ≤ y := by",
+   "statement_sha256": "f20bf4677e691657f214adc6aa13f6269df7696d8889da3172469b865b9e331a"
+  },
+  {
+   "id": "mathd_algebra_421",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_421 (a b c d : ℝ) (h₀ : b = a ^ 2 + 4 * a + 6)\n  (h₁ : b = 1 / 2 * a ^ 2 + a + 6) (h₂ : d = c ^ 2 + 4 * c + 6) (h₃ : d = 1 / 2 * c ^ 2 + c + 6)\n  (h₄ : a < c) : c - a = 6 := by",
+   "statement_sha256": "da13ac89ffcc7d22fa49e3cd8ae816e0d831b9921616d8d8fd448e323d5bf3ff"
+  },
+  {
+   "id": "mathd_algebra_422",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_422 (x : ℝ) (σ : Equiv ℝ ℝ) (h₀ : ∀ x, σ.1 x = 5 * x - 12)\n  (h₁ : σ.1 (x + 1) = σ.2 x) : x = 47 / 24 := by",
+   "statement_sha256": "1726bac7e12c6d2f9e13b3c4e02799cc84b71b9da3f1d17e9ed1a913a7986493"
+  },
+  {
+   "id": "mathd_algebra_43",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_43 (a b : ℝ) (f : ℝ → ℝ) (h₀ : ∀ x, f x = a * x + b) (h₁ : f 7 = 4)\n  (h₂ : f 6 = 3) : f 3 = 0 := by",
+   "statement_sha256": "2020a556f3f66c1f6fbe328625a6520df64d6600513aca30f4e16539d1411b05"
+  },
+  {
+   "id": "mathd_algebra_433",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_433 (f : ℝ → ℝ) (h₀ : ∀ x, f x = 3 * Real.sqrt (2 * x - 7) - 8) : f 8 = 19 := by",
+   "statement_sha256": "9e83e8a8441662944e9159484d96950dc4d3bb6e21cd2b0f5eb4a3971049f47c"
+  },
+  {
+   "id": "mathd_algebra_437",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_437 (x y : ℝ) (n : ℤ) (h₀ : x ^ 3 = -45) (h₁ : y ^ 3 = -101) (h₂ : x < n)\n  (h₃ : ↑n < y) : n = -4 := by",
+   "statement_sha256": "4314ae6d54c8faa6ddaeb7a7283a9370afa22b4cc53f7094016d0a6c1f2371e8"
+  },
+  {
+   "id": "mathd_algebra_451",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_451 (σ : Equiv ℝ ℝ) (h₀ : σ.2 (-15) = 0) (h₁ : σ.2 0 = 3) (h₂ : σ.2 3 = 9)\n    (h₃ : σ.2 9 = 20) : σ.1 (σ.1 9) = 0 := by",
+   "statement_sha256": "c5c3cb3f6646f1769f1caafdc4914b5297f68d9cbac127cfd18eb20cde40820c"
+  },
+  {
+   "id": "mathd_algebra_455",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_455 (x : ℝ) (h₀ : 2 * (2 * (2 * (2 * x))) = 48) : x = 3 := by",
+   "statement_sha256": "383f8d3a79f278432be5cf2c066acc53c3b10e53e43474ea75c46f210b31a4f2"
+  },
+  {
+   "id": "mathd_algebra_462",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_462 : ((1 : ℚ) / 2 + 1 / 3) * (1 / 2 - 1 / 3) = 5 / 36 := by",
+   "statement_sha256": "fa4051ae0db9c23486138e9720ee77a9f4b9d9edd74819180d4474d6f624e11f"
+  },
+  {
+   "id": "mathd_algebra_48",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_48 (q e : ℂ) (h₀ : q = 9 - 4 * Complex.I) (h₁ : e = -3 - 4 * Complex.I) :\n  q - e = 12 := by",
+   "statement_sha256": "77ebb78e7f0b4e3dfea4e7346e9deab7029db625ea23e6ceb88f4a34774cf3a1"
+  },
+  {
+   "id": "mathd_algebra_480",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_480 (f : ℝ → ℝ) (h₀ : ∀ x < 0, f x = -x ^ 2 - 1)\n  (h₁ : ∀ x, 0 ≤ x ∧ x < 4 → f x = 2) (h₂ : ∀ x ≥ 4, f x = Real.sqrt x) : f π = 2 := by",
+   "statement_sha256": "221a10637beec4e50ab25515bfe31ba4c6100f89f2e3c13543f49e64d22db0d5"
+  },
+  {
+   "id": "mathd_algebra_482",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_482 (m n : ℕ) (k : ℝ) (f : ℝ → ℝ) (h₀ : Nat.Prime m) (h₁ : Nat.Prime n)\n  (h₂ : ∀ x, f x = x ^ 2 - 12 * x + k) (h₃ : f m = 0) (h₄ : f n = 0) (h₅ : m ≠ n) : k = 35 := by",
+   "statement_sha256": "1dfa900326d6ca50c638f244ec0fa966cd2a06409170bb2918efdf06c94d9790"
+  },
+  {
+   "id": "mathd_algebra_493",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_493 (f : ℝ → ℝ) (h₀ : ∀ x, f x = x ^ 2 - 4 * Real.sqrt x + 1) :\n    f (f 4) = 70 := by",
+   "statement_sha256": "9c343e5f5cc9f4be9acc3087b41840c321cf00bd11e3db920d07a582ec0dfee7"
+  },
+  {
+   "id": "mathd_algebra_509",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_509 :\n  Real.sqrt ((5 / Real.sqrt 80 + Real.sqrt 845 / 9 + Real.sqrt 45) / Real.sqrt 5) = 13 / 6 := by",
+   "statement_sha256": "ca0845c56a97e8077f7948d357eedfaf8cfbd375bacba279de5d2dde69d2aa9f"
+  },
+  {
+   "id": "mathd_algebra_51",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_51 (a b : ℝ) (h₀ : 0 < a ∧ 0 < b) (h₁ : a + b = 35) (h₂ : a = 2 / 5 * b) :\n    b - a = 15 := by",
+   "statement_sha256": "37e68af9196a88f4c71440cc805064003908bb63c2d31aa555d409c7b53270d1"
+  },
+  {
+   "id": "mathd_algebra_510",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_510 (x y : ℝ) (h₀ : x + y = 13) (h₁ : x * y = 24) :\n  Real.sqrt (x ^ 2 + y ^ 2) = 11 := by",
+   "statement_sha256": "1531a3899c494301ed5038caabb56d3a1155e2f299c39d885ff3127e64b06597"
+  },
+  {
+   "id": "mathd_algebra_536",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_536 : ↑3! * ((2 : ℝ) ^ 3 + Real.sqrt 9) / 2 = (33 : ℝ) := by",
+   "statement_sha256": "974385926dda7ebe3cc3de56ad236bb34e8d8df8cccb7dca5c24aee0504e1a66"
+  },
+  {
+   "id": "mathd_algebra_547",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_547 (x y : ℝ) (h₀ : x = 5) (h₁ : y = 2) : Real.sqrt (x ^ 3 - 2 ^ y) = 11 := by",
+   "statement_sha256": "4d4cd2a8b282c7bfedc9dfd76da9c45ea53f88d2ea9acb897218c30f796d440c"
+  },
+  {
+   "id": "mathd_algebra_55",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_55 (q p : ℝ) (h₀ : q = 2 - 4 + 6 - 8 + 10 - 12 + 14)\n  (h₁ : p = 3 - 6 + 9 - 12 + 15 - 18 + 21) : q / p = 2 / 3 := by",
+   "statement_sha256": "40fd9988dd55f80a4255fb353abc11ebcf86fe552f6f94e9fed352666cec1d14"
+  },
+  {
+   "id": "mathd_algebra_568",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_568 (a : ℝ) :\n    (a - 1) * (a + 1) * (a + 2) - (a - 2) * (a + 1) = a ^ 3 + a ^ 2 := by",
+   "statement_sha256": "04ea0151fbeefb745beb2b01feb14dc243d3baec9ef7dad52ba328f376397f92"
+  },
+  {
+   "id": "mathd_algebra_59",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_59 (b : ℝ) (h₀ : (4 : ℝ) ^ b + 2 ^ 3 = 12) : b = 1 := by",
+   "statement_sha256": "59802e3dbf09cbfe71d5c8ddb365010d4f8c6a87cb70b71dbae8233b4b6e2938"
+  },
+  {
+   "id": "mathd_algebra_616",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_616 (f g : ℝ → ℝ) (h₀ : ∀ x, f x = x ^ 3 + 2 * x + 1)\n    (h₁ : ∀ x, g x = x - 1) : f (g 1) = 1 := by",
+   "statement_sha256": "ee88efadabdd090cd37e0be335b7ce9d28db30d2194d98e4751a533fb5a86a46"
+  },
+  {
+   "id": "mathd_algebra_67",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_67 (f g : ℝ → ℝ) (h₀ : ∀ x, f x = 5 * x + 3) (h₁ : ∀ x, g x = x ^ 2 - 2) :\n    g (f (-1)) = 2 := by",
+   "statement_sha256": "f04dd8c178cded96a094b31d7ac01314f9193061e64ad51bfb8865fcc6b63ead"
+  },
+  {
+   "id": "mathd_algebra_69",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_69 (rows seats : ℕ) (h₀ : rows * seats = 450)\n  (h₁ : (rows + 5) * (seats - 3) = 450) : rows = 25 := by",
+   "statement_sha256": "584859019c7a4acf8c978756ba80c1236f3232ce7f04a4fff1d80351c587b2ba"
+  },
+  {
+   "id": "mathd_algebra_73",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_73 (p q r x : ℂ) (h₀ : (x - p) * (x - q) = (r - p) * (r - q)) (h₁ : x ≠ r) :\n  x = p + q - r := by",
+   "statement_sha256": "ce303f4c265081de4df7f319374485f643e6ab722e46469aa2f0ce6394644962"
+  },
+  {
+   "id": "mathd_algebra_77",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_77 (a b : ℝ) (f : ℝ → ℝ) (h₀ : a ≠ 0 ∧ b ≠ 0) (h₁ : a ≠ b)\n  (h₂ : ∀ x, f x = x ^ 2 + a * x + b) (h₃ : f a = 0) (h₄ : f b = 0) : a = 1 ∧ b = -2 := by",
+   "statement_sha256": "1de38910506c16b27da1e91a3cb2f890c5590f09273f673aa3960f01d92dee82"
+  },
+  {
+   "id": "mathd_algebra_89",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_89 (b : ℝ) (h₀ : b ≠ 0) :\n  (7 * b ^ 3) ^ 2 * (4 * b ^ 2) ^ (-(3 : ℤ)) = 49 / 64 := by",
+   "statement_sha256": "a0f739f47dd467d10ee46ac8b1ab3e2c905d3a8b518b067e46f8f7ac6b95d5d1"
+  },
+  {
+   "id": "mathd_algebra_96",
+   "split": "valid",
+   "statement": "theorem mathd_algebra_96 (x y z a : ℝ) (h₀ : 0 < x ∧ 0 < y ∧ 0 < z)\n  (h₁ : Real.log x - Real.log y = a) (h₂ : Real.log y - Real.log z = 15)\n  (h₃ : Real.log z - Real.log x = -7) : a = -8 := by",
+   "statement_sha256": "487039cfe57de64ca8ab5c73eb330b6c524a0c2057110b64f4af8bcd368c0260"
+  },
+  {
+   "id": "mathd_numbertheory_101",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_101 : 17 * 18 % 4 = 2 := by",
+   "statement_sha256": "4bafe4940b82c48186ba36ef19864abe231a6ea4f9854f681026af981d193b51"
+  },
+  {
+   "id": "mathd_numbertheory_102",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_102 : 2 ^ 8 % 5 = 1 := by",
+   "statement_sha256": "45f14be1fe32a49fa88a491e20c9bf531c1f163cfd10b9c5517dfb8aa90f0435"
+  },
+  {
+   "id": "mathd_numbertheory_109",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_109 (v : ℕ → ℕ) (h₀ : ∀ n, v n = 2 * n - 1) :\n  (∑ k ∈ Finset.Icc 1 100, v k) % 7 = 4 := by",
+   "statement_sha256": "ee6ba6481e34b508aa92efbb5bcbefadd26425f85bceb8b76826d32db15f0f4c"
+  },
+  {
+   "id": "mathd_numbertheory_110",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_110 (a b : ℕ) (h₀ : 0 < a ∧ 0 < b ∧ b ≤ a) (h₁ : (a + b) % 10 = 2)\n  (h₂ : (2 * a + b) % 10 = 1) : (a - b) % 10 = 6 := by",
+   "statement_sha256": "5496d29e741f813779d1e8f60483f8c85ba2b5b2442ab1c94ffb14e9586c8eee"
+  },
+  {
+   "id": "mathd_numbertheory_126",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_126 (x a : ℕ) (h₀ : 0 < x ∧ 0 < a) (h₁ : Nat.gcd a 40 = x + 3)\n  (h₂ : Nat.lcm a 40 = x * (x + 3))\n  (h₃ : ∀ b : ℕ, 0 < b → Nat.gcd b 40 = x + 3 ∧ Nat.lcm b 40 = x * (x + 3) → a ≤ b) : a = 8 := by",
+   "statement_sha256": "b35bf25ae9b7529f7f4c693238ddb6a5444e396d26a7eb03943112ff43f79461"
+  },
+  {
+   "id": "mathd_numbertheory_13",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_13 (u v : ℕ) (S : Set ℕ)\n  (h₀ : ∀ n : ℕ, n ∈ S ↔ 0 < n ∧ 14 * n % 100 = 46) (h₁ : IsLeast S u)\n  (h₂ : IsLeast (S \\ {u}) v) : (u + v : ℚ) / 2 = 64 := by",
+   "statement_sha256": "c1714b554fffe61ef13bf9df8dfd8961e632181a0a89d41fb0a3a402fe71e567"
+  },
+  {
+   "id": "mathd_numbertheory_132",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_132 : 2004 % 12 = 0 := by",
+   "statement_sha256": "f98d7c945259d12a2d759955246438fa4d4bab6d2d607004f0c2ddfa370edc3a"
+  },
+  {
+   "id": "mathd_numbertheory_136",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_136 (n : ℕ) (h₀ : 123 * n + 17 = 39500) : n = 321 := by",
+   "statement_sha256": "54b9af2a62c888065d66dd787ae1c4eb4cbd8667432737c9c36ebf3c725fe9fa"
+  },
+  {
+   "id": "mathd_numbertheory_149",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_149 :\n  (∑ k ∈ Finset.filter (fun x => x % 8 = 5 ∧ x % 6 = 3) (Finset.range 50), k) = 66 := by",
+   "statement_sha256": "24a52e086ce4c7ed8a89c507af69a831816fb9af754bb858d1387d30061835cc"
+  },
+  {
+   "id": "mathd_numbertheory_155",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_155 :\n  Finset.card (Finset.filter (fun x => x % 19 = 7) (Finset.Icc 100 999)) = 48 := by",
+   "statement_sha256": "1fb63cd5308888a1c11ed523568986dfbba4cc96ab3f15b10588d972f62315be"
+  },
+  {
+   "id": "mathd_numbertheory_156",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_156 (n : ℕ) (h₀ : 0 < n) : Nat.gcd (n + 7) (2 * n + 1) ≤ 13 := by",
+   "statement_sha256": "6d72b4d4b03f72c382b9e105ae55c74ce1d13b6e3bd652e9374f57223165c46f"
+  },
+  {
+   "id": "mathd_numbertheory_169",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_169 : Nat.gcd 20! 200000 = 40000 := by",
+   "statement_sha256": "d295a0f85589c8f4746c28d7240e7b52e1bd4d6840bdcf417609376cb2772220"
+  },
+  {
+   "id": "mathd_numbertheory_188",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_188 : Nat.gcd 180 168 = 12 := by",
+   "statement_sha256": "9fc0026ec514db0249a69fb0abce6f9a24b92f80af7e4f500b3d401622cf4faf"
+  },
+  {
+   "id": "mathd_numbertheory_198",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_198 : 5 ^ 2005 % 100 = 25 := by",
+   "statement_sha256": "d0bcecd347ca88e11fdadbb0dc407ce6661a8b058e6e01b11bbc3f8a63774b38"
+  },
+  {
+   "id": "mathd_numbertheory_200",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_200 : 139 % 11 = 7 := by",
+   "statement_sha256": "87c7e7918cd71d2f71726c250d190d3ce56ca3650246d78c2d54acbf4dbfec64"
+  },
+  {
+   "id": "mathd_numbertheory_202",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_202 : (19 ^ 19 + 99 ^ 99) % 10 = 8 := by",
+   "statement_sha256": "c1a9fa6db7d63d68fd6953cc71c6fdfc082676d907cc9e1289e326c80f620a73"
+  },
+  {
+   "id": "mathd_numbertheory_211",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_211 :\n  Finset.card (Finset.filter (fun n => 6 ∣ 4 * ↑n - (2 : ℤ)) (Finset.range 60)) = 20 := by",
+   "statement_sha256": "e8e8a370fe49a18484a3fe4f05ad72a687efe64c6832825026940b7ec8d0e05c"
+  },
+  {
+   "id": "mathd_numbertheory_22",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_22 (b : ℕ) (h₀ : b < 10)\n  (h₁ : Nat.sqrt (10 * b + 6) * Nat.sqrt (10 * b + 6) = 10 * b + 6) : b = 3 ∨ b = 1 := by",
+   "statement_sha256": "a4835f10c193fbf0e3128a0f0ba5830b3ede09bc397e401f742242423be24caa"
+  },
+  {
+   "id": "mathd_numbertheory_221",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_221 (S : Finset ℕ)\n  (h₀ : ∀ x : ℕ, x ∈ S ↔ 0 < x ∧ x < 1000 ∧ x.divisors.card = 3) : S.card = 11 := by",
+   "statement_sha256": "6fb4e1d5026cf92fd52934ab0bcc7ffcc39dda68dd08f6f31ace72299816ceee"
+  },
+  {
+   "id": "mathd_numbertheory_232",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_232 (x y z : ZMod 31) (h₀ : x = 3⁻¹) (h₁ : y = 5⁻¹)\n  (h₂ : z = (x + y)⁻¹) : z = 29 := by",
+   "statement_sha256": "b927b59b2be347f139784c46e8bb700281444ced1bfb840585d331ce8a17c282"
+  },
+  {
+   "id": "mathd_numbertheory_236",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_236 : 1999 ^ 2000 % 5 = 1 := by",
+   "statement_sha256": "8b40c2d159c44b4ca6969d132a32f22eae3e6a13db0809fcd2f5d05dca3b3283"
+  },
+  {
+   "id": "mathd_numbertheory_24",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_24 : (∑ k ∈ Finset.Icc 1 9, 11 ^ k) % 100 = 59 := by",
+   "statement_sha256": "8d95aacad77a97830b6f32e9ce7e74cf9a0740656a0674c052e69670368ce38e"
+  },
+  {
+   "id": "mathd_numbertheory_252",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_252 : 7! % 23 = 3 := by",
+   "statement_sha256": "a976fb695229ceb2509f4aa58905a1876eec8d4b5f1fa794001ec4e3e8b29c81"
+  },
+  {
+   "id": "mathd_numbertheory_257",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_257 (x : ℕ) (h₀ : 1 ≤ x ∧ x ≤ 100)\n    (h₁ : 77 ∣ (∑ k ∈ Finset.range 101, k) - x) : x = 45 := by",
+   "statement_sha256": "89808351c29abddd158375d450427015d0f33c4cdcd9d3675b7e17c3e4f73286"
+  },
+  {
+   "id": "mathd_numbertheory_269",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_269 : (2005 ^ 2 + 2005 ^ 0 + 2005 ^ 0 + 2005 ^ 5) % 100 = 52 := by",
+   "statement_sha256": "36532e3b197b950ea2b3038a2110a872f96f4c57455e2ac2f66e2986842913c6"
+  },
+  {
+   "id": "mathd_numbertheory_284",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_284 (a b : ℕ) (h₀ : 1 ≤ a ∧ a ≤ 9 ∧ b ≤ 9)\n  (h₁ : 10 * a + b = 2 * (a + b)) : 10 * a + b = 18 := by",
+   "statement_sha256": "e69864e4f8980907b0697229722ddf4a5112f9954613fc295dec55112df3a45f"
+  },
+  {
+   "id": "mathd_numbertheory_30",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_30 :\n  (33818 ^ 2 + 33819 ^ 2 + 33820 ^ 2 + 33821 ^ 2 + 33822 ^ 2) % 17 = 0 := by",
+   "statement_sha256": "d4d3cc324594ba035d77f8939e8708ac3b33c14eb0f92bbf58e8c47a616eea31"
+  },
+  {
+   "id": "mathd_numbertheory_301",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_301 (j : ℕ) (h₀ : 0 < j) : 3 * (7 * ↑j + 3) % 7 = 2 := by",
+   "statement_sha256": "378aa4d35068f4d23e04d99f0778f94048ecd39e64a6c39bc7c9e9321f81a468"
+  },
+  {
+   "id": "mathd_numbertheory_303",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_303 (S : Finset ℕ)\n  (h₀ : ∀ n : ℕ, n ∈ S ↔ 2 ≤ n ∧ 171 ≡ 80 [MOD n] ∧ 468 ≡ 13 [MOD n]) : (∑ k ∈ S, k) = 111 := by",
+   "statement_sha256": "b1b7db18a8a3da77688af719bc7cb8e7250c22512d74eaa4e610d8dc8462f9a5"
+  },
+  {
+   "id": "mathd_numbertheory_32",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_32 (S : Finset ℕ) (h₀ : ∀ n : ℕ, n ∈ S ↔ n ∣ 36) : (∑ k ∈ S, k) = 91 := by",
+   "statement_sha256": "ccfd057f8c36cefc97dc7880e45dbb7ea15eec948f80ba31f8eef698f31df176"
+  },
+  {
+   "id": "mathd_numbertheory_326",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_326 (n : ℤ) (h₀ : (n - 1) * n * (n + 1) = 720 ) : n + 1 = 10 := by",
+   "statement_sha256": "154cf45d9ea7fa885d63af9e9a95ee0494f16e3aaa4353010c5e37c4ed5a1bca"
+  },
+  {
+   "id": "mathd_numbertheory_33",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_33 (n : ℕ) (h₀ : n < 398) (h₁ : n * 7 % 398 = 1) : n = 57 := by",
+   "statement_sha256": "2409ede5784904b4149eefa2964c0693950e4af8508beeb359f4f27ea8733283"
+  },
+  {
+   "id": "mathd_numbertheory_335",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_335 (n : ℕ) (h₀ : n % 7 = 5) : 5 * n % 7 = 4 := by",
+   "statement_sha256": "d71caba825df06f1feb2eae08c669320fe5c54d6866aadba893a9f861080dab1"
+  },
+  {
+   "id": "mathd_numbertheory_35",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_35 (S : Finset ℕ) (h₀ : ∀ n : ℕ, n ∈ S ↔ n ∣ Nat.sqrt 196) :\n    (∑ k ∈ S, k) = 24 := by",
+   "statement_sha256": "66785e8fc5813cbe6803160738377c5ce43d538715251b576d1f1a49e19c4edb"
+  },
+  {
+   "id": "mathd_numbertheory_37",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_37 : Nat.lcm 9999 100001 = 90900909 := by",
+   "statement_sha256": "37fc33d2b0089ba31551df84cf22c90ee4f09f507e965afb66378185afe09dd3"
+  },
+  {
+   "id": "mathd_numbertheory_370",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_370 (n : ℕ) (h₀ : n % 7 = 3) : (2 * n + 1) % 7 = 0 := by",
+   "statement_sha256": "ca821d66404929d89ca4a756e98fff49d96dcf9f488ea9025f4c15f0bc3989ed"
+  },
+  {
+   "id": "mathd_numbertheory_403",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_403 : (∑ k ∈ Nat.properDivisors 198, k) = 270 := by",
+   "statement_sha256": "9926714330f4f7714bfcf0a0c079a19dc7ff64ec5ad52b55db539dcd0d557340"
+  },
+  {
+   "id": "mathd_numbertheory_405",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_405 (a b c : ℕ) (t : ℕ → ℕ) (h₀ : t 0 = 0) (h₁ : t 1 = 1)\n  (h₂ : ∀ n > 1, t n = t (n - 2) + t (n - 1)) (h₃ : a ≡ 5 [MOD 16]) (h₄ : b ≡ 10 [MOD 16])\n  (h₅ : c ≡ 15 [MOD 16]) : (t a + t b + t c) % 7 = 5 := by",
+   "statement_sha256": "afb0090a4e65f48dccefaf6e1a2aa8a3a2af84019b147988dd4365e978b47965"
+  },
+  {
+   "id": "mathd_numbertheory_412",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_412 (x y : ℤ) (h₀ : x % 19 = 4) (h₁ : y % 19 = 7) :\n  (x + 1) ^ 2 * (y + 5) ^ 3 % 19 = 13 := by",
+   "statement_sha256": "2e150764cacb9f631bea7ccf70d28df8a7f8b875e4978a2b795f8167639468ea"
+  },
+  {
+   "id": "mathd_numbertheory_42",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_42 (S : Set ℕ) (u v : ℕ) (h₀ : ∀ a : ℕ, a ∈ S ↔ 0 < a ∧ 27 * a % 40 = 17)\n    (h₁ : IsLeast S u) (h₂ : IsLeast (S \\ {u}) v) : u + v = 62 := by",
+   "statement_sha256": "6609e5421fbff9f0ab3cac96cc534bc7cbf4b8505f5433c50c5b473f03de34bc"
+  },
+  {
+   "id": "mathd_numbertheory_43",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_43 : IsGreatest { n : ℕ | 15 ^ n ∣ 942! } 233 := by",
+   "statement_sha256": "7aafbb39368e3f2cbe1ebf231103cca222090c20dc6d39eb8484a39e48a1d158"
+  },
+  {
+   "id": "mathd_numbertheory_45",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_45 : Nat.gcd 6432 132 + 11 = 23 := by",
+   "statement_sha256": "a72f17c08b04de90e03d8f48d57a5b9e19a9afbbc45e0e9b361a0b2387b35125"
+  },
+  {
+   "id": "mathd_numbertheory_458",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_458 (n : ℕ) (h₀ : n % 8 = 7) : n % 4 = 3 := by",
+   "statement_sha256": "c4b64639bc80594c6d160caef6ef4a28247866708def56788a7822fb3a7995e4"
+  },
+  {
+   "id": "mathd_numbertheory_461",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_461 (n : ℕ)\n  (h₀ : n = Finset.card (Finset.filter (fun x => Nat.gcd x 8 = 1) (Finset.Icc 1 7))) :\n  3 ^ n % 8 = 1 := by",
+   "statement_sha256": "8e10b7f6b89506a1b3641089d780f296eb583d42c8c9b3a9d72d00a5802b4126"
+  },
+  {
+   "id": "mathd_numbertheory_466",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_466 : (∑ k ∈ Finset.range 11, k) % 9 = 1 := by",
+   "statement_sha256": "7e75482ee4d5459dff75764d32a44445726f50a47bcb6ea0371058003c9c5190"
+  },
+  {
+   "id": "mathd_numbertheory_48",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_48 (b : ℕ) (h₀ : 0 < b) (h₁ : 3 * b ^ 2 + 2 * b + 1 = 57) : b = 4 := by",
+   "statement_sha256": "f3498ddf450b451223b1ac701fd2484f92e3d4c23f13c5e7bf68dcd052813b96"
+  },
+  {
+   "id": "mathd_numbertheory_530",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_530 (n k : ℕ) (h₀ : 0 < n ∧ 0 < k) (h₀ : (n : ℝ) / k < 6)\n  (h₁ : (5 : ℝ) < n / k) : 22 ≤ Nat.lcm n k / Nat.gcd n k := by",
+   "statement_sha256": "f2e8f2c56c7efda274e052915c37190a30a714d9387b0e3458a1366fd69b740f"
+  },
+  {
+   "id": "mathd_numbertheory_543",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_543 : (∑ k ∈ Nat.divisors (30 ^ 4), 1) - 2 = 123 := by",
+   "statement_sha256": "d152c3aa9f813d50388bfc7d8cb8d739f1d27c1660fd5dac37a362e3b28db88d"
+  },
+  {
+   "id": "mathd_numbertheory_629",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_629 : IsLeast { t : ℕ | 0 < t ∧ Nat.lcm 12 t ^ 3 = (12 * t) ^ 2 } 18 := by",
+   "statement_sha256": "1827bbec93e5de91beebeca371668a1c0c4c5f05100fe2322c1ea588c50fb1ca"
+  },
+  {
+   "id": "mathd_numbertheory_64",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_64 : IsLeast { x : ℕ | 30 * x ≡ 42 [MOD 47] } 39 := by",
+   "statement_sha256": "922a9ded8c6ab8bf6a6aff880d81cf62051d993f39cc2317d39cdd70cbf71059"
+  },
+  {
+   "id": "mathd_numbertheory_640",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_640 : (91145 + 91146 + 91147 + 91148) % 4 = 2 := by",
+   "statement_sha256": "0bdf4b66fd988270b8ef4429c3b841ccb9df11faf1cb58871cf0788a8986f3d1"
+  },
+  {
+   "id": "mathd_numbertheory_668",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_668 (l r : ZMod 7) (h₀ : l = (2 + 3)⁻¹) (h₁ : r = 2⁻¹ + 3⁻¹) :\n  l - r = 1 := by",
+   "statement_sha256": "8eafc8887c94b261bac74ab01d93995d1785b247bfbbe3e397c16dbe4734ccec"
+  },
+  {
+   "id": "mathd_numbertheory_690",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_690 :\n    IsLeast { a : ℕ | 0 < a ∧ a ≡ 2 [MOD 3] ∧ a ≡ 4 [MOD 5] ∧ a ≡ 6 [MOD 7] ∧ a ≡ 8 [MOD 9] } 314 := by",
+   "statement_sha256": "e16b15b50e6f99a5ad6be81cd482ccc506ae40427d72e4856f2b04e361405d55"
+  },
+  {
+   "id": "mathd_numbertheory_709",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_709 (n : ℕ) (h₀ : 0 < n) (h₁ : Finset.card (Nat.divisors (2 * n)) = 28)\n  (h₂ : Finset.card (Nat.divisors (3 * n)) = 30) : Finset.card (Nat.divisors (6 * n)) = 35 := by",
+   "statement_sha256": "5cf396b6a4d791972fe37562e695fbe9f31db434bd364cb2f0ac5f691ae37171"
+  },
+  {
+   "id": "mathd_numbertheory_739",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_739 : 9! % 10 = 0 := by",
+   "statement_sha256": "efaa2c8e81e3140f33851a06a0058807e193339cb8e5d44c17edc97872d65614"
+  },
+  {
+   "id": "mathd_numbertheory_780",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_780 (m x : ℤ) (h₀ : 0 ≤ x) (h₁ : 10 ≤ m ∧ m ≤ 99) (h₂ : 6 * x % m = 1)\n  (h₃ : (x - 6 ^ 2) % m = 0) : m = 43 := by",
+   "statement_sha256": "9de28d75608d80ad9cf80fdb05f4f5c1d7376af6af2412ed4dc30246aafe3a67"
+  },
+  {
+   "id": "mathd_numbertheory_81",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_81 : 71 % 3 = 2 := by",
+   "statement_sha256": "fcb5dc07ec2c61732c53aa9d296685e02b341c01792599a9fe290396cb5507a2"
+  },
+  {
+   "id": "mathd_numbertheory_84",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_84 : Int.floor ((9 : ℝ) / 160 * 100) = 5 := by",
+   "statement_sha256": "2c0c497e63a4150ef77e5e00fd7003db02720de9c1e2727232093737f3ce9d2d"
+  },
+  {
+   "id": "mathd_numbertheory_92",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_92 (n : ℕ) (h₀ : 5 * n % 17 = 8) : n % 17 = 5 := by",
+   "statement_sha256": "66df94ebeca85909ae2dbc3dffc171677b8df1203337fcd156a824d5248bdadc"
+  },
+  {
+   "id": "mathd_numbertheory_961",
+   "split": "valid",
+   "statement": "theorem mathd_numbertheory_961 : 2003 % 11 = 1 := by",
+   "statement_sha256": "7399d2ddc412c73ee4cdca175664c83ad437dd76f02db76891b464a1edb271f1"
+  },
+  {
+   "id": "numbertheory_2dvd4expn",
+   "split": "valid",
+   "statement": "theorem numbertheory_2dvd4expn (n : ℕ) (h₀ : n ≠ 0) : 2 ∣ 4 ^ n := by",
+   "statement_sha256": "19eeb7545d9754d39b3781902caf1a9b5fa23573df120b30191a348cf7c4e07a"
+  },
+  {
+   "id": "numbertheory_aneqprodakp4_anmsqrtanp1eq2",
+   "split": "valid",
+   "statement": "theorem numbertheory_aneqprodakp4_anmsqrtanp1eq2 (a : ℕ → ℝ) (h₀ : a 0 = 1)\n  (h₁ : ∀ n, a (n + 1) = (∏ k ∈ Finset.range (n + 1), a k) + 4) :\n  ∀ n ≥ 1, a n - Real.sqrt (a (n + 1)) = 2 := by",
+   "statement_sha256": "37658f8232b52d0d9bd68dc967b95e6020707981f54c04e98aa838eec4135673"
+  },
+  {
+   "id": "numbertheory_nckeqnm1ckpnm1ckm1",
+   "split": "valid",
+   "statement": "theorem numbertheory_nckeqnm1ckpnm1ckm1 (n k : ℕ) (h₀ : 0 < n ∧ 0 < k) (h₁ : k ≤ n) :\n  Nat.choose n k = Nat.choose (n - 1) k + Nat.choose (n - 1) (k - 1) := by",
+   "statement_sha256": "d9b2d74a75b3ed1583d9a7e9c103aa0a41a9351866205db908b1ed3fafa368c3"
+  },
+  {
+   "id": "numbertheory_prmdvsneqnsqmodpeq0",
+   "split": "valid",
+   "statement": "theorem numbertheory_prmdvsneqnsqmodpeq0 (n : ℤ) (p : ℕ) (h₀ : Nat.Prime p) :\n  ↑p ∣ n ↔ n ^ 2 % p = 0 := by",
+   "statement_sha256": "7038b51d7e4029daa5230b1aa5cd1621a58a9d06341d4232e4a25fc4e659ec9a"
+  },
+  {
+   "id": "numbertheory_sqmod3in01d",
+   "split": "valid",
+   "statement": "theorem numbertheory_sqmod3in01d (a : ℤ) : a ^ 2 % 3 = 0 ∨ a ^ 2 % 3 = 1 := by",
+   "statement_sha256": "39d9e5fdfe2d1b8e459aa5e8cb83016bed34d0d584cb8d2b82e1e572937d8251"
+  },
+  {
+   "id": "numbertheory_sqmod4in01d",
+   "split": "valid",
+   "statement": "theorem numbertheory_sqmod4in01d (a : ℤ) : a ^ 2 % 4 = 0 ∨ a ^ 2 % 4 = 1 := by",
+   "statement_sha256": "9ede9a88924d9698e1086faf3a631fae7a1e20e04a159002950de4ad065595c5"
+  },
+  {
+   "id": "numbertheory_sumkmulnckeqnmul2pownm1",
+   "split": "valid",
+   "statement": "theorem numbertheory_sumkmulnckeqnmul2pownm1 (n : ℕ) (h₀ : 0 < n) :\n  (∑ k ∈ Finset.Icc 1 n, k * Nat.choose n k) = n * 2 ^ (n - 1) := by",
+   "statement_sha256": "06a5eb9d11c1c019b7c2d26b87693be9583b300be3e1d7552171f6bf2b72555e"
+  },
+  {
+   "id": "numbertheory_xsqpysqintdenomeq",
+   "split": "valid",
+   "statement": "theorem numbertheory_xsqpysqintdenomeq (x y : ℚ) (h₀ : (x ^ 2 + y ^ 2).den = 1) : x.den = y.den := by",
+   "statement_sha256": "65cb975f9ff556974d2b29d62868c29db17eb0c7ee3aba43d7d2efcc79dc8f32"
+  }
+ ],
+ "corpus_sha256": "a1e419c61e47b3884e17e2eac6acca6d6a93bbee8ef5c484b4dfe58e88159722"
+}

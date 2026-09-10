@@ -101,10 +101,26 @@ class SymbolicPortfolio:
         3. **Universe parameters are spelled out** when the goal has them, on both the entry and
            the goal reference, since neither is inferable from the other here.
 
+        4. **`intros` comes between the unfold and the tactic**, and it is not cosmetic. Sealing
+           turns a submitted `theorem f (x : T) (h : P) : C` into the closed statement
+           `∀ (x : T), P → C` -- the binders that were in the theorem's *signature* become part of
+           the goal. So a tactic that would have faced `C` with `x` and `h` already in context now
+           faces a `∀`, and `omega`/`linarith`/`rfl` simply fail on that. Measured over miniF2F:
+           without `intros` the portfolio closes only the hypothesis-free problems, which is an
+           artifact of this system's own sealing rather than anything about the goals. `intros` on
+           a goal with no binders is a no-op, so this cannot cost a proof.
+
         `linter.defProp` is silenced because a `def` whose type is a `Prop` draws "use `theorem`
         instead" on every single Prop goal -- pure noise in the diagnostics of an attempt that
         succeeded. Linters are advisory and cannot affect link, replay or audit; this is not the
         option deny-list of spec §7.2, which is about options that change what is *checked*.
+
+        The matching `linter.unusedTactic` (which `intros` trips on a hypothesis-free goal, with
+        "`intros` does nothing") is deliberately **not** silenced: that linter ships with Mathlib,
+        not with core, and `set_option` on an unknown option is a hard *error*, so setting it would
+        break every attempt against an `Init`-only base env. An unknown *tactic* degrades to one
+        failed portfolio member; an unknown *option* fails the whole development. Confirmed against
+        a real `Init` worker, after adding it broke every non-Mathlib test in the suite.
         """
         universes = "" if not ctx.level_params else ".{" + ", ".join(ctx.level_params) + "}"
         goal = f"{ctx.goal_decl}{universes}"
@@ -113,7 +129,7 @@ class SymbolicPortfolio:
         return (
             "set_option linter.defProp false\n"
             f"namespace {namespace}\n"
-            f"def {entry}{universes} : {goal} := by unfold {ctx.goal_decl}; {tactic}\n"
+            f"def {entry}{universes} : {goal} := by unfold {ctx.goal_decl}; intros; {tactic}\n"
             f"end {namespace}"
         )
 

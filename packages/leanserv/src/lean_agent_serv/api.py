@@ -35,7 +35,7 @@ from fastapi import FastAPI, HTTPException
 from lean_agent_core.digests import compute_bundle_digest, compute_goal_digest
 from lean_agent_core.enums import VerdictKind
 from lean_agent_core.orm import BaseEnv, Obligation, Run
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -82,6 +82,12 @@ class CheckResponse(BaseModel):
     diagnostics: list[str]
     cache_hit: bool
     elapsed_ms: int
+    #: Transitive axiom cone of everything the body newly declared. Empty when it did not
+    #: elaborate, and empty on a `TIMEOUT`/`INFRA_ERROR` -- nothing was judged. `ok` cannot stand
+    #: in for this: a `sorry` is a warning, so a `sorry`-backed body is `ok=True`/`PROVED` here
+    #: (M1.9 pinned that as plain `check`'s documented behaviour). A caller screening proof
+    #: candidates must read the cone; `/v1/link` is where a run's allowlist is actually enforced.
+    axioms: list[str] = Field(default_factory=list)
 
 
 class CheckBatchRequest(BaseModel):
@@ -284,6 +290,7 @@ async def _cache_hit_response(
         diagnostics=list(diagnostics),
         cache_hit=True,
         elapsed_ms=cached.elapsed_ms,
+        axioms=list(cached.axioms or ()),
     )
 
 
@@ -339,8 +346,12 @@ async def _execute_and_classify(
     await cache.put(
         cache_key,
         CachedCheck(
+            # Stored, not recomputed on a hit: a cached candidate that used `sorry` must still
+            # look like one the second time, or a screen that rejects it on a cold run would
+            # accept it on a warm one -- and "stable across three runs" would be false in exactly
+            # the way nobody would look for.
             kind=kind,
-            axioms=None,
+            axioms=tuple(result.axioms),
             messages=json.dumps(list(result.diagnostics)).encode(),
             infotree=None,
             elapsed_ms=elapsed_ms,
@@ -354,6 +365,7 @@ async def _execute_and_classify(
         diagnostics=list(result.diagnostics),
         cache_hit=False,
         elapsed_ms=elapsed_ms,
+        axioms=list(result.axioms),
     )
 
 
