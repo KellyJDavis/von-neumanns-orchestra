@@ -1,5 +1,7 @@
 import Lean
 import LeanKernel.Seal
+import LeanKernel.Link
+import LeanKernel.Replay
 
 /-!
 `serve`: a persistent process that elaborates against one warm base environment across many
@@ -12,8 +14,8 @@ Protocol: newline-delimited JSON, one request line in, exactly one response line
 simple enough that a Python subprocess wrapper can pair requests with responses by position alone,
 without a length-prefixed framing layer. A request's `kind` field selects the handler and defaults
 to `"check"` when absent, so the single-kind protocol M1.8.1 shipped stays valid on the wire.
-`check` (spec §6.2's `/v1/check`) and `seal` (`/v1/seal`, M2.1.1) exist; `link`/`replay`/
-`decompose` land with the milestones that actually drive them (M2.1.2, M2.1.3).
+`check` (spec §6.2's `/v1/check`), `seal` (`/v1/seal`, M2.1.1) and `link` (`/v1/link`, M2.1.2)
+exist; `decompose` lands with the milestone that actually drives it (M2.1.3).
 -/
 
 namespace LeanKernel
@@ -207,6 +209,118 @@ def sealBundle (baseEnv : Environment) (imports : Array Name) (req : SealRequest
     s!"{importLines}\n{sealedOptionLines}\nnamespace {goalsNamespace}\n{declLines}\nend {goalsNamespace}\n"
   return { ok := reports.all (·.ok), reports, bundleSource }
 
+/-- A `link` request (spec §4.2, §6.2's `/v1/link`): elaborate the agent's `body` against the warm
+base environment, then run the whole acceptance path over it.
+
+`goal` and `entry` are resolved as names against the environment, never spliced into source the
+way `seal`'s goal text is -- so they need none of `isValidGoalName`'s validation. A name that
+resolves to nothing is an ordinary "entry point missing" outcome from `link` itself.
+
+`allowAxioms` is passed in rather than defaulted here: it is `run.axiom_allowlist` (plus `sorryAx`
+when `run.allow_sorry`), which lives in Postgres, and spec §4.4 is emphatic that the audit is
+allowlist-driven. An empty array therefore means "permit nothing", not "use some default" -- the
+caller that knows the run always knows its allowlist. -/
+structure LinkRequest where
+  id          : String
+  goal        : String
+  entry       : String
+  body        : String
+  allowAxioms : Array String
+  deriving FromJson
+
+/-- The acceptance path's own report (spec §4.2-§4.4), in the shape `verdict`'s columns want:
+`linkOk`/`replayOk`/`axiomAuditOk` are separate because they check genuinely different things and
+a caller records all three (see CLAUDE.md's M1.2/M1.3 note on why neither subsumes the other).
+
+`goalModule`/`goalOleanPath` report *where the sealed goal actually came from* -- the module
+`getModuleIdxFor?` resolved it to in this worker's own base environment, and that module's
+`.olean` on the real search path. This is what lets the caller compute
+`verdict.sealed_olean_sha_observed` by hashing the artifact that was genuinely imported, rather
+than echoing back a digest it was handed. Both are `none` when the goal isn't an imported constant
+at all, which is itself a link failure. -/
+structure LinkResponse where
+  id                 : Option String := none
+  ok                 : Bool
+  diagnostics        : Array String := #[]
+  linkOk             : Bool := false
+  replayOk           : Bool := false
+  axiomAuditOk       : Bool := false
+  axioms             : Array String := #[]
+  usesSorry          : Bool := false
+  usesCompilerTrust  : Bool := false
+  replayCheckedCount : Nat := 0
+  goalModule         : Option String := none
+  goalOleanPath      : Option String := none
+  deriving ToJson
+
+/-- The `.olean` a module was actually loaded from, resolved through the same search path the
+worker imported it with. `findOLean` throws when a module isn't on the path; that is reported as
+`none` rather than failing the request, since the caller's seal-integrity check can then say "no
+observed digest" instead of losing an otherwise-complete link report to an unrelated I/O error. -/
+def oleanPathFor? (mod : Name) : IO (Option String) := do
+  try
+    return some (← findOLean mod).toString
+  catch _ =>
+    return none
+
+/--
+Run the full acceptance path on one submission (spec §4.2-§4.4).
+
+`expectedModuleIdx` is read from `baseEnv` -- *before* the agent's `body` has elaborated -- rather
+than taken from the request. That is the whole point of Link's shadow check: the worker imported
+the sealed bundle at startup, so the module the goal resolves to in the untouched base environment
+is by construction the module it was sealed into, and no field the caller could supply (or an
+agent could influence) participates in deciding it.
+
+Link and replay both run whenever the development elaborated at all, even if link already failed.
+They check different things and a `verdict` row records both independently -- and per CLAUDE.md's
+gate-4 finding, a link rejection tells you nothing about whether the agent's own declarations are
+kernel-sound, which is exactly what replay answers.
+
+`replay` is given `baseEnv` as its base: the environment `importModules` built at worker startup
+from the pinned `.olean` set plus the sealed bundle, never `env`'s own already-checked state. That
+is spec §4.3's trust base exactly, and it is only correct because `Lean.Elab.process` returns a
+*new* environment rather than mutating `baseEnv` (M1.8.1's isolation finding) -- a warm worker
+that accumulated state across requests could not offer a clean base to replay against at all.
+-/
+def linkSubmission (baseEnv : Environment) (req : LinkRequest) : IO LinkResponse := do
+  let goal := dottedName req.goal
+  let entry := dottedName req.entry
+  let some expectedModuleIdx := baseEnv.getModuleIdxFor? goal
+    | return { ok := false, diagnostics :=
+        #[s!"sealed goal {goal} is not an imported constant in this worker's base environment -- \
+           the goal bundle must be compiled and imported before it can be linked against"] }
+  let goalModule := baseEnv.header.moduleNames[expectedModuleIdx.toNat]?
+  let goalOleanPath ← match goalModule with
+    | some m => oleanPathFor? m
+    | none => pure none
+  let moduleFields : LinkResponse → LinkResponse := fun r =>
+    { r with goalModule := goalModule.map toString, goalOleanPath }
+  try
+    let (env, messages) ← Lean.Elab.process req.body baseEnv {}
+    let diagnostics ← messages.toList.toArray.mapM (·.toString)
+    if messages.hasErrors then
+      return moduleFields { ok := false, diagnostics }
+    let coreCtx : Core.Context :=
+      { fileName := "<link>", fileMap := FileMap.ofString req.body }
+    let allow := req.allowAxioms.map dottedName
+    let linkReport ← ((link goal entry expectedModuleIdx allow).run').toIO' coreCtx { env, messages }
+    let replayReport ← replay baseEnv env
+    let axiomReport := linkReport.axiomReport
+    return moduleFields {
+      ok := linkReport.ok && replayReport.ok
+      diagnostics := diagnostics ++ linkReport.diagnostics ++ replayReport.diagnostics
+      linkOk := linkReport.kernelOk
+      replayOk := replayReport.ok
+      axiomAuditOk := (axiomReport.map (·.ok)).getD false
+      axioms := (axiomReport.map fun r => r.axioms.map toString).getD #[]
+      usesSorry := (axiomReport.map (·.usesSorry)).getD false
+      usesCompilerTrust := (axiomReport.map (·.usesCompilerTrust)).getD false
+      replayCheckedCount := replayReport.checkedCount
+    }
+  catch ex =>
+    return moduleFields { ok := false, diagnostics := #[toString ex] }
+
 /-- Handle one already-read line: read its `kind` (absent means `"check"`, keeping M1.8.1's
 single-kind wire format valid), decode into that kind's own request type, and dispatch. Parsing is
 pure (`Json.parse`/`fromJson?` both return `Except`, never throw), so only the handlers' own
@@ -236,6 +350,12 @@ def handleLine (baseEnv : Environment) (imports : Array Name) (line : String) : 
       | .error err => return errorResponse id? err
       | .ok req =>
         let resp ← sealBundle baseEnv imports req
+        return toJson { resp with id := some req.id }
+    | "link" =>
+      match fromJson? (α := LinkRequest) json with
+      | .error err => return errorResponse id? err
+      | .ok req =>
+        let resp ← linkSubmission baseEnv req
         return toJson { resp with id := some req.id }
     | other => return errorResponse id? s!"unknown request kind: {other}"
 

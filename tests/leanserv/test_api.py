@@ -1,7 +1,13 @@
-"""M1.8.5/M2.1.1 exit criterion: the FastAPI surface (`/v1/check`, `/v1/check_batch`, `/v1/seal`,
-`/v1/health`) wired to real infrastructure throughout -- a genuinely spawned `leankernel serve` process
-(M1.8.1/M1.8.2) via a real `LeanReplPool` (M1.8.3), and a live Postgres connected as the real
-`leanserv` role for the cache (M1.8.4) and the `base_env` lookup, never mocked.
+"""M1.8.5/M2.1.1/M2.1.2 exit criterion: the FastAPI surface (`/v1/check`, `/v1/check_batch`,
+`/v1/seal`, `/v1/link`, `/v1/health`) wired to real infrastructure throughout -- a genuinely
+spawned `leankernel serve` process (M1.8.1/M1.8.2) via a real `LeanReplPool` (M1.8.3), and a live
+Postgres connected as the real `leanserv` role for the cache (M1.8.4), the `base_env`/`obligation`
+lookups, and the `verdict` rows `/v1/link` writes -- never mocked.
+
+`/v1/link` additionally needs a *materialized* sealed bundle: Link requires the goal to be a
+genuinely imported constant, which an in-session `seal` result can never be. `materialized_bundle`
+below compiles one for real with `lake env lean` and puts its directory on the pool's
+`bundle_root`, which is exactly what M2.7's materialization will do in production.
 
 This suite needs *both* the built `leankernel` exe and a live Postgres with `deploy/grants.sql`
 applied -- unlike `test_repl.py`/`test_pool.py` (Lean only) or `tests/db/`'s suites (Postgres
@@ -20,14 +26,17 @@ import asyncio
 import hashlib
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from conftest import MaterializedBundle
 from fastapi.testclient import TestClient
 from lean_agent_core.blobs import LocalBlobStore
 from lean_agent_serv.api import create_app
 from lean_agent_serv.cache import VerificationCacheStore
 from lean_agent_serv.pool import LeanReplPool, PoolConfig
+from lean_agent_serv.verdicts import VerdictWriter
 from sqlalchemy import Engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -63,13 +72,20 @@ def _cleanup_verification_cache(admin_engine: Engine) -> Iterator[None]:
 
 @pytest.fixture
 def client(
-    lake_project_dir: Path, leanserv_async_database_url: str, tmp_path: Path
+    lake_project_dir: Path,
+    leanserv_async_database_url: str,
+    tmp_path: Path,
+    materialized_bundle: MaterializedBundle,
 ) -> Iterator[TestClient]:
     engine = create_async_engine(leanserv_async_database_url)
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    pool = LeanReplPool(lake_project_dir, PoolConfig(max_total_workers=4))
-    cache = VerificationCacheStore(sessionmaker, LocalBlobStore(tmp_path))
-    app = create_app(pool, cache, sessionmaker)
+    blob_store = LocalBlobStore(tmp_path)
+    pool = LeanReplPool(
+        lake_project_dir,
+        PoolConfig(max_total_workers=4, bundle_root=materialized_bundle.root),
+    )
+    cache = VerificationCacheStore(sessionmaker, blob_store)
+    app = create_app(pool, cache, VerdictWriter(sessionmaker, blob_store), sessionmaker)
 
     with TestClient(app) as c:
         yield c
@@ -275,6 +291,421 @@ def test_seal_unknown_base_env_is_404(client: TestClient) -> None:
     response = client.post(
         "/v1/seal",
         json={"base_env_digest": "ab" * 32, "goals": [{"name": "G", "statement": "True"}]},
+    )
+    assert response.status_code == 404
+
+
+@dataclass(frozen=True)
+class LinkableObligation:
+    """A committed run/obligation/attempt trio whose `sealed_olean_sha` is the *real* digest of
+    the compiled bundle, so `mark_proved`'s seal-integrity comparison has something true to
+    compare against rather than a placeholder."""
+
+    obligation_id: uuid.UUID
+    attempt_id: uuid.UUID
+    run_id: uuid.UUID
+
+
+@pytest.fixture
+def linkable(
+    admin_engine: Engine, registered_base_env: str, materialized_bundle: MaterializedBundle
+) -> Iterator[LinkableObligation]:
+    base_env_digest = bytes.fromhex(registered_base_env)
+    run_id, obligation_id, attempt_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    with admin_engine.connect() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO run (id, tenant_id, base_env_digest, status, manifest, manifest_hash)"
+                " VALUES (:id, :tenant, :base_env, 'running', '{}', :mh)"
+            ),
+            {
+                "id": run_id,
+                "tenant": uuid.uuid4(),
+                "base_env": base_env_digest,
+                "mh": b"manifest-hash",
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO obligation (id, run_id, base_env_digest, goal_digest, "
+                "sealed_olean_sha, goal_src, decl_name) VALUES (:id, :run, :base_env, :gd, "
+                ":sealed, :src, :decl)"
+            ),
+            {
+                "id": obligation_id,
+                "run": run_id,
+                "base_env": base_env_digest,
+                "gd": b"goal-digest",
+                "sealed": materialized_bundle.olean_digest,
+                "src": "∀ n : Nat, n + 0 = n",
+                "decl": "LeanAgent.Goals.G_add_zero",
+            },
+        )
+        conn.execute(
+            text(
+                "INSERT INTO attempt (id, obligation_id, run_id, policy_id, policy_config_hash) "
+                "VALUES (:id, :obl, :run, 'null-agent', 'h')"
+            ),
+            {"id": attempt_id, "obl": obligation_id, "run": run_id},
+        )
+        conn.commit()
+    yield LinkableObligation(obligation_id=obligation_id, attempt_id=attempt_id, run_id=run_id)
+    with admin_engine.connect() as conn:
+        conn.execute(text("DELETE FROM run WHERE id = :id"), {"id": run_id})
+        conn.commit()
+
+
+def _link_body(
+    linkable: LinkableObligation,
+    base_env: str,
+    bundle: MaterializedBundle,
+    *,
+    development: str,
+    goal: str = "LeanAgent.Goals.G_add_zero",
+    entry: str = "LeanAgent.Sol.sol",
+) -> dict[str, object]:
+    return {
+        "attempt_id": str(linkable.attempt_id),
+        "obligation_id": str(linkable.obligation_id),
+        "base_env_digest": base_env,
+        "bundle_sha": bundle.sha,
+        "goal": goal,
+        "entry": entry,
+        "development": development,
+    }
+
+
+def _stored_verdict(admin_engine: Engine, attempt_id: uuid.UUID) -> dict[str, object]:
+    with admin_engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT kind::text, link_ok, replay_ok, axiom_audit_ok, axioms, "
+                "sealed_olean_sha_observed FROM verdict WHERE attempt_id = :id"
+            ),
+            {"id": attempt_id},
+        ).one()
+    return dict(zip(row._fields, row, strict=True))
+
+
+def test_link_accepts_a_genuine_proof_and_writes_the_verdict(
+    client: TestClient,
+    admin_engine: Engine,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """The whole acceptance path over HTTP, ending in the one artifact that matters downstream:
+    a `verdict` row only `leanserv` can write (spec §5.5/§6.4)."""
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "namespace LeanAgent.Sol\n"
+                "theorem sol : ∀ n : Nat, n + 0 = n := fun _ => rfl\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kind"] == "proved"
+    assert body["link_ok"] is True
+    assert body["replay_ok"] is True
+    assert body["axiom_audit_ok"] is True
+    assert body["axioms"] == []
+    # Never populated until multi-kernel replay exists -- an empty list is the honest answer.
+    assert body["kernels_agreeing"] == []
+
+    stored = _stored_verdict(admin_engine, linkable.attempt_id)
+    assert stored["kind"] == "proved"
+    assert (stored["link_ok"], stored["replay_ok"], stored["axiom_audit_ok"]) == (True, True, True)
+    # Observed by hashing the .olean the *worker* said it resolved the goal from, not echoed back
+    # from the request -- this is what `mark_proved` compares against `obligation.sealed_olean_sha`.
+    assert stored["sealed_olean_sha_observed"] == materialized_bundle.olean_digest
+    # And it is the digest of the file at the path leanserv's own `bundle_sha` -> path convention
+    # predicts, which is what pins that convention to the module name Lean's search path resolved.
+    expected_olean = (
+        materialized_bundle.root / "LeanAgent" / "Goals" / f"Bundle_{materialized_bundle.sha}.olean"
+    )
+    assert (
+        stored["sealed_olean_sha_observed"] == hashlib.sha256(expected_olean.read_bytes()).digest()
+    )
+
+
+def test_link_rejects_a_weaker_statement(
+    client: TestClient,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """Spec §4.2's core claim, end to end: the agent never writes the statement, so a proof of
+    something strictly weaker (an existential where the goal is universal) cannot link -- rejected
+    by kernel type-checking of the constructed declaration, not by any inspection leanserv does.
+    """
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "namespace LeanAgent.Sol\n"
+                "def sol : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kind"] == "errors"
+    assert body["link_ok"] is False
+    # Replay still passes: the agent's own declaration is internally kernel-sound, it simply
+    # isn't a proof of this goal. The two checks answer different questions (CLAUDE.md, M1.2/M1.3).
+    assert body["replay_ok"] is True
+    assert any("type mismatch" in d for d in body["diagnostics"])
+
+
+def test_link_rejects_a_weaker_statement_with_kernel_checking_poisoned(
+    client: TestClient,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """Gate 4 over HTTP: the same weakened proof, with the submission's own `set_option
+    debug.skipKernelTC true` trying to disable the check that catches it. Link builds its own
+    options rather than reading the session's, so the poisoning changes nothing."""
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "set_option debug.skipKernelTC true\n"
+                "namespace LeanAgent.Sol\n"
+                "def sol : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    assert response.json()["link_ok"] is False
+
+
+def test_link_reports_a_sorry_proof_as_an_audit_failure_not_a_link_failure(
+    client: TestClient,
+    admin_engine: Engine,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """The case that makes `link_ok` and `axiom_audit_ok` worth separating: a `sorry`-backed term
+    genuinely *does* have the goal's type, so the kernel accepts it; what rejects it is the run's
+    axiom allowlist (spec §4.4), which does not include `sorryAx` unless `run.allow_sorry`."""
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "namespace LeanAgent.Sol\n"
+                "theorem sol : ∀ n : Nat, n + 0 = n := sorry\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    body = response.json()
+    assert body["kind"] == "errors"
+    assert body["link_ok"] is True
+    assert body["axiom_audit_ok"] is False
+    assert body["axioms"] == ["sorryAx"]
+    assert _stored_verdict(admin_engine, linkable.attempt_id)["axioms"] == ["sorryAx"]
+
+
+def test_link_honours_run_allow_sorry(
+    client: TestClient,
+    admin_engine: Engine,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """The allowlist comes from the *run*, never the request -- so flipping `run.allow_sorry` is
+    what changes the outcome, and no caller can grant itself `sorryAx`."""
+    with admin_engine.connect() as conn:
+        conn.execute(
+            text("UPDATE run SET allow_sorry = true WHERE id = :id"), {"id": linkable.run_id}
+        )
+        conn.commit()
+
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "namespace LeanAgent.Sol\n"
+                "theorem sol : ∀ n : Nat, n + 0 = n := sorry\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    body = response.json()
+    assert body["kind"] == "proved"
+    assert body["axiom_audit_ok"] is True
+    assert body["axioms"] == ["sorryAx"]
+
+
+def test_link_reports_a_missing_entry_point(
+    client: TestClient,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """Spec §4.2: "a proof under a different name reports a name mismatch, not a proof failure"."""
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "namespace LeanAgent.Sol\n"
+                "theorem differently_named : ∀ n : Nat, n + 0 = n := fun _ => rfl\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    body = response.json()
+    assert body["link_ok"] is False
+    assert any("entry point missing" in d for d in body["diagnostics"])
+
+
+def test_link_reports_a_development_that_does_not_elaborate(
+    client: TestClient,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            development=(
+                "namespace LeanAgent.Sol\n"
+                "theorem sol : ∀ n : Nat, n + 0 = n := NoSuchThing\n"
+                "end LeanAgent.Sol"
+            ),
+        ),
+    )
+    body = response.json()
+    assert body["kind"] == "errors"
+    assert body["link_ok"] is False
+    assert body["replay_ok"] is False
+    assert any("NoSuchThing" in d for d in body["diagnostics"])
+
+
+def test_link_links_a_universe_polymorphic_data_goal(
+    client: TestClient,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """Link's `defnDecl` branch (a `Sort`-valued, non-`Prop` goal) over HTTP -- solved by
+    *inhabiting* the goal's value, not by restating its shape (CLAUDE.md's M1.2 note)."""
+    response = client.post(
+        "/v1/link",
+        json=_link_body(
+            linkable,
+            registered_base_env,
+            materialized_bundle,
+            goal="LeanAgent.Goals.G_poly",
+            development=(
+                "namespace LeanAgent.Sol\ndef sol.{v} : PUnit.{v} := PUnit.unit\nend LeanAgent.Sol"
+            ),
+        ),
+    )
+    body = response.json()
+    assert body["kind"] == "proved"
+    assert body["link_ok"] is True
+
+
+def test_link_unmaterialized_bundle_is_a_404_not_an_infra_error(
+    client: TestClient,
+    admin_engine: Engine,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    """A bundle nobody built must fail as a caller error, not as retryable infrastructure trouble.
+
+    Without the pre-check this really did come back as `infra_error` with the diagnostic "stdout
+    closed (process exited) while awaiting response" -- the worker died inside `importModules`,
+    which is a genuine crash but the wrong *taxonomy*: `infra_error` is unbudgeted and invites
+    retry, and no retry will conjure a bundle. It must also leave no `verdict` row, since nothing
+    about the submission was ever judged.
+    """
+    response = client.post(
+        "/v1/link",
+        json={
+            **_link_body(
+                linkable,
+                registered_base_env,
+                materialized_bundle,
+                development="namespace LeanAgent.Sol\ntheorem sol : True := trivial\nend LeanAgent.Sol",
+            ),
+            "bundle_sha": "0" * 64,
+        },
+    )
+    assert response.status_code == 404
+    with admin_engine.connect() as conn:
+        stored = conn.execute(
+            text("SELECT count(*) FROM verdict WHERE attempt_id = :id"),
+            {"id": linkable.attempt_id},
+        ).scalar_one()
+    assert stored == 0
+
+
+def test_link_paranoid_is_refused_rather_than_faked(
+    client: TestClient,
+    registered_base_env: str,
+    materialized_bundle: MaterializedBundle,
+    linkable: LinkableObligation,
+) -> None:
+    response = client.post(
+        "/v1/link",
+        json={
+            **_link_body(
+                linkable,
+                registered_base_env,
+                materialized_bundle,
+                development="namespace LeanAgent.Sol\ntheorem sol : True := trivial\nend LeanAgent.Sol",
+            ),
+            "paranoid": True,
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_link_unknown_obligation_is_404(
+    client: TestClient, registered_base_env: str, materialized_bundle: MaterializedBundle
+) -> None:
+    response = client.post(
+        "/v1/link",
+        json={
+            "attempt_id": str(uuid.uuid4()),
+            "obligation_id": str(uuid.uuid4()),
+            "base_env_digest": registered_base_env,
+            "bundle_sha": materialized_bundle.sha,
+            "goal": "LeanAgent.Goals.G_add_zero",
+            "entry": "LeanAgent.Sol.sol",
+            "development": "namespace LeanAgent.Sol\ntheorem sol : True := trivial\nend LeanAgent.Sol",
+        },
     )
     assert response.status_code == 404
 

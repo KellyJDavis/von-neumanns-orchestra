@@ -9,9 +9,9 @@ worker is already scoped to one base env by which imports it was spawned with, a
 side now, with no caller that needs `CheckOptions` or infotree/axiom extraction, would be
 speculative surface area. Extend both together when a real caller needs more.
 
-Two request kinds so far: `check` (M1.8.1) and `seal` (M2.1.1). They share one pipe, one
-`_request` transport, and one crash taxonomy; `link`/`replay`/`decompose` join them as the
-milestones that drive them land.
+Three request kinds so far: `check` (M1.8.1), `seal` (M2.1.1) and `link` (M2.1.2). They share one
+pipe, one `_request` transport, and one crash taxonomy; `decompose` joins them as the milestone
+that drives it lands.
 """
 
 from __future__ import annotations
@@ -113,6 +113,31 @@ class SealResult:
     bundle_source: str
 
 
+@dataclass(frozen=True)
+class LinkResult:
+    """One submission's whole acceptance path (spec §4.2-§4.4). The three `_ok` flags are separate
+    because they check genuinely different things and `verdict` records all three -- see CLAUDE.md
+    on why neither link nor replay subsumes the other.
+
+    `goal_module`/`goal_olean_path` say where the sealed goal was actually imported from, so the
+    caller can hash that artifact for `verdict.sealed_olean_sha_observed` rather than echoing back
+    a digest it was handed. `None` for both means the goal wasn't an imported constant at all,
+    which is itself a link failure.
+    """
+
+    ok: bool
+    link_ok: bool
+    replay_ok: bool
+    axiom_audit_ok: bool
+    axioms: tuple[str, ...]
+    uses_sorry: bool
+    uses_compiler_trust: bool
+    replay_checked_count: int
+    goal_module: str | None
+    goal_olean_path: str | None
+    diagnostics: tuple[str, ...]
+
+
 class ReplWorker:
     """Wraps one `lake exe leankernel serve [<import>...]` process (M1.8.1). Construct via
     `ReplWorker.spawn`, not the constructor directly -- spawning is async (starting the process
@@ -127,13 +152,35 @@ class ReplWorker:
         self._stderr_task = asyncio.create_task(self._drain_stderr())
 
     @classmethod
-    async def spawn(cls, lake_project_dir: Path, imports: tuple[str, ...] = ()) -> Self:
+    async def spawn(
+        cls,
+        lake_project_dir: Path,
+        imports: tuple[str, ...] = (),
+        *,
+        extra_lean_path: Path | None = None,
+    ) -> Self:
         """Start a fresh worker with a warm environment built from `imports` (spec's
         `base_env`.`recipe.imports`, in the minimal form M1.8.1 accepts: bare module names, no
         options/opens/prelude yet). `lake_project_dir` is `packages/leankernel` in this repo, but
         is not hardcoded here -- keeping deployment-path decisions with the caller, which is what
         will eventually also own the base-env-to-imports mapping (`pool.py`).
+
+        `extra_lean_path` is prepended to `LEAN_PATH` so the worker can import modules that live
+        outside the Lake package -- specifically, materialized sealed goal bundles (spec §4.1's
+        `LeanAgent/Goals/Bundle_<digest>.lean`), which Link requires to be genuinely *imported*
+        constants and which no Lake target could know about ahead of time. Confirmed empirically
+        that `lake exe` merges an inherited `LEAN_PATH` with the one it computes for the workspace
+        rather than replacing it: a worker started this way resolved both `Init` (from the
+        toolchain, via Lake's own path) and a bundle module from an arbitrary directory.
         """
+        env: dict[str, str] | None = None
+        if extra_lean_path is not None:
+            inherited = os.environ.get("LEAN_PATH", "")
+            merged = (
+                f"{extra_lean_path}{os.pathsep}{inherited}" if inherited else str(extra_lean_path)
+            )
+            env = {**os.environ, "LEAN_PATH": merged}
+
         process = await asyncio.create_subprocess_exec(
             "lake",
             "exe",
@@ -141,6 +188,7 @@ class ReplWorker:
             "serve",
             *imports,
             cwd=lake_project_dir,
+            env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -317,6 +365,55 @@ class ReplWorker:
                 for report in response.get("reports", [])
             ),
             bundle_source=str(response.get("bundleSource", "")),
+        )
+
+    async def link(
+        self,
+        *,
+        goal: str,
+        entry: str,
+        development: str,
+        allow_axioms: Sequence[str],
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    ) -> LinkResult:
+        """Run the whole acceptance path on one submission (spec §4.2-§4.4): elaborate
+        `development` against this worker's warm environment, link `entry` against the sealed
+        `goal`, replay, and audit. Raises a `ReplCrashed` subclass on the same conditions `check`
+        does.
+
+        This worker must have been spawned with the goal's bundle among its `imports` -- Link
+        requires the goal to be an imported constant, and a goal that only ever existed in a warm
+        session (the way `seal` leaves it) can never satisfy that. A worker without it comes back
+        with `link_ok=False` and a diagnostic saying so, rather than silently linking against
+        something else.
+
+        `allow_axioms` is `run.axiom_allowlist` (plus `sorryAx` when `run.allow_sorry`). It is
+        required, not defaulted: spec §4.4's audit is allowlist-driven, so an omitted allowlist
+        must mean "permit nothing" rather than quietly substituting a default that happens to be
+        permissive.
+        """
+        response = await self._request(
+            {
+                "kind": "link",
+                "goal": goal,
+                "entry": entry,
+                "body": development,
+                "allowAxioms": list(allow_axioms),
+            },
+            timeout_ms,
+        )
+        return LinkResult(
+            ok=bool(response.get("ok")),
+            link_ok=bool(response.get("linkOk")),
+            replay_ok=bool(response.get("replayOk")),
+            axiom_audit_ok=bool(response.get("axiomAuditOk")),
+            axioms=tuple(response.get("axioms", [])),
+            uses_sorry=bool(response.get("usesSorry")),
+            uses_compiler_trust=bool(response.get("usesCompilerTrust")),
+            replay_checked_count=int(response.get("replayCheckedCount", 0)),
+            goal_module=response.get("goalModule"),
+            goal_olean_path=response.get("goalOleanPath"),
+            diagnostics=tuple(response.get("diagnostics", [])),
         )
 
     async def close(self) -> None:

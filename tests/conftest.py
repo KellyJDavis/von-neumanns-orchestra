@@ -16,9 +16,12 @@ there -- and `LEANKERNEL_REQUIRED` makes that a checked claim rather than an ass
 
 from __future__ import annotations
 
+import hashlib
 import os
+import subprocess
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -55,6 +58,56 @@ def lake_project_dir() -> Path:
             pytest.fail(message)
         pytest.skip(message)
     return LEANKERNEL_DIR
+
+
+#: The two goals `materialized_bundle` seals: a `Prop` and a universe-polymorphic data goal, the
+#: same pair `LeanKernelTests/Goals.lean` uses so both of Link's branches (`thmDecl`/`defnDecl`)
+#: are exercised through the HTTP surface too.
+BUNDLE_SOURCE = """import Init
+set_option autoImplicit false
+set_option relaxedAutoImplicit false
+namespace LeanAgent.Goals
+def G_add_zero : Sort _ := ∀ n : Nat, n + 0 = n
+def G_poly : Sort _ := PUnit
+end LeanAgent.Goals
+"""
+
+
+@dataclass(frozen=True)
+class MaterializedBundle:
+    root: Path
+    sha: str
+    olean_digest: bytes
+
+
+@pytest.fixture(scope="session")
+def materialized_bundle(
+    lake_project_dir: Path, tmp_path_factory: pytest.TempPathFactory
+) -> MaterializedBundle:
+    """A real compiled sealed bundle, laid out the way spec §4.1 names it
+    (`LeanAgent/Goals/Bundle_<digest>.lean`) under a root that becomes the pool's `bundle_root`.
+
+    Compiled with `lake env lean --root=<root>`, not `lake build`: the bundle deliberately lives
+    outside the Lake package (it is generated per run, not a checked-in target), and `lake env
+    lean` refuses a file outside the package root unless `--root` says otherwise. Session-scoped
+    because compiling it costs a real Lean invocation and nothing mutates it.
+    """
+    sha = hashlib.sha256(BUNDLE_SOURCE.encode()).hexdigest()
+    root = tmp_path_factory.mktemp("bundle_root")
+    module_dir = root / "LeanAgent" / "Goals"
+    module_dir.mkdir(parents=True)
+    source = module_dir / f"Bundle_{sha}.lean"
+    source.write_text(BUNDLE_SOURCE)
+    olean = module_dir / f"Bundle_{sha}.olean"
+    subprocess.run(
+        ["lake", "env", "lean", f"--root={root}", str(source), "-o", str(olean)],
+        cwd=lake_project_dir,
+        check=True,
+        capture_output=True,
+    )
+    return MaterializedBundle(
+        root=root, sha=sha, olean_digest=hashlib.sha256(olean.read_bytes()).digest()
+    )
 
 
 ADMIN_DATABASE_URL = os.environ.get(

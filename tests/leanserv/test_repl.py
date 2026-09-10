@@ -20,8 +20,10 @@ import signal
 from pathlib import Path
 
 import pytest
+from conftest import MaterializedBundle
 from lean_agent_serv.repl import (
     DEFAULT_TIMEOUT_MS,
+    ReplCrashed,
     ReplExited,
     ReplProtocolError,
     ReplTimeout,
@@ -107,6 +109,72 @@ def test_seal_reports_universe_parameters(lake_project_dir: Path) -> None:
             assert result.ok
             (goal,) = result.goals
             assert len(goal.level_params) == 1
+
+    asyncio.run(run())
+
+
+def test_link_imports_a_bundle_from_extra_lean_path(
+    lake_project_dir: Path, materialized_bundle: MaterializedBundle
+) -> None:
+    """`extra_lean_path` is what makes Link possible at all: the sealed goal has to be a genuinely
+    *imported* constant, and a materialized bundle lives outside the Lake package, so no Lake
+    target can put it on the worker's search path.
+
+    Worth a test of its own rather than leaving it implicit under `/v1/link`, because it rests on
+    an empirical fact about someone else's tool: `lake exe` *merges* an inherited `LEAN_PATH` with
+    the one it computes for the workspace instead of replacing it. Had it replaced it, this worker
+    would still start (the bundle would resolve) but `Init` and everything Lake provides would not
+    -- so a passing link here is the assertion that both halves of the path survived.
+    """
+
+    async def run() -> None:
+        worker = await ReplWorker.spawn(
+            lake_project_dir,
+            ("Init", f"LeanAgent.Goals.Bundle_{materialized_bundle.sha}"),
+            extra_lean_path=materialized_bundle.root,
+        )
+        async with worker:
+            result = await worker.link(
+                goal="LeanAgent.Goals.G_add_zero",
+                entry="LeanAgent.Sol.sol",
+                development=(
+                    "namespace LeanAgent.Sol\n"
+                    "theorem sol : \u2200 n : Nat, n + 0 = n := fun _ => rfl\n"
+                    "end LeanAgent.Sol"
+                ),
+                allow_axioms=("propext", "Classical.choice", "Quot.sound"),
+            )
+        assert result.ok
+        assert (result.link_ok, result.replay_ok, result.axiom_audit_ok) == (True, True, True)
+        # The worker names the .olean it actually resolved the goal from -- the artifact
+        # `/v1/link` hashes for `verdict.sealed_olean_sha_observed`.
+        assert result.goal_module == f"LeanAgent.Goals.Bundle_{materialized_bundle.sha}"
+        assert result.goal_olean_path is not None
+        assert Path(result.goal_olean_path).read_bytes()
+
+    asyncio.run(run())
+
+
+def test_link_without_the_bundle_on_the_path_cannot_start(
+    lake_project_dir: Path, materialized_bundle: MaterializedBundle
+) -> None:
+    """The same worker without `extra_lean_path` cannot even import the bundle, so it dies during
+    startup rather than answering. That is a real crash and `ReplWorker` reports it as one -- but
+    it is also why `/v1/link` checks the bundle exists *before* acquiring a worker: `infra_error`
+    invites a retry, and no retry materializes a bundle."""
+
+    async def run() -> None:
+        worker = await ReplWorker.spawn(
+            lake_project_dir, ("Init", f"LeanAgent.Goals.Bundle_{materialized_bundle.sha}")
+        )
+        async with worker:
+            with pytest.raises(ReplCrashed):
+                await worker.link(
+                    goal="LeanAgent.Goals.G_add_zero",
+                    entry="LeanAgent.Sol.sol",
+                    development="theorem sol : True := trivial",
+                    allow_axioms=(),
+                )
 
     asyncio.run(run())
 

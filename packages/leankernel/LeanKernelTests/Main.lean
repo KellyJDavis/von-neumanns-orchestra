@@ -443,6 +443,72 @@ unsafe def serveChecks : IO (Array Check) := do
       expected := true, actual := !jsonOk unknownKind && jsonId unknownKind == some "req-2" }
   ]
 
+/-- M2.1.2's `/v1/link` handler: the whole acceptance path behind one wire request. Runs against
+`LeanKernelTests.Goals`, a genuinely *compiled* module, because that is the only way the sealed
+goal is an imported constant -- the condition `link` requires and an in-session `seal` result can
+never satisfy (see `Goals.lean`'s own docstring).
+
+What this adds over `linkChecks` above, which already covers `link` itself: that `linkSubmission`
+derives `expectedModuleIdx` from the untouched base environment rather than trusting a caller,
+that link and replay are reported independently, and that the kernel's verdict is separated from
+the audit's. -/
+unsafe def linkServeChecks : IO (Array Check) := do
+  enableInitializersExecution
+  let baseEnv ← importModules #[{ module := `LeanKernelTests.Goals }] {} (loadExts := true)
+  let goal := "LeanKernelTests.Goals.G_add_zero"
+  let submit (body : String) (goal := goal) (entry := "sol")
+      (allow := #["propext", "Classical.choice", "Quot.sound"]) : IO LeanKernel.LinkResponse :=
+    LeanKernel.linkSubmission baseEnv { id := "l", goal, entry, body, allowAxioms := allow }
+
+  let proved ← submit "theorem sol : ∀ n : Nat, n + 0 = n := fun _ => rfl"
+  -- A strictly weaker statement (existential where the goal is universal): rejected by kernel
+  -- type-checking of the constructed declaration, while replay independently confirms the agent's
+  -- own declaration is internally sound -- the two answer different questions.
+  let weaker ← submit "def sol : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩"
+  -- The same, with the submission trying to switch off the check that catches it (gate 4).
+  let weakerPoisoned ← submit
+    "set_option debug.skipKernelTC true\ndef sol : ∃ n : Nat, n + 0 = n := ⟨0, rfl⟩"
+  -- A `sorry` proof genuinely has the goal's type, so the kernel accepts it; the audit is what
+  -- rejects it. Collapsing the two would report a correct term as a link failure.
+  let sorried ← submit "theorem sol : ∀ n : Nat, n + 0 = n := sorry"
+  let sorriedAllowed ← submit "theorem sol : ∀ n : Nat, n + 0 = n := sorry"
+    (allow := #["propext", "Classical.choice", "Quot.sound", "sorryAx"])
+  -- Replay must re-derive everything new, not just the entry: this development's proof leans on a
+  -- helper the goal never mentions, and a replay that only checked `sol` would miss it.
+  let withHelper ← submit
+    "theorem helper (n : Nat) : n + 0 = n := rfl\ntheorem sol : ∀ n : Nat, n + 0 = n := helper"
+  let notElaborating ← submit "theorem sol : ∀ n : Nat, n + 0 = n := NoSuchIdentifier"
+  let goalNotImported ← submit "theorem sol : True := trivial" (goal := "LeanKernelTests.Goals.G_nope")
+
+  return #[
+    { name := "link-serve/genuine proof: links, replays and audits",
+      expected := true,
+      actual := proved.ok && proved.linkOk && proved.replayOk && proved.axiomAuditOk },
+    { name := "link-serve/genuine proof: reports the module the goal was imported from",
+      expected := true,
+      actual := proved.goalModule == some "LeanKernelTests.Goals" && proved.goalOleanPath.isSome },
+    { name := "link-serve/weaker statement: fails the kernel but still replays",
+      expected := true, actual := !weaker.linkOk && weaker.replayOk },
+    { name := "link-serve/weaker statement with debug.skipKernelTC poisoned: still fails",
+      expected := false, actual := weakerPoisoned.linkOk },
+    { name := "link-serve/`sorry` proof: links but fails the audit",
+      expected := true,
+      actual := sorried.linkOk && !sorried.axiomAuditOk && !sorried.ok
+        && sorried.axioms == #["sorryAx"] && sorried.usesSorry },
+    { name := "link-serve/`sorry` proof with sorryAx allowed: passes the audit",
+      expected := true, actual := sorriedAllowed.ok && sorriedAllowed.axiomAuditOk },
+    { name := "link-serve/replay re-derives the development's helpers, not just the entry",
+      expected := true, actual := withHelper.ok && withHelper.replayCheckedCount ≥ 2 },
+    { name := "link-serve/development that does not elaborate: nothing is claimed",
+      expected := true,
+      actual := !notElaborating.linkOk && !notElaborating.replayOk
+        && !notElaborating.diagnostics.isEmpty },
+    { name := "link-serve/goal that is not an imported constant: says so, names no module",
+      expected := true,
+      actual := !goalNotImported.ok && goalNotImported.goalModule == none
+        && goalNotImported.diagnostics.any fun d => (d.splitOn "imported constant").length > 1 }
+  ]
+
 /-- M2.1.1's `/v1/seal` handler, against the same warm `Init`-only base environment the rest of
 `serveChecks` uses. `Init` rather than Mathlib deliberately: nothing here is about a goal's
 mathematical content, only about which goals seal, what the assembled bundle contains, and whether
@@ -535,8 +601,9 @@ unsafe def main : IO UInt32 := do
   let decomposeResults ← LeanKernelTests.decomposeChecks
   let serveResults ← LeanKernelTests.serveChecks
   let sealServeResults ← LeanKernelTests.sealServeChecks
+  let linkServeResults ← LeanKernelTests.linkServeChecks
   let checks := auditResults ++ sealResults ++ linkResults ++ replayResults ++ decomposeResults
-    ++ serveResults ++ sealServeResults
+    ++ serveResults ++ sealServeResults ++ linkServeResults
   let mut failures := 0
   for c in checks do
     if c.passed then

@@ -27,8 +27,9 @@ the full readout and what it means for R19.
 
 Phase 2 (the "null agent" — zero model calls, closing miniF2F's easy tail deterministically) has begun. M2.1
 extends the acceptance path onto the wire, one request kind at a time: M2.1.1 (`/v1/seal` — `Serve.lean`'s `seal`
-kind, `ReplWorker.seal`, `POST /v1/seal`, `lean_agent_core.digests`) is done; M2.1.2 (`/v1/link`) and M2.1.3
-(`/v1/decompose`) follow, then M2.2 (state machine), M2.3 (scheduler), M2.4 (control loop), M2.5 (Policy/Action +
+kind, `ReplWorker.seal`, `POST /v1/seal`, `lean_agent_core.digests`) and M2.1.2 (`/v1/link` — the whole
+acceptance path on one submission: link + replay + audit, writing the `verdict` row) are done; M2.1.3
+(`/v1/decompose`) follows, then M2.2 (state machine), M2.3 (scheduler), M2.4 (control loop), M2.5 (Policy/Action +
 SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
 its httpx client), M2.10 (miniF2F exit-gate validation).
 
@@ -85,13 +86,20 @@ Two decisions drive nearly everything else in the design (spec §1):
   `kernel_tests`, the Audit/Seal test suite — this is what CI's `lean` job runs via `lean-action`'s `test: true`).
   Run `lake exe kernel_tests` directly for a single test run without going through `lake test`'s dependency
   check.
-- `leankernel serve` (M1.8.1/M2.1.1, the persistent warm-environment process `leanserv`'s pool spawns one of per
-  worker): `lake exe leankernel serve [<import>...]` (e.g. `serve Init` for a fast Mathlib-free session, or
+- `leankernel serve` (M1.8.1/M2.1.1/M2.1.2, the persistent warm-environment process `leanserv`'s pool spawns one
+  of per worker): `lake exe leankernel serve [<import>...]` (e.g. `serve Init` for a fast Mathlib-free session, or
   `serve Mathlib.Algebra.Group.Defs` for a real Mathlib base env), then write newline-delimited JSON requests to
   its stdin — e.g. `printf '{"id":"1","body":"def foo : Nat := 5"}\n' | lake exe leankernel serve Init` for a
   `check`, or `printf '{"id":"1","kind":"seal","goals":[{"name":"G","statement":"True"}]}\n' | lake exe
   leankernel serve Init` for a `seal` — and read one JSON response line per request from stdout. Closing stdin
   exits it with code 0.
+- Driving a `link` request by hand needs a *materialized* bundle on the search path, since Link requires the
+  sealed goal to be an imported constant. Compile one with
+  `lake env lean --root=<dir> <dir>/LeanAgent/Goals/Bundle_<sha>.lean -o <dir>/LeanAgent/Goals/Bundle_<sha>.olean`
+  (`--root` is required: `lake env lean` refuses a file outside the package root otherwise), then
+  `LEAN_PATH=<dir> lake exe leankernel serve Init LeanAgent.Goals.Bundle_<sha>` and send
+  `{"id":"1","kind":"link","goal":"LeanAgent.Goals.G_x","entry":"LeanAgent.Sol.sol","body":"<development>",
+  "allowAxioms":["propext","Classical.choice","Quot.sound"]}`.
 - `leankernel decompose-fuzz` (gate 7's periodic/manual validation run — **not** part of `kernel_tests`/`lake
   test`; see the implementation note below on why even a small per-commit slice doesn't fit CI's actual budget):
   `lake exe leankernel decompose-fuzz <seed> <count> [<import>...]` (imports default to `Mathlib` if none given)
@@ -148,7 +156,9 @@ Two decisions drive nearly everything else in the design (spec §1):
   `lake build` in `packages/leankernel`, then a reachable Postgres with migrations + grants applied, then
   `uv run pytest tests/leanserv`. The `lake_project_dir` fixture every Lean-spawning suite uses lives in the same
   top-level `tests/conftest.py`; it skips when the exe isn't built, unless `LEANKERNEL_REQUIRED=1` (which CI's
-  `lean` job sets) makes that a hard failure instead — see M2.1.1's note on why that guard exists.
+  `lean` job sets) makes that a hard failure instead — see M2.1.1's note on why that guard exists. That file also
+  holds `materialized_bundle` (M2.1.2), which compiles a real sealed bundle with `lake env lean` — `/v1/link`
+  cannot be exercised without one, since Link requires the goal to be a genuinely imported constant.
 - `packages/eval` (M1.9, eval harness skeleton): `score.py`/`contamination.py` are pure logic (`uv run pytest
   tests/eval/test_score.py tests/eval/test_contamination.py`, no external infra); `reverify.py` and the internal
   regression suite (`suites/internal.py`) spawn real Lean processes, same `lake build` prerequisite and skip
@@ -424,20 +434,31 @@ in production, not just in tests.
 - **Gate 7 does not run in `kernel_tests`/`lake test` at all, even at a small sample size.** First attempt added a
   30-declaration slice — comfortably fast locally (the whole binary ran in ~27s) — but CI's `lean` job failed
   twice with "The operation was canceled." Reducing the slice to 5 declarations did *not* fix it (still
-  cancelled, now partway through a *faster* test run). The removal stands on its own cost grounds: gate 7 is a
+  cancelled, now partway through a *faster* test run), which was the clue that the constraint was never time:
+  see the memory finding below, which the gate-7 symptom matches exactly (a Mathlib-bearing environment added to
+  an already near-the-limit suite). The removal stands on its own cost grounds regardless: gate 7 is a
   periodic/manual run by design (see the ~213ms/declaration note above), and `lake exe leankernel decompose-fuzz`
   is its only exercise mechanism.
-- **What cancels that job is *not* a fixed 180s workflow cap, contrary to what this file previously recorded —
-  do not size CI work against that number.** The original diagnosis came from both cancelled runs measuring
-  ~180,000ms from trigger to cancellation, which looked like an exact fixed cap. Re-checked later against more
-  runs and it does not hold: the `lean` job on `main` has since completed **successfully at 266s**, and one of
-  the two cancelled gate-7 runs was itself cancelled at 260s, not 180s. So the cancellations are unexplained
-  rather than budget-explained, and there is real headroom past 180s. Two lessons, both of which cost real time
-  here: a coincidence across *two* samples is not a law (the second run's ~180s was what made the first look
-  exact), and a "cap" hypothesis is only worth acting on once a run has been observed to *exceed* it and fail —
-  check `gh run list --json databaseId,conclusion` plus each run's job `started_at`/`completed_at` before
-  concluding anything about CI budgets. `leanprover/lean-action`'s own source has no timeout of its own, which is
-  still true and still means `timeout-minutes` in `ci.yml` is not what governs this.
+- **What cancels that job is memory, not time — the `lean` job's runner gets killed when
+  `kernel_tests`' peak footprint approaches the runner's 16 GiB.** Two earlier diagnoses were both
+  wrong and are recorded here so they are not re-derived: it is *not* a fixed 180s workflow cap (the `lean` job
+  has since completed successfully at 266s, and one of the cancelled gate-7 runs was cancelled at 260s), and it
+  is not a per-check *time* cost to size around. The signature that gave it away, on M2.1.2's first CI run:
+  `##[error]The runner has received a shutdown signal ... Process completed with exit code 143` — SIGTERM to the
+  whole runner mid-`lake test`, which surfaces in the UI as the generic "The operation was canceled."
+  Measuring locally (`lake env /usr/bin/time -l ./.lake/build/bin/kernel_tests`) showed **20.9 GiB peak RSS**
+  against a 16 GiB runner. **Root cause**: `LeanKernelTests/Goals.lean` carried a gratuitous `import Lean` — two
+  ordinary `def`s that need nothing from it — so every test elaborating against that module loaded a whole extra
+  copy of Lean's environment. Changing it to `import Init` took the suite to **9.5 GiB**, a 2.2x cut, with all 60
+  checks still passing. Generalizes: **a test fixture's `import` line is a memory decision, not just a
+  dependency declaration**, because each `importModules`/`processHeader` call in this suite materializes a live
+  environment, and several are alive at once. Prefer `import Init` in any fixture that does not genuinely need
+  more — it is also the more faithful fixture, since a real sealed bundle imports its base environment, never
+  `Lean`. When a CI job is killed rather than failing, check peak memory before reaching for timeouts:
+  `gh api repos/<owner>/<repo>/actions/jobs/<id>/logs` shows the exit code and signal, and
+  `/usr/bin/time -l` (macOS) or `/usr/bin/time -v` (Linux) reproduces the footprint locally.
+  `leanprover/lean-action`'s own source has no timeout of its own, which is still true and still means
+  `timeout-minutes` in `ci.yml` is not what governs this.
 
 ## Implementation notes: database facts that will recur
 
@@ -646,12 +667,12 @@ These surfaced while building M1.8.5 (`packages/leanserv/src/lean_agent_serv/api
 sub-milestone — wiring `pool.py`/`cache.py`/`verdicts.py` behind `/v1/check`, `/v1/check_batch`, `/v1/health`,
 tested through a real `FastAPI` app against a real spawned Lean process and a real Postgres, never mocked.
 
-- **`/v1/link`, `/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are not built.**
-  `LeanKernel.Serve`'s wire protocol understands `check` (M1.8.1) and `seal` (M2.1.1) and nothing else — there is
-  no link/replay/decompose request shape on the Lean side for an HTTP route to dispatch to, and a route with
-  nothing real underneath it is exactly the half-finished surface this project avoids. `/v1/link` is the one that
-  most wants `VerdictWriter` (M1.8.4) as a caller (spec: "then replay and audit; writes the verdict row") and is
-  the natural next step (M2.1.2) once `Serve.lean` grows a `link` request kind to go with it.
+- **`/v1/replay`, `/v1/decompose`, and `/v1/base-env/materialize` are not built.** `LeanKernel.Serve`'s wire
+  protocol understands `check` (M1.8.1), `seal` (M2.1.1) and `link` (M2.1.2) and nothing else — there is no
+  standalone replay or decompose request shape on the Lean side for an HTTP route to dispatch to, and a route
+  with nothing real underneath it is exactly the half-finished surface this project avoids. Standalone
+  `/v1/replay` also has no caller: `/v1/link` already replays as part of the acceptance path, which is what spec
+  §4.3 actually asks for.
 - **A bare `check`'s outcome is classified with the same `VerdictKind` enum a proof verdict uses**, not a
   separate ok/not-ok shape: `ok=True` (clean elaboration) is `PROVED`, a genuine elaboration error is `ERRORS`, a
   `ReplTimeout` is `TIMEOUT`, and any `ReplCrashed` (`ReplExited`/`ReplProtocolError`) is `INFRA_ERROR` — one more
@@ -783,6 +804,78 @@ These surfaced while building `/v1/seal` — `Serve.lean`'s `seal` request kind,
   identifier — a `let seal := ...` in a test fails to parse with a confusing "unexpected token 'seal'". Also:
   a structure instance broken across lines inside `#[{ ... }]` must have its continuation indented past the `{`'s
   own line start, or the fields after the first are rejected with "unexpected identifier; expected '}'".
+
+## Implementation notes: link-on-the-wire facts (M2.1.2)
+
+These surfaced while building `/v1/link` — `Serve.lean`'s `link` request kind, `ReplWorker.link`, `pool.py`'s
+`bundle_root`, and `api.py`'s route and `verdict` write — against the real v4.33.1 toolchain and a real Postgres.
+
+- **A sealed goal has to be a genuinely *compiled and imported* module before it can be linked against, so
+  `/v1/link` needs a bundle on the worker's search path — which is why `PoolConfig.bundle_root` exists.** M1.1
+  already recorded that `getModuleIdxFor?` returns `none` for anything defined in the module currently being
+  elaborated, which means an in-session `seal` result (M2.1.1) can never satisfy Link's requirement. The bundle
+  must first be compiled out of band, and `bundle_root` is the directory both that compile step (M2.7's
+  materialization, not yet built) and `leanserv` agree on. `ReplWorker.spawn` prepends it to `LEAN_PATH`.
+- **`lake exe` *merges* an inherited `LEAN_PATH` with the one it computes for the workspace rather than replacing
+  it** — confirmed empirically before designing anything on top of it, because the whole approach dies if it
+  doesn't hold: a worker started with `LEAN_PATH=<bundle root>` resolved both `Init` (from the toolchain, via
+  Lake's own path) and a bundle module from an arbitrary directory in the same session.
+  `tests/leanserv/test_repl.py` pins this directly rather than leaving it implicit under the HTTP tests, since it
+  is a fact about someone else's tool that a Lake update could change.
+- **`lake env lean` refuses an input file outside the package root unless `--root=<dir>` says otherwise**
+  ("must be contained in root directory"). A generated bundle deliberately lives outside the Lake package (it is
+  per-run, not a checked-in target), so compiling one is
+  `lake env lean --root=<dir> <dir>/LeanAgent/Goals/Bundle_<sha>.lean -o <same>.olean`.
+- **Two different digests are in play and they are easy to confuse.** `bundle_sha` (spec's `LinkRequest`) is the
+  digest of the bundle *source*, and it names the file/module (`Bundle_<sha>.lean`) — that is what M2.1.1's
+  `/v1/seal` returns as `bundle_digest`. `obligation.sealed_olean_sha` is the digest of the *compiled* `.olean`,
+  and it is what `mark_proved` compares `verdict.sealed_olean_sha_observed` against. They are never equal; a test
+  or caller that uses one where the other belongs fails in a way that looks like tampering.
+- **`sealed_olean_sha_observed` is genuinely *observed*, not echoed.** `Serve.lean` reports which module
+  `getModuleIdxFor?` resolved the goal to and that module's real path via `Lean.findOLean`; `api.py` hashes that
+  file. Recording a digest the caller supplied would silently defeat spec's seal-integrity check, since
+  `mark_proved`'s `v.sealed_olean_sha_observed = o.sealed_olean_sha` clause would then be comparing a value to
+  itself. This works only because workers are local subprocesses today — a remote-worker deployment has to move
+  the hashing into the worker, or the path is meaningless (or worse, names a different file) on the reading side.
+- **Link's `expectedModuleIdx` is derived from the *base* environment, before the agent's development elaborates,
+  never taken from the request.** That is what makes the shadow check meaningful here: the worker imported the
+  bundle at startup, so the module the goal resolves to in the untouched base environment is by construction the
+  module it was sealed into, and nothing the caller sends (or an agent could influence) participates in deciding
+  it. What that check cannot catch — a deployment serving the *wrong* bundle at the right filename — is exactly
+  what the observed-digest comparison catches, so the two compose rather than overlap.
+- **`LinkReport` gained a `kernelOk` field separate from `ok`, because `verdict` has separate `link_ok` and
+  `axiom_audit_ok` columns and M1.2 was collapsing both into one.** A `sorry`-backed proof is the case that makes
+  this concrete and it is not a corner case: the term genuinely *does* have the sealed goal's type, so the kernel
+  accepts it, and what rejects it is the run's axiom allowlist. Reporting that as `link_ok=false` describes it
+  wrongly — the term is correct, the trust base is not — and any later analysis of failure modes would be reading
+  a lie. Confirmed against the real toolchain in both directions (`sorryAx` denied and allowed).
+- **`run.axiom_allowlist`/`run.allow_sorry` are read from Postgres by `/v1/link`, never accepted from the
+  request.** Same boundary as "leanserv is the only writer of verdicts" (spec §5.5/§6.4): a caller that could
+  pass its own allowlist could permit `sorryAx` for a run that forbids it. `allow_sorry` is folded in as the
+  literal axiom name `sorryAx`, because that is exactly what the column means — `auditAxioms` deliberately applies
+  no special case for `sorry`.
+- **An unmaterialized bundle is a 404, checked before a worker is acquired — not the `infra_error` it naturally
+  produces.** Left alone, a worker spawned for a nonexistent module dies inside `importModules`, and
+  `ReplWorker` correctly classifies that as a crash; the response was `infra_error` with the diagnostic "stdout
+  closed (process exited) while awaiting response". That taxonomy is wrong in a way that matters: `infra_error`
+  is unbudgeted and invites retry, and no retry will materialize a bundle nobody built. It also burns a pool slot
+  (and possibly an LRU eviction) to learn nothing. Found because the first version of the test asserted only
+  `link_ok is False`, which passed for entirely the wrong reason — a reminder that a negative assertion should
+  name *why* it failed, not just that it did.
+- **A crashed worker's own message is about the pipe; what killed it is on stderr.** `_run_link` includes
+  `ReplCrashed.stderr` in the verdict's diagnostics for exactly this reason — `ReplWorker` drains that pipe
+  (M1.8.2) precisely so a Lean panic or import failure survives to be reported, and dropping it leaves an
+  `infra_error` verdict that says nothing about what happened.
+- **`paranoid` (spec's multi-kernel replay) is rejected with a 400 rather than accepted and ignored, and
+  `kernels_agreeing` is always empty.** This distribution ships one kernel implementation, and spec §4.3 is
+  explicit that independence across *implementations* is the only thing multi-kernel replay buys. Honouring the
+  flag would mean replaying twice through the same kernel and reporting two agreeing "kernels" — corroboration
+  that did not happen, recorded in the one column R18 says should key the reward signal.
+- **Beware a "weakened mutant" that is merely defeq.** A first pass used `∀ n, n + 0 = n + 0` against a goal of
+  `∀ n, n + 0 = n` and was briefly alarmed that it linked — but `n + 0` reduces to `n`, so the two types are
+  definitionally equal and the kernel was right to accept it (this is spec §4.2's own "the kernel decides
+  definitional equality" property working as designed). A genuine weakening needs a different proposition:
+  `∃ n, n + 0 = n`, which M1.2's own gate-5 test already used.
 
 ## Implementation notes: eval harness facts
 

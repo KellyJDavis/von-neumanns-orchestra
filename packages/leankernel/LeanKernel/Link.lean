@@ -10,9 +10,17 @@ namespace LeanKernel
 
 open Lean
 
-/-- Result of attempting to link `entry` against a sealed `goal` (spec §4.2). -/
+/-- Result of attempting to link `entry` against a sealed `goal` (spec §4.2).
+
+`kernelOk` and `ok` are deliberately separate. `kernelOk` is the §4.2 question alone -- did the
+kernel accept the constructed declaration, i.e. is the agent's term genuinely a term of the sealed
+goal's type -- while `ok` additionally requires §4.4's axiom audit to pass. `verdict` stores these
+as two independent columns (`link_ok`, `axiom_audit_ok`), and a proof the kernel accepted but whose
+axiom cone falls outside the run's allowlist is a real and *informative* combination: the term is
+correct, the trust base is not. Collapsing both into `ok` would report that as a link failure. -/
 structure LinkReport where
   ok          : Bool
+  kernelOk    : Bool
   diagnostics : Array String
   axiomReport : Option AxiomReport
   deriving ToJson
@@ -49,20 +57,22 @@ def link (goal entry : Name) (expectedModuleIdx : ModuleIdx) (allow : Array Name
     MetaM LinkReport := do
   let env ← getEnv
   let some idx := env.getModuleIdxFor? goal
-    | return { ok := false, diagnostics := #["goal constant absent (not an imported module)"],
-                axiomReport := none }
+    | return { ok := false, kernelOk := false, axiomReport := none,
+               diagnostics := #["goal constant absent (not an imported module)"] }
   unless idx == expectedModuleIdx do
-    return { ok := false, diagnostics := #["goal shadowed or redeclared"], axiomReport := none }
+    return { ok := false, kernelOk := false, axiomReport := none,
+             diagnostics := #["goal shadowed or redeclared"] }
   let some goalInfo := env.find? goal
-    | return { ok := false, diagnostics := #["goal missing"], axiomReport := none }
+    | return { ok := false, kernelOk := false, axiomReport := none,
+               diagnostics := #["goal missing"] }
   let some entryInfo := env.find? entry
-    | return { ok := false, diagnostics := #["entry point missing"], axiomReport := none }
+    | return { ok := false, kernelOk := false, axiomReport := none,
+               diagnostics := #["entry point missing"] }
 
   let lvls := goalInfo.levelParams
   unless entryInfo.levelParams.length == lvls.length do
-    return { ok := false,
-              diagnostics := #["entry is not universe-polymorphic at the goal's arity"],
-              axiomReport := none }
+    return { ok := false, kernelOk := false, axiomReport := none,
+             diagnostics := #["entry is not universe-polymorphic at the goal's arity"] }
   let lvlArgs := lvls.map mkLevelParam
   let type := mkConst goal lvlArgs
   let value := mkConst entry lvlArgs
@@ -78,7 +88,7 @@ def link (goal entry : Name) (expectedModuleIdx : ModuleIdx) (allow : Array Name
   match Kernel.Environment.addDecl env.toKernelEnv opts decl with
   | .error ex =>
     let msg ← (ex.toMessageData opts).toString
-    return { ok := false, diagnostics := #[msg], axiomReport := none }
+    return { ok := false, kernelOk := false, diagnostics := #[msg], axiomReport := none }
   | .ok kenv' =>
     -- `Environment.ofKernelEnv` is documented as producing a degraded environment ("should be
     -- temporary and not leak into elaboration") -- it drops elaborator extension state (parser
@@ -89,6 +99,7 @@ def link (goal entry : Name) (expectedModuleIdx : ModuleIdx) (allow : Array Name
     -- into it would corrupt later work in that session. `withEnv` scopes the swap to just this
     -- one call and restores the real environment immediately after.
     let axiomReport ← withEnv (Environment.ofKernelEnv kenv') (auditAxioms linkName allow)
-    return { ok := axiomReport.ok, diagnostics := #[], axiomReport := some axiomReport }
+    return { ok := axiomReport.ok, kernelOk := true, diagnostics := #[],
+             axiomReport := some axiomReport }
 
 end LeanKernel
