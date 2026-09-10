@@ -30,7 +30,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from lean_agent_core.blobs import store_or_inline
 from lean_agent_core.digests import compute_goal_digest
 from lean_agent_core.protocols import (
     BlobStore,
@@ -223,7 +222,13 @@ class Ingestor:
 
         sealed = await self._lean.seal(base_env_digest=submission.base_env_digest, goals=candidates)
         bundle_sha = sealed.bundle_digest
-        await store_or_inline(self._blobs, sealed.bundle_source.encode(), "text/x-lean")
+        # `put`, not `store_or_inline`: the bundle must be *retrievable by digest* later, and
+        # `store_or_inline` deliberately does not store anything under 64 KiB -- it decides how a
+        # value is carried in a column, which is a different question. A bundle small enough to
+        # inline would simply have vanished, and M2.7 could not compile it. `put`'s returned digest
+        # is sha256 of the content, which is exactly `bundle_sha`.
+        stored = await self._blobs.put(sealed.bundle_source.encode(), "text/x-lean")
+        assert stored.hex() == bundle_sha, "blob store disagreed with /v1/seal about the digest"
 
         roots: list[uuid.UUID] = []
         admission: dict[uuid.UUID, AdmissionReport] = {}

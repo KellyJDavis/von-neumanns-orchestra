@@ -728,6 +728,11 @@ async def _write_link_verdict(
             toolchain_rev=base_env.toolchain_rev,
             mathlib_rev=base_env.mathlib_rev,
             messages=json.dumps(diagnostics).encode() if diagnostics else None,
+            # The development that produced this verdict. `verdict` is the one row leanserv writes
+            # and the only place the accepted proof text can live without widening `app`'s grants:
+            # `obligation.proof_blob` is not in app's permitted-column list, deliberately. Spec
+            # §6.3 step 6 materializes the output file from exactly this.
+            proof=req.development.encode(),
         )
     )
     return LinkResponse(
