@@ -45,7 +45,10 @@ _KNOWN_KEYS = frozenset(
         "backend",
         "endpoint",
         "model_id",
+        "tokenizer_dir",
         "tokenizer_revision",
+        "weights_revision",
+        "serving_version",
         "provenance",
         "seed",
         "sampling",
@@ -71,7 +74,19 @@ class BackendConfig:
     model_id: str
     provenance: ProvenanceClass
     endpoint: str | None = None
+    #: Where the *converted* tokenizer lives (M3.3): the directory holding
+    #: `tokenizer.converted.json` and `tokenizer_config.json`. Required to build a real client,
+    #: since §6.5 puts templating on this side of the wire.
+    tokenizer_dir: Path | None = None
+    #: sha256 of that converted artifact. Optional, and checked when present -- the difference
+    #: between "a tokenizer is there" and "*this* tokenizer is there" (M3.4).
     tokenizer_revision: str | None = None
+    #: Recorded into the run manifest (§7.3), never used to fetch anything. A published result has
+    #: to name the exact weights and the exact server that produced it, and neither is derivable
+    #: from a model id: the same id serves different weights across revisions, and the same weights
+    #: give different token ids across serving versions.
+    weights_revision: str | None = None
+    serving_version: str | None = None
     seed: int | None = None
     sampling: SamplingParams = field(default_factory=SamplingParams)
 
@@ -125,9 +140,12 @@ def parse_backend(role: str, raw: dict[str, Any]) -> BackendConfig:
         model_id=str(raw["model_id"]),
         provenance=provenance,
         endpoint=str(raw["endpoint"]) if "endpoint" in raw else None,
+        tokenizer_dir=Path(str(raw["tokenizer_dir"])) if "tokenizer_dir" in raw else None,
         tokenizer_revision=(
             str(raw["tokenizer_revision"]) if "tokenizer_revision" in raw else None
         ),
+        weights_revision=(str(raw["weights_revision"]) if "weights_revision" in raw else None),
+        serving_version=str(raw["serving_version"]) if "serving_version" in raw else None,
         seed=int(raw["seed"]) if "seed" in raw else None,
         sampling=_sampling(role, raw.get("sampling", {})),
     )
