@@ -454,13 +454,17 @@ name = "lean-agent-eval"
 version = "0.0.0"
 source = { editable = "packages/eval" }
 dependencies = [
+    { name = "lean-agent-api" },
     { name = "lean-agent-core" },
+    { name = "lean-agent-policies" },
     { name = "lean-agent-serv" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "lean-agent-api", editable = "packages/api" },
     { name = "lean-agent-core", editable = "packages/core" },
+    { name = "lean-agent-policies", editable = "packages/policies" },
     { name = "lean-agent-serv", editable = "packages/leanserv" },
 ]
 

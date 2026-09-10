@@ -11,7 +11,7 @@ control loop exists to produce real attempts) is responsible for reading rows an
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import comb
 
@@ -124,7 +124,7 @@ class SuiteScore:
 
 
 def score_suite(
-    outcomes_by_problem: dict[str, Sequence[AttemptOutcome]], ks: Sequence[int]
+    outcomes_by_problem: Mapping[str, Sequence[AttemptOutcome]], ks: Sequence[int]
 ) -> SuiteScore:
     problems = {
         problem_id: score_problem(outcomes, ks)

@@ -115,10 +115,16 @@ unsafe def sealChecks : IO (Array Check) := do
       expected := true, actual := !broken.diagnostics.isEmpty },
 
     { name := "seal/sorry-in-statement: fails", expected := false, actual := sorryInType.ok },
-    -- The only message present is the `sorry` warning itself (no error was also generated) --
-    -- confirming this genuinely exercises the axiom-check defense, not an error we missed.
-    { name := "seal/sorry-in-statement: exactly the one sorry warning, no error",
-      expected := true, actual := sorryInType.diagnostics.size == 1 }
+    -- Lean itself logged no *error* here, only the `sorry` warning -- so this genuinely exercises
+    -- the axiom-cone defense rather than an error the message-log check would have caught anyway.
+    { name := "seal/sorry-in-statement: no error was logged, only the sorry warning",
+      expected := false,
+      actual := sorryInType.diagnostics.any fun d => (d.splitOn "error:").length > 1 },
+    -- And the rejection says why. Before M2.10 this branch returned `ok := false` with nothing in
+    -- `diagnostics` at all, which is how an unrelated seal failure went unexplained for so long.
+    { name := "seal/sorry-in-statement: the rejection names sorryAx",
+      expected := true,
+      actual := sorryInType.diagnostics.any fun d => (d.splitOn "sorryAx").length > 1 }
   ]
 
 /--

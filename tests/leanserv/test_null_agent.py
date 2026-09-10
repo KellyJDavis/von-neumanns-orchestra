@@ -270,14 +270,19 @@ def test_the_null_agent_proves_a_real_goal_with_no_model_calls(
         run_id=fx.run_id,
         base_env_digest=fx.base_env_digest.hex(),
         bundle_sha=materialized_bundle.sha,
-        goal_decl="LeanAgent.Goals.G_add_zero",
-        goal_src="∀ n : Nat, n + 0 = n",
-        entry="LeanAgent.Sol.sol_add_zero",
+        goal_decl="LeanAgent.Goals.G_comm",
+        goal_src="∀ n m : Nat, n + m = m + n",
+        entry="LeanAgent.Sol.sol_comm",
     )
     # A trimmed portfolio: the full default would spend real kernel time on a dozen Mathlib
     # tactics that are not even available in an `Init`-only base env. Ordering and stop-on-success
     # are what is under test, not portfolio breadth.
-    policy = SymbolicPortfolio(tactics=("rfl", "decide", "simp", "omega"))
+    #
+    # Commutativity rather than `n + 0 = n`, because the latter stopped exercising ordering once
+    # the policy learned to `intros`: `rfl` closes it on the first try, so nothing would ever fail
+    # a screen. `n + m = m + n` is not defeq, so `rfl` and `decide` genuinely fail before `omega`
+    # succeeds -- which is the sequence this test is about.
+    policy = SymbolicPortfolio(tactics=("rfl", "decide", "omega"))
 
     result = _run_policy(app_async_database_url, tmp_path, leanserv, ctx, attempt, policy)
 
@@ -288,8 +293,9 @@ def test_the_null_agent_proves_a_real_goal_with_no_model_calls(
     # Zero completions, so §7.1's rule records this as unencumbered training data.
     assert provenance == ProvenanceClass.SYMBOLIC.value
     assert model_id is None
-    # Three steps, not four: `rfl` and `decide` failed their screening check, `simp` passed and
-    # was linked, and `omega` was never reached because the attempt's one verdict is spent.
+    # Three steps: `rfl` and `decide` failed their screening check, and `omega` passed and was
+    # linked. Had a fourth tactic followed, it would never have been reached -- the attempt's one
+    # verdict is spent by then.
     assert n_steps == 3
 
 
@@ -333,17 +339,20 @@ def test_an_unprovable_goal_exhausts_the_portfolio_and_reports_a_retryable_failu
     """Exhausting the portfolio is an ordinary failed attempt, not an error: the obligation stays
     provable by something else, and the budget is what eventually stops asking."""
     obligation, attempt = fx.obligation_and_attempt(
-        "LeanAgent.Goals.G_add_zero", materialized_bundle.olean_digest
+        "LeanAgent.Goals.G_comm", materialized_bundle.olean_digest
     )
     ctx = ObligationContext(
         obligation_id=obligation,
         run_id=fx.run_id,
         base_env_digest=fx.base_env_digest.hex(),
         bundle_sha=materialized_bundle.sha,
-        goal_decl="LeanAgent.Goals.G_add_zero",
-        goal_src="∀ n : Nat, n + 0 = n",
-        entry="LeanAgent.Sol.sol_add_zero",
+        goal_decl="LeanAgent.Goals.G_comm",
+        goal_src="∀ n m : Nat, n + m = m + n",
+        entry="LeanAgent.Sol.sol_comm",
     )
+    # Neither closes `n + m = m + n`: it is not definitionally true, and `decide` cannot decide a
+    # `∀` over `Nat`. (`n + 0 = n` used to serve here and no longer does -- `intros` made `rfl`
+    # close it, which is the policy getting better, not this test getting weaker.)
     policy = SymbolicPortfolio(tactics=("rfl", "decide"))
 
     result = _run_policy(app_async_database_url, tmp_path, leanserv, ctx, attempt, policy)

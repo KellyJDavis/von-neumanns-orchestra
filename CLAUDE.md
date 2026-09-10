@@ -39,8 +39,14 @@ bundle materialization (`lean_agent_api.materialize`) are done — **the whole P
 end**: submission → ingestion → materialization → claim → null agent → link/replay/audit → `mark_proved`, with
 zero model calls, and out the other side as a **standalone materialized `.lean` file** with its `sorry`s filled
 (spec §6.3 step 6) — `tests/leanserv/test_end_to_end.py`. M2.8 (the public §6.1 API surface —
-`lean_agent_api.app`) and M2.9 (`lean_agent_cli`, an httpx client of that API, plus
-`lean_agent_serv.client.LeanServiceClient`) are done. Next is M2.10 (miniF2F exit-gate validation), which is Phase 2's last milestone.
+`lean_agent_api.app`), M2.9 (`lean_agent_cli`, an httpx client of that API, plus
+`lean_agent_serv.client.LeanServiceClient`) and M2.10 (the miniF2F exit gate --
+`packages/eval`'s `suites/minif2f.py` over a vendored, digest-pinned corpus, run by
+`tests/eval/test_minif2f.py`) are done. **Phase 2 is complete**: its exit criterion holds -- the
+null agent closes miniF2F's easy tail through the whole acceptance path at zero token cost, stable
+across three runs, with a materialized file that elaborates and links. Phase 3 (model as policy)
+is next; note its own exit criterion begins "the Phase 2 symbolic baseline still passes
+bit-identically", which is what that gate is now for.
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -177,6 +183,17 @@ Two decisions drive nearly everything else in the design (spec §1):
   tests/eval/test_score.py tests/eval/test_contamination.py`, no external infra); `reverify.py` and the internal
   regression suite (`suites/internal.py`) spawn real Lean processes, same `lake build` prerequisite and skip
   convention as `tests/leanserv/` — run all of it with `uv run pytest tests/eval`.
+- miniF2F, Phase 2's exit gate (M2.10, `packages/eval`'s `suites/minif2f.py`, run by
+  `tests/eval/test_minif2f.py`): needs **full Mathlib built** (`lake build` in `packages/leankernel` is not
+  enough — nothing imports all of Mathlib at compile time; use `lake exe cache get`, which is what CI's
+  `lean-action` does), plus a live Postgres with grants applied. It skips locally when `Mathlib.olean` is absent
+  and hard-fails instead under `LEANKERNEL_REQUIRED=1`. Budget ~2 minutes: a full-Mathlib worker takes ~30 s to
+  warm and ~6 GiB, so the pool is capped at one worker deliberately (see the notes below).
+  Two manual tools sit beside it, neither run by CI: `uv run python -m lean_agent_eval.suites.vendor_minif2f`
+  rebuilds the vendored corpus from a pinned upstream commit, and `uv run python -m
+  lean_agent_eval.suites.survey_minif2f --out <path>` re-measures which of the 488 problems the null agent
+  closes (~25 min) — that measurement is what `EASY_TAIL` is derived from, and it is checked in rather than
+  recomputed by the gate.
 
 ## Repository layout (spec §3, once scaffolded)
 
@@ -901,6 +918,110 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: miniF2F exit-gate facts (M2.10)
+
+These surfaced while building Phase 2's exit gate -- `packages/eval/src/lean_agent_eval/suites/`
+(`minif2f.py`, `vendor_minif2f.py`, `survey_minif2f.py`) and `tests/eval/test_minif2f.py` --
+against real miniF2F statements, a real full-Mathlib base env and a real PostgreSQL. It is the
+first milestone whose inputs are *real mathematics* rather than `Nat` toys, and that alone found
+four bugs that nine milestones of testing had not.
+
+- **`checkSealed` required an *empty* axiom cone, which silently excluded classical mathematics.**
+  A goal's cone includes the axioms behind the definitions its *type mentions*, so anything built
+  on `Real` carries `Classical.choice` and `Quot.sound`, and even `91 ^ 2 = 8281` carries `propext`
+  through its `Monoid` instance. Measured: 8 of 13 easy-tail statements failed to seal, **with
+  empty diagnostics**, because the rejection branch had nothing to report. It went unnoticed since
+  M1.1 because every earlier test sealed bare `Nat` statements, whose cones happen to be empty.
+  The check now rejects `sorryAx` specifically -- which is what M1.1's own rationale actually
+  described ("a `sorry` in the statement itself elaborates with only a warning") -- and says so in
+  `diagnostics`. What the statement's definitions rest on is the base environment's trust question
+  (spec §4.3), not the goal's; the *proof*'s axioms are audited separately at link time.
+  Generalizes: **a rejection that returns no diagnostic is a bug even when the verdict is right**,
+  and "no axioms at all" is almost never the property you want from something that mentions
+  real mathematics.
+- **The executor screened proof candidates on `ok` alone, so a `sorry` spent the attempt's one
+  verdict.** `verdict.attempt_id` is a primary key, so the executor screens with `/v1/check` and
+  commits one `/v1/link`. But a `sorry` is a *warning*: `apply?`, `exact?` and `rw?` routinely
+  report "found a partial proof", emit their suggestions, and let Lean's error recovery fill the
+  hole with `sorryAx` -- all with `ok=true`. So the first suggestion tactic in the portfolio
+  consumed the attempt, the audit rejected it, and **every tactic behind it was unreachable**;
+  with `DEFAULT_TACTICS` ordering `exact?`/`apply?`/`rw?` ahead of `linarith`/`nlinarith`/`aesop`,
+  that is most of the portfolio on most goals. `/v1/check` now reports the new declarations'
+  transitive axiom cone (populating spec's own `verification_cache.axioms`, so it survives a cache
+  hit -- otherwise a screen would reject on a cold run and accept on a warm one), and the executor
+  skips a candidate depending on `sorryAx`. Gated on the run's `allow_sorry` so the screen says
+  exactly what the audit will say. `tests/test_executor_screen.py` pins it with no infrastructure;
+  both bug-specific tests were confirmed to fail with the fix disabled.
+- **`SymbolicPortfolio` needed `intros`, and the reason is this system's own sealing.** Sealing
+  turns a submitted `theorem f (x : T) (h : P) : C` into the closed statement `∀ (x : T), P → C` --
+  the binders that were in the *signature* become part of the goal -- so a tactic that would have
+  faced `C` with `x` and `h` in context now faces a `∀`, which `omega`/`linarith`/`rfl` simply fail
+  on. Without `intros` the portfolio closes only hypothesis-free problems. It is a no-op on a goal
+  with no binders, so it cannot cost a proof.
+- **Do not `set_option` a Mathlib linter from code that must run on any base env.** Silencing
+  `linter.unusedTactic` (which `intros` trips on a hypothesis-free goal) broke *every* `Init`-only
+  test at once: that linter ships with Mathlib, not core, and `set_option` on an unknown option is
+  a hard **error**, not a warning. An unknown *tactic* degrades to one failed portfolio member; an
+  unknown *option* fails the whole development. `linter.defProp` is core and stays.
+- **`ReplWorker` had a 64 KiB response ceiling and no taxonomy for hitting it.** `asyncio`'s
+  `StreamReader` defaults to a 64 KiB line limit, and a response is one JSON object on one line;
+  exceeding it raises a bare `ValueError("Separator is not found...")` from inside `readline`,
+  outside the whole `ReplCrashed` taxonomy. Real traffic hits this: the largest response measured
+  across all 488 problems was **217 KB** (a `check` whose diagnostics carry a large real goal
+  state), while the largest `decompose` was only 1,964 bytes. The limit is now 32 MiB -- raised,
+  not removed, since an unbounded reader turns a runaway `#eval` print loop into an unbounded
+  allocation -- and an over-long line is a `ReplProtocolError` that kills the worker, because
+  `readline` has consumed an unknown amount of it and the stream can no longer be resynchronized.
+- **A survey that rehearses an approximation of the real thing measures the wrong number.** The
+  first easy-tail survey substituted tactics into upstream's own theorem and reported 126/488. That
+  shape does not survive sealing (see `intros` above), and its win condition read `ok` alone, so it
+  counted every partial `apply?` as a proof. Rebuilt to run `SymbolicPortfolio.development()`
+  verbatim against the statement `/v1/decompose` actually produces, and to judge on the axiom cone:
+  **114 of 488 (23.4%)**, plus 57 that decompose but whose printed statement does not round-trip,
+  so ingestion refuses to seal them (M2.6). Same lesson as M2.1.3's round-trip check.
+- **The toolchain gap costs nothing at elaboration.** Upstream targets v4.24.0 and this repo pins
+  v4.33.1, and **all 488 statements still elaborate** -- zero decomposition failures. The 57 losses
+  are entirely a pretty-printing round-trip problem (coercion arrows, mostly), not a Mathlib API
+  drift. Worth knowing before assuming a corpus/toolchain mismatch is fatal, which is the
+  assumption that has had Phase 1 gate 1 blocked since planning.
+- **A full `import Mathlib` warm worker measures ~6 GiB RSS and ~30 s to warm**, against `Mathlib.
+  Algebra.Group.Basic`'s ~1.5 GiB (gate 9). Two consequences the gate is built around: `/v1/link`
+  keys its worker on `(base_env, bundle)` while sealing keys on the base env alone, so an uncapped
+  pool holds **two** such workers (~12 GiB) on a 16 GiB runner -- the suite caps
+  `max_total_workers=1` and orders its phases (ingest, materialize, link) so exactly one eviction
+  happens. And N separate runs would mean N bundles, N pool keys and N warm-ups, which is why the
+  gate submits its whole tail as **one multi-`sorry` submission** -- also the more faithful reading
+  of spec's "*a* materialized file passes both the elaboration and the link check".
+- **Compiling a Mathlib-importing bundle with `lake env lean` costs only ~5.5 s**, far less than
+  the ~30 s a warm worker needs for the same imports: `.olean` loading is mmap-backed, while a
+  warm worker additionally populates elaborator extensions (`loadExts`). Do not size one from the
+  other.
+- **The gate's expectations are checked in, not recomputed.** `EASY_TAIL` is a fixed list of ids;
+  a gate that worked out for itself which problems ought to be easy could not fail, since a
+  regression would just redefine the tail and stay green. `MEASURED_TAIL` keeps the full survey
+  result beside it for comparison without asserting it.
+- **The corpus is vendored and digest-pinned, never fetched.** Spec §7.5 wants the benchmark held
+  read-only "so proving a weakened restatement is structurally impossible"; a suite that runs "on
+  every PR forever" must not depend on a CDN; and an upstream force-push would otherwise silently
+  change what is being measured. `vendor_minif2f.py` rebuilds it by hand from a pinned commit,
+  verifies every assumption it rests on (488 problems, one theorem each, identical headers), and
+  records the upstream toolchain. MIT, Copyright (c) Meta Platforms.
+- **`lean-action` runs `lake exe cache get`**, downloading all ~8,690 Mathlib `.olean` files, so
+  CI genuinely has a full Mathlib to import even though nothing in this package imports it at
+  compile time. The gate's own fixture still checks for `Mathlib.olean` and turns a missing build
+  into a hard failure under `LEANKERNEL_REQUIRED=1`, for M2.1.1's reason.
+- **A blunt `"sorry" not in artifact.source` is the wrong assertion.** Decomposition names each
+  hole `sorry_<n>`, so a correct artifact legitimately contains `sorry_1` in a comment and
+  `@sorry_13` in its reassembly term. The check needs a negative lookahead -- and it is still worth
+  making, because a `sorry`'d file *elaborates* (warning, not error), so `elaborates` alone cannot
+  rule one out.
+- **Three separate gate runs must share one `asyncio.run`.** M1.8.4 recorded that an asyncpg
+  engine must be created and disposed inside one loop; the three-run stability check is the same
+  trap one level out, because `httpx.ASGITransport` dispatches into the leanserv app on the
+  *calling* loop rather than on `TestClient`'s portal, so leanserv's engine is bound there too.
+  Sharing a loop is not sharing state: each repetition is still its own run, obligations, attempts
+  and verdicts.
 
 ## Implementation notes: CLI and client facts (M2.9)
 
