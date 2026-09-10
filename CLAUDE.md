@@ -621,15 +621,39 @@ functions, against a real PostgreSQL 16 driven as the real `app` role.
 These surfaced while building `lean_agent_core.worker`, the loop that joins M2.2's state machine to M2.3's
 scheduler, against a real PostgreSQL 16 as the real `app` role.
 
-- **Known seam, named rather than guessed: nothing re-claims a `decomposed` parent for reassembly.**
-  `claim_attempt` selects `status = 'open'`, so a parent that decomposes is never picked up again — and spec
-  §6.4 is explicit that a parent becomes proved only by presenting its own verdict ("Reassembly produces a real
-  attempt ... and flows through `mark_proved` like anything else"). Closing this needs a decision that is not
-  checkable yet: whether a fully-proved-group parent re-enters the queue as `open` (losing the `decomposed`
-  marker, edges still present) or the claim widens to select `decomposed` parents directly, and what a *failed*
-  reassembly returns it to. That only becomes testable once a reassembly runner exists, which is M2.5's
-  `DecomposeAndConquer`. Recorded in `worker.py` and left undone deliberately — a guess baked into the scheduler
-  and validated by nothing is worse than a documented hole.
+- **Known gap, planned rather than guessed: reassembly scheduling (spec §6.4). Scheduled for Phase 4.**
+  Two of §6.4's arrows are unreachable, and they are halves of one problem rather than two problems:
+  `claim_attempt` selects `status = 'open'`, so a `decomposed` parent is never claimed and can never present the
+  attempt spec requires ("Reassembly produces a real attempt with a real link and flows through `mark_proved`
+  like anything else"); and nothing calls `mark_blocked`, so a child reaching a terminal status never causes its
+  parents to be re-evaluated and `groups_exhausted` is dead code.
+
+  **Both are pinned by `xfail(strict=True)` tests in `tests/db/test_state.py`** ("Known gap: reassembly
+  scheduling"), which report as expected failures today and fail loudly the moment either is closed — verified by
+  simulating the fix and confirming the `XPASS(strict)` failure. Whoever closes the gap removes the markers.
+
+  **Why Phase 4 and not sooner**: nothing in `packages/` inserts an `obligation_edge` (only tests do, by hand), so
+  no component can produce a `decomposed` obligation at all. The only policy that decomposes is
+  `DecomposeAndConquer`, which spec §8 places in **Phase 4** — whose exit criterion, "a multi-`sorry` file closed
+  end to end with a materialized artifact that links", *is* the validation this design needs. Phase 3
+  (`WholeProofSampler`, `RepairLoop`) decomposes nothing, so the gap stays unreachable through it.
+
+  **Four questions Phase 4 has to answer**: who re-schedules a `decomposed` parent; what a *failed* reassembly
+  returns it to; who calls `mark_blocked`; and whether a reassembly attempt charges `budget_attempts` (spec's
+  diagram is silent).
+
+  **Provisional recommendation** — promotion, not widening the claim. A `SECURITY DEFINER`
+  `promote_reassembly(parent)` moving `decomposed -> open` only when some group is fully proved, called from the
+  control loop's commit path when a child reaches a terminal status — the same hook that would call
+  `mark_blocked` when every group is dead. Three reasons it beats widening `claim_attempt`'s `WHERE`: it leaves
+  the claim untouched, which protects spec's Phase 3 exit criterion that "the Phase 2 symbolic baseline still
+  passes bit-identically" (widening changes the candidate set, and `ORDER BY priority DESC, depth ASC` would sort
+  shallow parents ahead of existing work); it needs **no new status and no migration**, since a promoted parent
+  is `open` with edges and a failed reassembly's `release_obligation` returns it to `open` to retry until budget
+  exhausts — which dissolves the "lost `decomposed` marker" worry, because the runner reads group state rather
+  than the parent's status; and it makes "who noticed the group completed" explicit instead of hiding it in a
+  `WHERE` clause. Genuinely open within that: whether the trigger is the commit path (timely, couples the loop to
+  the DAG) or a sweeper beside the reaper (simpler, matches precedent, adds latency).
 - **Only a *declared* `InfraError` is unbudgeted; an undeclared exception is charged as a failed attempt.** This
   is a deliberate refinement of §6.4, not an oversight. Treating every crash as infrastructure means an
   obligation that reliably crashes the policy is retried forever at no cost, occupying a worker indefinitely and

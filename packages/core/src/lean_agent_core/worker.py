@@ -16,16 +16,18 @@ Run-level budgets (tokens, wallclock, kernel-seconds across a whole run) live in
 budget that governs *scheduling* -- `obligation.budget_attempts` -- because that is the one the
 state machine's `failed` arrow depends on. The others need a policy that actually spends tokens.
 
-**Known seam: nothing re-claims a `decomposed` parent for reassembly yet.** `claim_attempt` selects
-`status = 'open'`, so once a parent decomposes it is never picked up again, and spec §6.4 is
-explicit that a parent becomes proved only by presenting its own verdict ("Reassembly produces a
-real attempt with a real link and flows through `mark_proved` like anything else"). Making that
-attempt claimable needs a decision this milestone cannot make honestly -- whether a
-fully-proved-group parent re-enters the queue as `open` (losing the `decomposed` marker, and with
-its edges still present) or whether the claim widens to select `decomposed` parents directly, and
-what a *failed* reassembly then returns it to. That choice only becomes checkable once a
-reassembly runner exists to validate it against, which is M2.5's `DecomposeAndConquer`. Guessing
-now would bake an untested answer into the scheduler.
+**Known gap, scheduled for Phase 4: nothing re-claims a `decomposed` parent for reassembly, and
+nothing calls `mark_blocked`.** `claim_attempt` selects `status = 'open'`, so once a parent
+decomposes it is never picked up again -- and spec §6.4 is explicit that a parent becomes proved
+only by presenting its own verdict. Both halves are pinned by `xfail(strict=True)` tests in
+`tests/db/test_state.py`, which fail loudly the moment either is closed.
+
+It is not fixed here because it cannot be *validated* here: nothing in `packages/` inserts an
+`obligation_edge`, so no component produces a `decomposed` obligation at all. The only policy that
+decomposes is `DecomposeAndConquer`, which spec §8 places in Phase 4 -- whose exit criterion is
+precisely the multi-`sorry` end-to-end run this design needs to be checked against. CLAUDE.md
+carries the four open questions and a provisional recommendation (promotion rather than widening
+this claim, which would perturb the Phase 3 "bit-identical baseline" exit criterion).
 """
 
 from __future__ import annotations
