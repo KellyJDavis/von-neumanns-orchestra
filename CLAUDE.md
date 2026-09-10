@@ -33,8 +33,9 @@ acceptance path on one submission: link + replay + audit, writing the `verdict` 
 M2.2 (the obligation state machine — `lean_agent_core.state` plus the `SECURITY DEFINER` transition
 functions and cycle-guard trigger in `deploy/grants.sql`) and M2.3 (scheduler — `lean_agent_core.scheduler`:
 claim, lease, heartbeat, reaper) M2.4 (control loop — `lean_agent_core.worker`) and M2.5 (Policy/Action, the executor, and
-`SymbolicPortfolio` — the null agent proves real Lean goals with zero model calls) are done; next is M2.6
-(ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as its httpx client), M2.10
+`SymbolicPortfolio` — the null agent proves real Lean goals with zero model calls) and M2.6 (ingestion —
+`lean_agent_api.ingestion`: submission → sealed goals → obligations, with §4.5 admission signals) are done; next
+is M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as its httpx client), M2.10
 (miniF2F exit-gate validation).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
@@ -711,6 +712,55 @@ These surfaced while building `lean_agent_core.{actions,protocols,executor}` and
   real implementation to show its shape is right, and the *deployed* client is an httpx one that belongs with
   M2.9. Writing it over the real FastAPI app exercises the genuine `/v1/link` path — real worker, real kernel —
   without committing early to an HTTP client design.
+
+## Implementation notes: ingestion facts (M2.6)
+
+These surfaced while building `lean_agent_api.ingestion` against a real kernel and a real PostgreSQL.
+
+- **Spec's `obligation` DDL contradicts spec §4.1, and the migration resolves it toward §4.1.**
+  `sealed_olean_sha bytea NOT NULL` cannot be satisfied at obligation-creation time, because §4.1 also says "the
+  `.olean` artifact is produced lazily out of band ... the hot path never waits on the build system". It is now
+  nullable, meaning "not yet materialized" — and that is *self-enforcing* rather than merely documented, since
+  `mark_proved` compares `v.sealed_olean_sha_observed = o.sealed_olean_sha`, which is NULL (never true) while
+  this is NULL. An obligation whose bundle was never built cannot reach `proved`, which is exactly right.
+- **`obligation.bundle_sha` is new, and it is not the same digest as `sealed_olean_sha`.** §4.1 names the
+  generated file `LeanAgent/Goals/Bundle_<digest>.lean` where the digest is of the bundle *source* — that is
+  what tells a worker which module to import. The compiled artifact's digest cannot serve, since you would have
+  to build the file to learn its name. Two digests, easy to conflate, and M2.1.2's notes say the same thing from
+  the other end.
+- **`app` has no `INSERT` on `run` in spec §5.5's grant list, which is an omission.** §6.1 puts `POST /v1/runs`
+  in the *public* API — the `app` role — so ingestion cannot create the run it is asked to create. Confirmed the
+  hard way: "permission denied for table run". Granted `INSERT` only; §6.1's cancel endpoint will need
+  `UPDATE (status)` and should get it then, with its own reason, since `run.status` gates `claim_attempt`.
+- **`/v1/decompose` elaborates with `autoImplicit` at Lean's default (*on*), unlike `/v1/seal`, which forces it
+  off — so a submitted file containing a typo does not fail.** The typo is auto-bound as a binder, decomposition
+  reports success, and the abstracted statement carries it as an honest explicit `∀`. Found by a test that
+  expected a file containing `NoSuchIdentifier` not to elaborate and got four obligations. This is the design
+  working as intended, not a bug: §4.5 lists "elaborates only with `autoImplicit true`" as a *signal*,
+  non-blocking, "recorded on the obligation and reported" — forcing it off during decomposition would reject a
+  class of submission spec deliberately admits. The consequence for implementation is that the signal must be
+  measured **on the submitted source**, before decomposition erases the evidence: once the statement is
+  abstracted the generalization is written down and there is nothing left to detect.
+- **Ingestion creates roots and no edges.** §6.3 step 4 mentions "edges recording reassembly", but a submitted
+  file has no parent obligation to hang them from — `root_obligations` is a list and each `sorry` site is a root.
+  Reassembling a *file* is materialization (step 6): the assembled file elaborates and each declaration links.
+  Edges appear when a *policy* decomposes an obligation, which is a `Decompose` action no executor performs yet,
+  so M2.4's "nothing re-claims a `decomposed` parent" seam is still untouched — M2.6 does not force it either,
+  contrary to what looked likely from M2.5.
+- **A decomposed lemma whose statement does not round-trip is refused rather than sealed.** M2.1.3's check says
+  the printed text does not seal back to the `Expr` it came from, so an obligation created from it would prove
+  something other than the file needs — statement drift arriving through the one door that bypasses sealing's own
+  guarantee.
+- **Two of §4.5's five signals carry a `[measure]` marker, so admission records *what happened* rather than a
+  judgement.** `closed_by`/`closed_in_ms` say which tactic closed a root and how fast; whether that is "too
+  fast" is a threshold nobody has measured, and inventing one would bake an unmeasured number into the schema.
+  Two other signals are absent for concrete reasons: free universe metavariables surface as an ordinary
+  elaboration error (M1.1) and are already in a seal failure's diagnostics, and "no binder is used in the body"
+  needs `Expr`-level analysis nothing exposes yet.
+- **`exact?` closes more than you would guess when picking a "hard" test goal.** `∀ n m : Nat, n + m = m + n`
+  looked like ordinary work and is closed by `exact?` in ~230 ms via `Nat.add_comm` — which is the admission
+  signal firing correctly. A goal that genuinely needs induction (`∀ n : Nat, 2 ^ n ≥ n + 1`) is what tests
+  "the signal stays quiet on ordinary work".
 
 ## Implementation notes: blob store facts
 
