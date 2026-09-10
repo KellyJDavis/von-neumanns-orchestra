@@ -25,6 +25,7 @@ from lean_agent_models.template import (
     TemplateError,
     load_chat_template,
     load_chat_tokenizer,
+    tokenizer_digest,
 )
 
 DATA = Path(__file__).parent / "data"
@@ -268,3 +269,47 @@ def test_a_directory_without_a_converted_tokenizer_is_refused(tmp_path: Path) ->
     (tmp_path / "tokenizer.json").write_text("{}")
     with pytest.raises(TemplateError, match="not upstream's `tokenizer.json`"):
         load_chat_tokenizer(tmp_path)
+
+
+def test_a_pinned_tokenizer_digest_is_verified(reference: dict[str, Any]) -> None:
+    """M3.4 -- what turns "a converted file is present" into an actual pin.
+
+    Requiring `tokenizer.converted.json` only requires that *some* converted tokenizer is sitting
+    in the directory. Swap in a different model's and every prompt tokenizes differently, with
+    nothing raised -- which is the failure mode this whole module exists to prevent. Every other
+    pinned artifact in this repo is digest-checked (the miniF2F corpus, the Phase 2 baseline); this
+    one is too, and a deployment supplies the expected digest from
+    `[models.<role>].tokenizer_revision`.
+    """
+    directory = DATA / _model(reference, "TinyLlama/TinyLlama-1.1B-Chat-v1.0")["directory"]
+    digest = tokenizer_digest(directory)
+    assert len(digest) == 64
+
+    # The right digest loads.
+    chat = load_chat_tokenizer(directory, expect_sha256=digest)
+    assert chat.revision == digest
+
+    # A wrong one refuses, and says both values so the mismatch is diagnosable.
+    with pytest.raises(TemplateError, match="expected " + "0" * 64):
+        load_chat_tokenizer(directory, expect_sha256="0" * 64)
+
+
+def test_the_digest_is_of_the_converted_artifact_not_an_upstream_revision(
+    reference: dict[str, Any],
+) -> None:
+    """Two upstream revisions can convert to the same tokenizer, and one upstream revision can
+    convert differently under a different `transformers`. What decides the token ids is this file's
+    bytes, so this file's bytes are what is pinned."""
+    directory = DATA / _model(reference, "TinyLlama/TinyLlama-1.1B-Chat-v1.0")["directory"]
+    import hashlib
+
+    expected = hashlib.sha256((directory / "tokenizer.converted.json").read_bytes()).hexdigest()
+    assert tokenizer_digest(directory) == expected
+
+
+def test_an_explicit_revision_wins_over_the_computed_digest(reference: dict[str, Any]) -> None:
+    """A deployment that already names its tokenizer by an upstream revision should be able to
+    record that on the trajectory instead; the digest is the default, not a straitjacket."""
+    directory = DATA / _model(reference, "TinyLlama/TinyLlama-1.1B-Chat-v1.0")["directory"]
+    chat = load_chat_tokenizer(directory, revision="upstream-abc123")
+    assert chat.revision == "upstream-abc123"

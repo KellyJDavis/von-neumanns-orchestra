@@ -40,6 +40,7 @@ never trained on:
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -225,7 +226,21 @@ def load_chat_template(tokenizer_config_path: Path) -> ChatTemplate:
 CONVERTED_TOKENIZER_NAME = "tokenizer.converted.json"
 
 
-def load_chat_tokenizer(directory: Path, *, revision: str | None = None) -> ChatTokenizer:
+def tokenizer_digest(directory: Path) -> str:
+    """sha256 of the converted tokenizer artifact -- the thing a `tokenizer_revision` names.
+
+    Digesting the *converted* file rather than an upstream revision string is what makes the pin
+    mean something here: two upstream revisions can convert to the same tokenizer, and the same
+    upstream revision can convert differently under a different `transformers`. What decides the
+    token ids is this file's bytes, so this file's bytes are what gets pinned and recorded onto
+    `trajectory.tokenizer_revision` (§7.3).
+    """
+    return hashlib.sha256((directory / CONVERTED_TOKENIZER_NAME).read_bytes()).hexdigest()
+
+
+def load_chat_tokenizer(
+    directory: Path, *, revision: str | None = None, expect_sha256: str | None = None
+) -> ChatTokenizer:
     """Load a chat template and its *converted* tokenizer from one directory.
 
     **`transformers` rewrites a tokenizer when it loads one, and the rewrite changes token ids.**
@@ -247,6 +262,12 @@ def load_chat_tokenizer(directory: Path, *, revision: str | None = None) -> Chat
     tokenizer converted once, by something that has `transformers`, before this system can prompt
     it.** Pointing this at a raw upstream `tokenizer.json` is not a supported shortcut, which is
     why the file name differs rather than being an optional override.
+
+    `expect_sha256` is what turns "a converted file is present" into an actual pin. Without it,
+    this requires only that *some* converted tokenizer is sitting in the directory -- swap in a
+    different model's and the ids change with nothing raised, which is the failure mode the whole
+    module is about. A deployment supplies it from `[models.<role>].tokenizer_revision`, and
+    `tokenizer_digest` computes it.
     """
     converted = directory / CONVERTED_TOKENIZER_NAME
     if not converted.exists():
@@ -255,8 +276,15 @@ def load_chat_tokenizer(directory: Path, *, revision: str | None = None) -> Chat
             "not upstream's `tokenizer.json` -- loading the raw file yields different token ids "
             "for SentencePiece models. Generate it with tests/models/record_templates.py."
         )
+    actual = tokenizer_digest(directory)
+    if expect_sha256 is not None and actual != expect_sha256:
+        raise TemplateError(
+            f"{converted} has sha256 {actual}, expected {expect_sha256}. A different tokenizer "
+            "produces different token ids for the same prompt, so this is refused rather than "
+            "silently producing a trajectory that cannot be replayed."
+        )
     return ChatTokenizer(
         template=load_chat_template(directory / "tokenizer_config.json"),
         tokenizer=Tokenizer.from_str(converted.read_text()),
-        revision=revision,
+        revision=revision if revision is not None else actual,
     )
