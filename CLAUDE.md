@@ -32,10 +32,10 @@ acceptance path on one submission: link + replay + audit, writing the `verdict` 
 (`/v1/decompose` — `sorry` extraction into closed standalone statements) are done, completing M2.1.
 M2.2 (the obligation state machine — `lean_agent_core.state` plus the `SECURITY DEFINER` transition
 functions and cycle-guard trigger in `deploy/grants.sql`) and M2.3 (scheduler — `lean_agent_core.scheduler`:
-claim, lease, heartbeat, reaper) and M2.4 (control loop — `lean_agent_core.worker`) are done; next is
-M2.5 (Policy/Action +
-SymbolicPortfolio), M2.6 (ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as
-its httpx client), M2.10 (miniF2F exit-gate validation).
+claim, lease, heartbeat, reaper) M2.4 (control loop — `lean_agent_core.worker`) and M2.5 (Policy/Action, the executor, and
+`SymbolicPortfolio` — the null agent proves real Lean goals with zero model calls) are done; next is M2.6
+(ingestion), M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as its httpx client), M2.10
+(miniF2F exit-gate validation).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -658,6 +658,59 @@ scheduler, against a real PostgreSQL 16 as the real `app` role.
   `AttemptResult.outcome` is an `ObligationOutcome`, so a runner cannot invent a transition the diagram has no
   edge for; `BUDGET_EXHAUSTED`/`GROUPS_EXHAUSTED` are rejected outright, since a runner has no way to know
   whether the budget is spent or every competing group is dead.
+
+## Implementation notes: policy/executor facts (M2.5)
+
+These surfaced while building `lean_agent_core.{actions,protocols,executor}` and
+`lean_agent_policies.symbolic`, against the real v4.33.1 toolchain and a real PostgreSQL.
+
+- **A sealed goal is a `def`, so a tactic facing it sees an opaque constant — the development must
+  `unfold` it first.** Against the real kernel: `decide` reports "failed to synthesize Decidable
+  Goals.G_arith", `simp` "made no progress", `omega` "no usable constraints". `unfold <goal>; <tactic>` fixes all
+  three, and `delta` works too. `with_unfolding_all` does **not** — it changes what defeq checks may unfold, not
+  the goal's syntactic form. Unfolding is not the agent stating the goal: it names a constant and asks Lean to
+  expand it, and the kernel still type-checks the result against the sealed constant at link time.
+- **The proof form is `def sol : LeanAgent.Goals.G_x := by ...`** — the entry's *type is the sealed constant*,
+  so spec §1.1's "the agent never writes the goal statement" holds of the text a policy emits, not merely of
+  what the kernel checks afterwards. Universe parameters must be spelled out on both the entry and the goal
+  reference. A `def` whose type is a `Prop` draws `linter.defProp` on every Prop goal, which is pure noise in a
+  successful attempt's diagnostics; it is silenced in the generated source, and that is safe because linters
+  cannot affect link, replay or audit (unlike spec §7.2's option deny-list, which is about options that change
+  what is *checked*).
+- **`verdict.attempt_id` is a primary key, so one attempt gets one verdict — which forces "screen with `check`,
+  spend the one `link`".** Linking every portfolio member blew up on the second tactic with a `verdict_pkey`
+  violation. That is the schema saying what spec's endpoint table already said in one line each: `/v1/check`
+  "elaborate a body against a base env", `/v1/link` "then replay and audit; **writes the verdict row**". The
+  executor now screens each candidate through `/v1/check` (cheap, cached, writes nothing) and commits only a
+  candidate that elaborates to `/v1/link`, once — after which the attempt is over regardless of outcome, because
+  its one verdict is spent. A retry is a *new attempt*, which is exactly what the primary key is telling you.
+  A candidate that passes `check` and fails `link` is information rather than noise: `check` only elaborates,
+  while `link` re-checks in the kernel with forced options, replays and audits.
+- **`/v1/check` grew a `bundle_sha`, and it belongs in the cache key.** A screening development names the sealed
+  goal constant, so its worker needs the bundle on its path — the same one-warm-slot-per-(base env, bundle) cost
+  `/v1/link` pays. Putting `bundle_sha` into `compute_cache_key`'s options is not bookkeeping: the same body
+  against two different bundles is two different checks, since the constant it names means different things, and
+  a key that ignored it would serve one bundle's answer to another's question — a wrong *acceptance*, not a
+  stale one.
+- **A `Protocol` with bare attribute annotations demands *settable* attributes, which a frozen dataclass is
+  not.** mypy caught `SymbolicPortfolio` failing `Policy` for exactly this. Declaring each member as a
+  `@property` accepts both, and is the honest requirement anyway: a policy whose `config_hash` could be
+  reassigned after the run manifest recorded it is unreproducible in precisely the way §7.3 exists to prevent.
+  Worth a `def _conforms_to_policy_protocol() -> Policy: return SymbolicPortfolio()` in the package itself —
+  without a *typed* use inside `packages/`, protocol drift only surfaces at the executor's first call, since
+  `mypy --strict` runs over `packages` and not `tests`.
+- **§7.1's provenance rule is one-directional and implemented as such.** Nonzero completions means *not*
+  `symbolic` and the provenance must come from the backend that served them; zero completions is `symbolic` even
+  when a backend was registered, because a policy that could have asked a model and did not produced a symbolic
+  trajectory. Completions with nothing to attribute them to *raise* rather than fall back — `trajectory.provenance`
+  is `NOT NULL` with no default precisely so an unattributable trajectory cannot reach the corpus.
+- **`PolicyContractError` is deliberately not an `InfraError`.** A policy proposing a tool outside its own
+  allowlist, or an action no executor implements, is a bug in the policy, not the infrastructure — and M2.4's
+  finding applies again: treating it as unbudgeted would let a misconfigured policy retry forever at no cost.
+- **The `LeanService` implementation used by the end-to-end test lives in the test.** The protocol needed one
+  real implementation to show its shape is right, and the *deployed* client is an httpx one that belongs with
+  M2.9. Writing it over the real FastAPI app exercises the genuine `/v1/link` path — real worker, real kernel —
+  without committing early to an HTTP client design.
 
 ## Implementation notes: blob store facts
 
