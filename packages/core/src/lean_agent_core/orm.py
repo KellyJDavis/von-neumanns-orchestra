@@ -115,7 +115,20 @@ class Obligation(Base):
         LargeBinary, ForeignKey("base_env.digest"), nullable=False
     )
     goal_digest: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    sealed_olean_sha: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    #: sha256 of the sealed bundle's *source* -- spec §4.1 names the generated file
+    #: `LeanAgent/Goals/Bundle_<digest>.lean`, so this is what tells a worker which module to
+    #: import. Not in spec's DDL, and its absence is a gap rather than an omission on our part:
+    #: `sealed_olean_sha` below is the *compiled* artifact's digest, which cannot name the file to
+    #: compile (you would have to build it to learn its name). Nullable only for rows created
+    #: before a bundle exists; without it an obligation cannot be linked against.
+    bundle_sha: Mapped[bytes | None] = mapped_column(LargeBinary)
+    #: Nullable, deviating from spec's `bytea NOT NULL` -- because spec §4.1 also says "the
+    #: `.olean` artifact is produced lazily out of band ... the hot path never waits on the build
+    #: system", and those two cannot both hold at obligation-creation time. NULL means "not yet
+    #: materialized", and it is self-enforcing rather than merely documented: `mark_proved`
+    #: compares `v.sealed_olean_sha_observed = o.sealed_olean_sha`, which is NULL (never true)
+    #: while this is NULL, so an obligation whose bundle was never built cannot be proved.
+    sealed_olean_sha: Mapped[bytes | None] = mapped_column(LargeBinary)
     goal_src: Mapped[str] = mapped_column(Text, nullable=False)
     decl_name: Mapped[str] = mapped_column(Text, nullable=False)
     admission: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")

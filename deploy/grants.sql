@@ -27,6 +27,17 @@ $$;
 -- Application (API + agent workers).
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO app;
 GRANT INSERT ON attempt, tool_call, trajectory, obligation, obligation_edge TO app;
+-- `run` is not in spec §5.5's own list, which is an omission rather than a deliberate exclusion:
+-- §6.1 puts `POST /v1/runs` ("create a run from a submission") in the *public* API, which is the
+-- `app` role, so ingestion cannot create the run it is asked to create without this. Confirmed
+-- the hard way -- ingestion's first run against the real grants failed with "permission denied
+-- for table run".
+--
+-- INSERT only, not UPDATE. Nothing in M2.6 changes a run after creation, and §6.1's cancel
+-- endpoint (M2.8) is the thing that will need `UPDATE (status)` -- granted then, with its own
+-- reason, rather than pre-emptively here. `run.status` gates `claim_attempt`, so widening it is a
+-- scheduling decision and not merely bookkeeping.
+GRANT INSERT ON run TO app;
 GRANT UPDATE (priority, spent_attempts, spent_tokens, spent_kernel_ms, updated_at)
   ON obligation TO app;                       -- never GRANT UPDATE ON obligation
 GRANT UPDATE ON attempt TO app;

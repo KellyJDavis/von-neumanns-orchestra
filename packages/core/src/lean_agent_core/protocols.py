@@ -9,7 +9,7 @@ that is one. `ModelBackend`, `ToolClient` and `Sink` are still absent for the sa
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -60,6 +60,60 @@ class CheckOutcome:
     elapsed_ms: int = 0
 
 
+@dataclass(frozen=True)
+class SealGoalRequest:
+    """One goal to seal. `level_params` is required whenever `statement` names a universe: sealing
+    forces `autoImplicit false`, so a free universe name is an error rather than something Lean
+    binds (M2.1.3's finding)."""
+
+    name: str
+    statement: str
+    level_params: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SealedGoal:
+    decl_name: str
+    goal_src: str
+    goal_digest: str
+    level_params: tuple[str, ...]
+    diagnostics: tuple[str, ...]
+    ok: bool
+
+
+@dataclass(frozen=True)
+class SealOutcome:
+    """`goals` is parallel to the request's, so a caller creates obligations for the entries that
+    sealed and reports the rest -- spec §6.1's "a submission with ten goals of which one does not
+    elaborate creates nine obligations and reports the tenth"."""
+
+    ok: bool
+    goals: tuple[SealedGoal, ...]
+    bundle_source: str
+    bundle_digest: str
+
+
+@dataclass(frozen=True)
+class DecomposedLemma:
+    name: str
+    statement: str
+    level_params: tuple[str, ...]
+    round_trips: bool
+    diagnostics: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DecomposeOutcome:
+    """`ok` with no `lemmas` means the development had no `sorry`; `ok=False` means it did not
+    elaborate. A lemma with `round_trips=False` must not become an obligation: its printed
+    statement does not seal back to the `Expr` it came from (M2.1.3)."""
+
+    ok: bool
+    lemmas: tuple[DecomposedLemma, ...]
+    reassembly: str
+    diagnostics: tuple[str, ...]
+
+
 class LeanService(Protocol):
     """The Lean Execution Service as a policy executor sees it (spec §6.2, Appendix A).
 
@@ -74,8 +128,8 @@ class LeanService(Protocol):
     `check` takes `bundle_sha` because a screening development names the sealed goal constant, and
     a worker without the bundle on its path cannot resolve it.
 
-    `seal` and `decompose` are built and served (M2.1.x) but absent here: no executor action needs
-    them yet. `Decompose` will, once M2.6 can seal and schedule children.
+    `seal` and `decompose` join them for ingestion (M2.6), which is a caller of this service that
+    is not an executor: it turns a submission into obligations before any policy runs.
     """
 
     async def check(
@@ -86,6 +140,18 @@ class LeanService(Protocol):
         bundle_sha: str | None = None,
         timeout_ms: int | None = None,
     ) -> CheckOutcome: ...
+
+    async def seal(
+        self,
+        *,
+        base_env_digest: str,
+        goals: Sequence[SealGoalRequest],
+        timeout_ms: int | None = None,
+    ) -> SealOutcome: ...
+
+    async def decompose(
+        self, *, base_env_digest: str, development: str, timeout_ms: int | None = None
+    ) -> DecomposeOutcome: ...
 
     async def link(
         self,
