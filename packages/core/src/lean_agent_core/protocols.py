@@ -3,7 +3,12 @@
 Each arrives when something implements *and* something consumes it, not before: a protocol with
 no implementation is a guess about a shape. `BlobStore` came with M1.7; `LeanService` and `Policy`
 come with M2.5, which is the first milestone with both an executor that calls one and a policy
-that is one. `ModelBackend`, `ToolClient` and `Sink` are still absent for the same reason.
+that is one. `ModelBackend` is the one deliberate exception, added in M3.1 ahead of the client that implements
+it (M3.4). The rule exists to stop a *guessed* shape being frozen, and this one is not guessed: the
+request and response types below were checked field by field against a real vLLM 0.28.0 serving
+`/v1/completions` -- token-id prompts accepted and echoed back, per-token logprobs returned -- and
+the types are this milestone's actual subject. `ToolClient` and `Sink` are still absent, with no
+such justification.
 """
 
 from __future__ import annotations
@@ -14,7 +19,8 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from lean_agent_core.actions import Action, Budget, ObligationContext
-from lean_agent_core.enums import VerdictKind
+from lean_agent_core.enums import ProvenanceClass, VerdictKind
+from lean_agent_core.roles import ModelRole
 
 
 class BlobStore(Protocol):
@@ -208,7 +214,7 @@ class Policy(Protocol):
     def tools(self) -> frozenset[str]: ...
 
     @property
-    def roles(self) -> frozenset[str]: ...
+    def roles(self) -> frozenset[ModelRole]: ...
 
     def propose(self, ctx: ObligationContext, budget: Budget) -> AsyncIterator[Action]: ...
 
@@ -221,3 +227,117 @@ class ToolResult:
     tool: str
     ok: bool
     payload: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SamplingParams:
+    """What was asked of the model, as opposed to what it answered.
+
+    Separate from `CompletionRequest` because it is addressed three times over: it is part of the
+    response cache key (spec §6.5: `sha256(prompt_tokens) ‖ model_id ‖ canonical(sampling) ‖
+    seed`), it is stored on `trajectory.sampling`, and it comes from one `[models.<role>]` config
+    block. `seed` is deliberately *not* a member -- spec's cache key names it separately, and
+    folding it in would make two runs that differ only by seed look like one cache entry.
+    """
+
+    temperature: float = 0.0
+    top_p: float = 1.0
+    max_tokens: int = 1024
+    n: int = 1
+    stop: tuple[str, ...] = ()
+
+    def canonical(self) -> dict[str, object]:
+        """The form that goes into a cache key and into `trajectory.sampling`.
+
+        A plain dict with sorted keys at the point of use rather than a JSON string here, so the
+        same value can be hashed by the cache and stored as `jsonb` without one of them
+        re-serializing the other's output and drifting.
+        """
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+            "n": self.n,
+            "stop": list(self.stop),
+        }
+
+
+@dataclass(frozen=True)
+class CompletionRequest:
+    """One request to a model backend, as **token ids** (spec §6.5).
+
+    `prompt_token_ids`, never a prompt string, and that is the load-bearing decision in this whole
+    layer. Spec: rendering the chat template client-side and sending the id list is required
+    because `tokenize=False` output "does not re-tokenize to the identity around special tokens and
+    whitespace", and server-side templating "loses the exact token sequence entirely, which breaks
+    replay and on-policy RL". A `str` field here would make that mistake available.
+    """
+
+    prompt_token_ids: tuple[int, ...]
+    sampling: SamplingParams = field(default_factory=SamplingParams)
+    seed: int | None = None
+    #: Wallclock budget for the whole request. `None` defers to the backend's own default.
+    timeout_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class Completion:
+    """One sample. A request with `n > 1` yields several.
+
+    `logprobs` is required and parallel to `token_ids`, not optional: spec §6.5 says to request
+    logprobs on every sampled token and store them, because "recomputing behavior-policy logprobs
+    later produces the train/inference mismatch", and §9 lists them among the things that *cannot
+    be recomputed correctly later*. Making the field non-optional means a backend that cannot
+    supply them fails loudly at the boundary rather than writing a NULL nobody notices until
+    training. That failure mode is real and observed: Ollama's OpenAI-compatible layer accepts
+    `logprobs` and silently drops it.
+    """
+
+    token_ids: tuple[int, ...]
+    logprobs: tuple[float, ...]
+    text: str
+    finish_reason: str
+
+
+@dataclass(frozen=True)
+class CompletionResponse:
+    """What a backend answered, carrying everything a trajectory row needs (spec §5.3).
+
+    `prompt_token_ids` is echoed back rather than assumed to equal the request's: replay compares
+    what the server actually saw, and a server that re-tokenized would be caught here rather than
+    silently producing a trajectory that cannot be replayed.
+    """
+
+    completions: tuple[Completion, ...]
+    prompt_token_ids: tuple[int, ...]
+    model_id: str
+    #: Recorded onto `trajectory` so a published result names the exact weights and tokenizer
+    #: (spec §7.3's manifest). `None` where a backend cannot report them, which is itself worth
+    #: seeing in the row.
+    model_weights_hash: str | None = None
+    tokenizer_revision: str | None = None
+    cache_hit: bool = False
+    elapsed_ms: int = 0
+
+
+class ModelBackend(Protocol):
+    """Spec Appendix A. One serving endpoint behind one `ModelRole`.
+
+    `provenance` is an attribute of the *backend*, not of a call, because §7.1 derives
+    `trajectory.provenance` "from `ModelBackend.provenance` at model registration time. It is never
+    asserted by whatever code is writing the trajectory row." A backend that could be asked for its
+    provenance per call would let the caller choose, which is the thing that rule prevents.
+
+    Read-only properties for the reason `Policy` documents: a bare annotation in a Protocol demands
+    a settable attribute, which a frozen implementation cannot satisfy.
+    """
+
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def provenance(self) -> ProvenanceClass: ...
+
+    async def complete(self, request: CompletionRequest) -> CompletionResponse: ...
+
+    async def tokenize(self, text: str) -> tuple[int, ...]: ...
