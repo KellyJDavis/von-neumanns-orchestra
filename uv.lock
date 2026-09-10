@@ -401,11 +401,19 @@ name = "lean-agent-api"
 version = "0.0.0"
 source = { editable = "packages/api" }
 dependencies = [
+    { name = "fastapi" },
     { name = "lean-agent-core" },
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "lean-agent-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "fastapi" },
+    { name = "lean-agent-core", editable = "packages/core" },
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
+]
 
 [[package]]
 name = "lean-agent-cli"

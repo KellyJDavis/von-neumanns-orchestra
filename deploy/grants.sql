@@ -33,11 +33,27 @@ GRANT INSERT ON attempt, tool_call, trajectory, obligation, obligation_edge TO a
 -- the hard way -- ingestion's first run against the real grants failed with "permission denied
 -- for table run".
 --
--- INSERT only, not UPDATE. Nothing in M2.6 changes a run after creation, and §6.1's cancel
--- endpoint (M2.8) is the thing that will need `UPDATE (status)` -- granted then, with its own
--- reason, rather than pre-emptively here. `run.status` gates `claim_attempt`, so widening it is a
--- scheduling decision and not merely bookkeeping.
+-- INSERT, plus column-level UPDATE on `status` alone for §6.1's cancel endpoint.
+--
+-- `status` is granted narrowly and every other column deliberately is not: `manifest`,
+-- `manifest_hash`, `axiom_allowlist`, `allow_sorry` and `reassembly_blob` are the submission's
+-- *frozen* record (spec §7.3: "frozen at creation and included in every published result"), and a
+-- run whose allowlist could be widened after the fact is a run whose published result means
+-- nothing. Ingestion writes them once in a single INSERT and never touches the row again.
+--
+-- `status` genuinely has to move: `claim_attempt` requires `r.status = 'running'`, so cancelling a
+-- run *is* setting this column. That is the whole cooperative-cancel mechanism -- no new attempts
+-- are claimed, and live ones "finish or expire" (§6.1) on their own.
 GRANT INSERT ON run TO app;
+GRANT UPDATE (status) ON run TO app;
+-- `base_env` INSERT, for §6.1's `POST /v1/base-envs` ("Register a project prelude; returns
+-- `digest`") -- another public endpoint spec's §5.5 grant list does not account for, which lists
+-- `base_env` only under `leanserv`. Registering a recipe and *materializing* an environment are
+-- different jobs on different sides of that boundary.
+--
+-- INSERT only. A registered environment is content-addressed by its recipe, so an UPDATE could
+-- only ever make the digest a lie -- and runs reference it by that digest.
+GRANT INSERT ON base_env TO app;
 GRANT UPDATE (priority, spent_attempts, spent_tokens, spent_kernel_ms, updated_at)
   ON obligation TO app;                       -- never GRANT UPDATE ON obligation
 GRANT UPDATE ON attempt TO app;
