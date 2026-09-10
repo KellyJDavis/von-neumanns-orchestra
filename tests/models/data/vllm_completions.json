@@ -1,0 +1,1452 @@
+{
+ "provenance": {
+  "recorded_from": "vllm 0.28.0 + vllm-metal plugin",
+  "endpoint_path": "/v1/completions",
+  "model_id": "Qwen/Qwen3-0.6B",
+  "recorded_at": "2026-09-10T16:52:51+00:00",
+  "note": "Real server responses, stored verbatim. Interactions with recorded=false are constructed and say why in their own note."
+ },
+ "interactions": [
+  {
+   "name": "greedy_single",
+   "recorded": true,
+   "note": "The ordinary case: one deterministic sample with per-token logprobs.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 8,
+    "temperature": 0.0,
+    "seed": 1234,
+    "logprobs": 1,
+    "return_token_ids": true
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-a07940789c82de45",
+    "object": "text_completion",
+    "created": 1789059167,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I'm a student of the University",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        3,
+        5,
+        7,
+        15,
+        18,
+        22
+       ],
+       "token_logprobs": [
+        -1.4426193237304688,
+        -1.9816466569900513,
+        -0.8837368488311768,
+        -1.8618056774139404,
+        -2.737832546234131,
+        -1.5308977365493774,
+        -2.3477108478546143,
+        -3.2424070835113525
+       ],
+       "tokens": [
+        ".",
+        " I",
+        "'m",
+        " a",
+        " student",
+        " of",
+        " the",
+        " University"
+       ],
+       "top_logprobs": [
+        {
+         ".": -1.4426193237304688
+        },
+        {
+         " I": -1.9816466569900513
+        },
+        {
+         "'m": -0.8837368488311768
+        },
+        {
+         " a": -1.8618056774139404
+        },
+        {
+         " student": -2.737832546234131
+        },
+        {
+         " of": -1.5308977365493774
+        },
+        {
+         " the": -2.3477108478546143
+        },
+        {
+         " University": -3.2424070835113525
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       13,
+       358,
+       2776,
+       264,
+       5458,
+       315,
+       279,
+       3822
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     }
+    ],
+    "service_tier": null,
+    "system_fingerprint": "vllm-0.28.0-ab2ba28f",
+    "usage": {
+     "prompt_tokens": 3,
+     "total_tokens": 11,
+     "completion_tokens": 8,
+     "prompt_tokens_details": null,
+     "completion_tokens_details": null
+    },
+    "kv_transfer_params": null,
+    "ec_transfer_params": null,
+    "metrics": null
+   }
+  },
+  {
+   "name": "greedy_single_repeat",
+   "recorded": true,
+   "note": "Byte-identical request to `greedy_single`, recorded separately so a test can assert the *server* was deterministic at record time rather than trusting the claim.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 8,
+    "temperature": 0.0,
+    "seed": 1234,
+    "logprobs": 1,
+    "return_token_ids": true
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-9395ca6b160c8296",
+    "object": "text_completion",
+    "created": 1789059169,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I'm a student of the University",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        3,
+        5,
+        7,
+        15,
+        18,
+        22
+       ],
+       "token_logprobs": [
+        -1.4426193237304688,
+        -1.9816466569900513,
+        -0.8837368488311768,
+        -1.8618056774139404,
+        -2.737832546234131,
+        -1.5308977365493774,
+        -2.3477108478546143,
+        -3.2424070835113525
+       ],
+       "tokens": [
+        ".",
+        " I",
+        "'m",
+        " a",
+        " student",
+        " of",
+        " the",
+        " University"
+       ],
+       "top_logprobs": [
+        {
+         ".": -1.4426193237304688
+        },
+        {
+         " I": -1.9816466569900513
+        },
+        {
+         "'m": -0.8837368488311768
+        },
+        {
+         " a": -1.8618056774139404
+        },
+        {
+         " student": -2.737832546234131
+        },
+        {
+         " of": -1.5308977365493774
+        },
+        {
+         " the": -2.3477108478546143
+        },
+        {
+         " University": -3.2424070835113525
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       13,
+       358,
+       2776,
+       264,
+       5458,
+       315,
+       279,
+       3822
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     }
+    ],
+    "service_tier": null,
+    "system_fingerprint": "vllm-0.28.0-ab2ba28f",
+    "usage": {
+     "prompt_tokens": 3,
+     "total_tokens": 11,
+     "completion_tokens": 8,
+     "prompt_tokens_details": null,
+     "completion_tokens_details": null
+    },
+    "kv_transfer_params": null,
+    "ec_transfer_params": null,
+    "metrics": null
+   }
+  },
+  {
+   "name": "sampled_n4",
+   "recorded": true,
+   "note": "n>1: one request, several completions, which is how `WholeProofSampler` runs.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 12,
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "n": 4,
+    "seed": 7,
+    "logprobs": 1,
+    "return_token_ids": true
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-84da2271f812c624",
+    "object": "text_completion",
+    "created": 1789059169,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I'm excited to share with you a list of ",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        3,
+        5,
+        13,
+        16,
+        22,
+        27,
+        31,
+        33,
+        38,
+        41
+       ],
+       "token_logprobs": [
+        -1.4426193237304688,
+        -1.9159895181655884,
+        -0.87242591381073,
+        -3.717625617980957,
+        -0.09438297152519226,
+        -1.0062322616577148,
+        -0.7878106236457825,
+        -0.010021844878792763,
+        -1.7134718894958496,
+        -3.8060874938964844,
+        -0.010083802975714207,
+        -2.3657004833221436
+       ],
+       "tokens": [
+        ".",
+        " I",
+        "'m",
+        " excited",
+        " to",
+        " share",
+        " with",
+        " you",
+        " a",
+        " list",
+        " of",
+        " "
+       ],
+       "top_logprobs": [
+        {
+         ".": -1.4426193237304688
+        },
+        {
+         " I": -1.9159895181655884
+        },
+        {
+         "'m": -0.87242591381073
+        },
+        {
+         " excited": -3.717625617980957,
+         " a": -1.9051257371902466
+        },
+        {
+         " to": -0.09438297152519226
+        },
+        {
+         " share": -1.0062322616577148
+        },
+        {
+         " with": -0.7878106236457825
+        },
+        {
+         " you": -0.010021844878792763
+        },
+        {
+         " a": -1.7134718894958496,
+         " my": -1.3384718894958496
+        },
+        {
+         " list": -3.8060874938964844,
+         " new": -1.4935874938964844
+        },
+        {
+         " of": -0.010083802975714207
+        },
+        {
+         " ": -2.3657004833221436
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       13,
+       358,
+       2776,
+       12035,
+       311,
+       4332,
+       448,
+       498,
+       264,
+       1140,
+       315,
+       220
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     },
+     {
+      "index": 1,
+      "text": " of data.\nThe challenge is to create a game where a",
+      "logprobs": {
+       "text_offset": [
+        0,
+        3,
+        8,
+        10,
+        13,
+        23,
+        26,
+        29,
+        36,
+        38,
+        43,
+        49
+       ],
+       "token_logprobs": [
+        -3.8176193237304688,
+        -4.469568252563477,
+        -3.592130422592163,
+        -3.894491672515869,
+        -4.610533237457275,
+        -0.2939598262310028,
+        -0.11958544701337814,
+        -1.9294538497924805,
+        -0.18685832619667053,
+        -4.795416831970215,
+        -1.0990681648254395,
+        -1.9284522533416748
+       ],
+       "tokens": [
+        " of",
+        " data",
+        ".\n",
+        "The",
+        " challenge",
+        " is",
+        " to",
+        " create",
+        " a",
+        " game",
+        " where",
+        " a"
+       ],
+       "top_logprobs": [
+        {
+         " of": -3.8176193237304688,
+         ".": -1.4426193237304688
+        },
+        {
+         " data": -4.469568252563477,
+         " the": -3.3445680141448975
+        },
+        {
+         ".\n": -3.592130422592163,
+         "!": -2.154630422592163
+        },
+        {
+         "The": -3.894491672515869,
+         "I": -2.144491672515869
+        },
+        {
+         " challenge": -4.610533237457275,
+         " problem": -2.8605332374572754
+        },
+        {
+         " is": -0.2939598262310028
+        },
+        {
+         " to": -0.11958544701337814
+        },
+        {
+         " create": -1.9294538497924805,
+         " find": -1.6794538497924805
+        },
+        {
+         " a": -0.18685832619667053
+        },
+        {
+         " game": -4.795416831970215,
+         " program": -3.1704165935516357
+        },
+        {
+         " where": -1.0990681648254395
+        },
+        {
+         " a": -1.9284522533416748,
+         " the": -0.80345219373703
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       315,
+       821,
+       624,
+       785,
+       8645,
+       374,
+       311,
+       1855,
+       264,
+       1809,
+       1380,
+       264
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     },
+     {
+      "index": 2,
+      "text": "! Today's challenge is to write a function that takes a",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        7,
+        9,
+        19,
+        22,
+        25,
+        31,
+        33,
+        42,
+        47,
+        53
+       ],
+       "token_logprobs": [
+        -1.5676193237304688,
+        -4.313213348388672,
+        -1.3853079080581665,
+        -2.1949288845062256,
+        -0.03283097594976425,
+        -0.15789198875427246,
+        -1.9723163843154907,
+        -0.0786466896533966,
+        -1.6418263912200928,
+        -0.5264344811439514,
+        -0.8678427934646606,
+        -0.5617050528526306
+       ],
+       "tokens": [
+        "!",
+        " Today",
+        "'s",
+        " challenge",
+        " is",
+        " to",
+        " write",
+        " a",
+        " function",
+        " that",
+        " takes",
+        " a"
+       ],
+       "top_logprobs": [
+        {
+         "!": -1.5676193237304688,
+         ".": -1.4426193237304688
+        },
+        {
+         " Today": -4.313213348388672,
+         " This": -2.1257131099700928
+        },
+        {
+         "'s": -1.3853079080581665,
+         " I": -1.2603079080581665
+        },
+        {
+         " challenge": -2.1949288845062256
+        },
+        {
+         " is": -0.03283097594976425
+        },
+        {
+         " to": -0.15789198875427246
+        },
+        {
+         " write": -1.9723163843154907,
+         " create": -1.3473163843154907
+        },
+        {
+         " a": -0.0786466896533966
+        },
+        {
+         " function": -1.6418263912200928
+        },
+        {
+         " that": -0.5264344811439514
+        },
+        {
+         " takes": -0.8678427934646606
+        },
+        {
+         " a": -0.5617050528526306
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       0,
+       11201,
+       594,
+       8645,
+       374,
+       311,
+       3270,
+       264,
+       729,
+       429,
+       4990,
+       264
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     },
+     {
+      "index": 3,
+      "text": "! Welcome to the world of quantum physics! In this world",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        9,
+        12,
+        16,
+        22,
+        25,
+        33,
+        41,
+        42,
+        45,
+        50
+       ],
+       "token_logprobs": [
+        -1.5676193237304688,
+        -2.1882131099700928,
+        -0.24018454551696777,
+        -0.776469349861145,
+        -2.670323371887207,
+        -0.027309557422995567,
+        -5.1404852867126465,
+        -3.2174007892608643,
+        -1.1138298511505127,
+        -2.490238666534424,
+        -0.17714397609233856,
+        -0.9564897418022156
+       ],
+       "tokens": [
+        "!",
+        " Welcome",
+        " to",
+        " the",
+        " world",
+        " of",
+        " quantum",
+        " physics",
+        "!",
+        " In",
+        " this",
+        " world"
+       ],
+       "top_logprobs": [
+        {
+         "!": -1.5676193237304688,
+         ".": -1.4426193237304688
+        },
+        {
+         " Welcome": -2.1882131099700928,
+         " This": -2.1257131099700928
+        },
+        {
+         " to": -0.24018454551696777
+        },
+        {
+         " the": -0.776469349861145
+        },
+        {
+         " world": -2.670323371887207
+        },
+        {
+         " of": -0.027309557422995567
+        },
+        {
+         " quantum": -5.1404852867126465,
+         " programming": -2.9529852867126465
+        },
+        {
+         " physics": -3.2174007892608643,
+         " computing": -0.34240084886550903
+        },
+        {
+         "!": -1.1138298511505127
+        },
+        {
+         " In": -2.490238666534424,
+         " Today": -1.8027385473251343
+        },
+        {
+         " this": -0.17714397609233856
+        },
+        {
+         " world": -0.9564897418022156
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       0,
+       20166,
+       311,
+       279,
+       1879,
+       315,
+       30128,
+       21321,
+       0,
+       758,
+       419,
+       1879
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     }
+    ],
+    "service_tier": null,
+    "system_fingerprint": "vllm-0.28.0-ab2ba28f",
+    "usage": {
+     "prompt_tokens": 3,
+     "total_tokens": 51,
+     "completion_tokens": 48,
+     "prompt_tokens_details": null,
+     "completion_tokens_details": null
+    },
+    "kv_transfer_params": null,
+    "ec_transfer_params": null,
+    "metrics": null
+   }
+  },
+  {
+   "name": "stop_string",
+   "recorded": true,
+   "note": "finish_reason='stop' rather than 'length' -- a different terminal branch.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 64,
+    "temperature": 0.0,
+    "seed": 1234,
+    "stop": [
+     "."
+    ],
+    "logprobs": 1,
+    "return_token_ids": true
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-a72ff9770763cec3",
+    "object": "text_completion",
+    "created": 1789059170,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": "",
+      "logprobs": {
+       "text_offset": [
+        0
+       ],
+       "token_logprobs": [
+        -1.4426193237304688
+       ],
+       "tokens": [
+        "."
+       ],
+       "top_logprobs": [
+        {
+         ".": -1.4426193237304688
+        }
+       ]
+      },
+      "finish_reason": "stop",
+      "stop_reason": ".",
+      "token_ids": [
+       13
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     }
+    ],
+    "service_tier": null,
+    "system_fingerprint": "vllm-0.28.0-ab2ba28f",
+    "usage": {
+     "prompt_tokens": 3,
+     "total_tokens": 4,
+     "completion_tokens": 1,
+     "prompt_tokens_details": null,
+     "completion_tokens_details": null
+    },
+    "kv_transfer_params": null,
+    "ec_transfer_params": null,
+    "metrics": null
+   }
+  },
+  {
+   "name": "long_max_tokens",
+   "recorded": true,
+   "note": "A longer completion, so a test exercises more than a handful of logprobs.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 64,
+    "temperature": 0.0,
+    "seed": 1234,
+    "logprobs": 1,
+    "return_token_ids": true
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-85c331d77f9adb00",
+    "object": "text_completion",
+    "created": 1789059170,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I'm a student of the University of Cambridge, and I'm interested in the study of the natural sciences. I'm also interested in the study of the human body, and I'm curious about the role of the human body in the natural world. I'm a student of the natural sciences, and I'm curious",
+      "logprobs": {
+       "text_offset": [
+        0,
+        1,
+        3,
+        5,
+        7,
+        15,
+        18,
+        22,
+        33,
+        36,
+        46,
+        47,
+        51,
+        53,
+        55,
+        66,
+        69,
+        73,
+        79,
+        82,
+        86,
+        94,
+        103,
+        104,
+        106,
+        108,
+        113,
+        124,
+        127,
+        131,
+        137,
+        140,
+        144,
+        150,
+        155,
+        156,
+        160,
+        162,
+        164,
+        172,
+        178,
+        182,
+        187,
+        190,
+        194,
+        200,
+        205,
+        208,
+        212,
+        220,
+        226,
+        227,
+        229,
+        231,
+        233,
+        241,
+        244,
+        248,
+        256,
+        265,
+        266,
+        270,
+        272,
+        274
+       ],
+       "token_logprobs": [
+        -1.4426193237304688,
+        -1.9816466569900513,
+        -0.8837368488311768,
+        -1.8618056774139404,
+        -2.737832546234131,
+        -1.5308977365493774,
+        -2.3477108478546143,
+        -3.2424070835113525,
+        -0.029848769307136536,
+        -3.372004270553589,
+        -0.921262264251709,
+        -0.6107258796691895,
+        -0.187537282705307,
+        -0.3802536427974701,
+        -2.2534098625183105,
+        -0.005543810781091452,
+        -1.7570714950561523,
+        -1.8898465633392334,
+        -0.031066156923770905,
+        -2.7356221675872803,
+        -3.353785514831543,
+        -0.8639914393424988,
+        -0.6740766763687134,
+        -0.8059355616569519,
+        -0.7255911827087402,
+        -1.8160464763641357,
+        -0.9794760942459106,
+        -0.0031393314711749554,
+        -0.9763971567153931,
+        -0.8973174095153809,
+        -0.012621759437024593,
+        -1.7414721250534058,
+        -2.1840546131134033,
+        -1.0048922300338745,
+        -1.126641035079956,
+        -1.4076848030090332,
+        -0.9136432409286499,
+        -0.6497244238853455,
+        -1.7664824724197388,
+        -0.13659007847309113,
+        -0.49790680408477783,
+        -2.6372246742248535,
+        -0.04688481613993645,
+        -1.7658960819244385,
+        -1.3812700510025024,
+        -0.3295477032661438,
+        -0.17853081226348877,
+        -0.6843846440315247,
+        -0.9589213728904724,
+        -0.35978442430496216,
+        -0.3972824215888977,
+        -0.8379809856414795,
+        -0.7745956778526306,
+        -2.341597080230713,
+        -1.6588976383209229,
+        -0.8589199781417847,
+        -1.217308759689331,
+        -1.1640795469284058,
+        -0.04278909042477608,
+        -0.5467150211334229,
+        -0.4654441773891449,
+        -0.08543594926595688,
+        -0.5275272727012634,
+        -1.6702145338058472
+       ],
+       "tokens": [
+        ".",
+        " I",
+        "'m",
+        " a",
+        " student",
+        " of",
+        " the",
+        " University",
+        " of",
+        " Cambridge",
+        ",",
+        " and",
+        " I",
+        "'m",
+        " interested",
+        " in",
+        " the",
+        " study",
+        " of",
+        " the",
+        " natural",
+        " sciences",
+        ".",
+        " I",
+        "'m",
+        " also",
+        " interested",
+        " in",
+        " the",
+        " study",
+        " of",
+        " the",
+        " human",
+        " body",
+        ",",
+        " and",
+        " I",
+        "'m",
+        " curious",
+        " about",
+        " the",
+        " role",
+        " of",
+        " the",
+        " human",
+        " body",
+        " in",
+        " the",
+        " natural",
+        " world",
+        ".",
+        " I",
+        "'m",
+        " a",
+        " student",
+        " of",
+        " the",
+        " natural",
+        " sciences",
+        ",",
+        " and",
+        " I",
+        "'m",
+        " curious"
+       ],
+       "top_logprobs": [
+        {
+         ".": -1.4426193237304688
+        },
+        {
+         " I": -1.9816466569900513
+        },
+        {
+         "'m": -0.8837368488311768
+        },
+        {
+         " a": -1.8618056774139404
+        },
+        {
+         " student": -2.737832546234131
+        },
+        {
+         " of": -1.5308977365493774
+        },
+        {
+         " the": -2.3477108478546143
+        },
+        {
+         " University": -3.2424070835113525
+        },
+        {
+         " of": -0.029848769307136536
+        },
+        {
+         " Cambridge": -3.372004270553589
+        },
+        {
+         ",": -0.921262264251709
+        },
+        {
+         " and": -0.6107258796691895
+        },
+        {
+         " I": -0.187537282705307
+        },
+        {
+         "'m": -0.3802536427974701
+        },
+        {
+         " interested": -2.2534098625183105
+        },
+        {
+         " in": -0.005543810781091452
+        },
+        {
+         " the": -1.7570714950561523
+        },
+        {
+         " study": -1.8898465633392334
+        },
+        {
+         " of": -0.031066156923770905
+        },
+        {
+         " the": -2.7356221675872803
+        },
+        {
+         " natural": -3.353785514831543
+        },
+        {
+         " sciences": -0.8639914393424988
+        },
+        {
+         ".": -0.6740766763687134
+        },
+        {
+         " I": -0.8059355616569519
+        },
+        {
+         "'m": -0.7255911827087402
+        },
+        {
+         " also": -1.8160464763641357
+        },
+        {
+         " interested": -0.9794760942459106
+        },
+        {
+         " in": -0.0031393314711749554
+        },
+        {
+         " the": -0.9763971567153931
+        },
+        {
+         " study": -0.8973174095153809
+        },
+        {
+         " of": -0.012621759437024593
+        },
+        {
+         " the": -1.7414721250534058
+        },
+        {
+         " human": -2.1840546131134033
+        },
+        {
+         " body": -1.0048922300338745
+        },
+        {
+         ",": -1.126641035079956
+        },
+        {
+         " and": -1.4076848030090332
+        },
+        {
+         " I": -0.9136432409286499
+        },
+        {
+         "'m": -0.6497244238853455
+        },
+        {
+         " curious": -1.7664824724197388
+        },
+        {
+         " about": -0.13659007847309113
+        },
+        {
+         " the": -0.49790680408477783
+        },
+        {
+         " role": -2.6372246742248535
+        },
+        {
+         " of": -0.04688481613993645
+        },
+        {
+         " the": -1.7658960819244385
+        },
+        {
+         " human": -1.3812700510025024
+        },
+        {
+         " body": -0.3295477032661438
+        },
+        {
+         " in": -0.17853081226348877
+        },
+        {
+         " the": -0.6843846440315247
+        },
+        {
+         " natural": -0.9589213728904724
+        },
+        {
+         " world": -0.35978442430496216
+        },
+        {
+         ".": -0.3972824215888977
+        },
+        {
+         " I": -0.8379809856414795
+        },
+        {
+         "'m": -0.7745956778526306
+        },
+        {
+         " a": -2.341597080230713
+        },
+        {
+         " student": -1.6588976383209229
+        },
+        {
+         " of": -0.8589199781417847
+        },
+        {
+         " the": -1.217308759689331
+        },
+        {
+         " natural": -1.1640795469284058
+        },
+        {
+         " sciences": -0.04278909042477608
+        },
+        {
+         ",": -0.5467150211334229
+        },
+        {
+         " and": -0.4654441773891449
+        },
+        {
+         " I": -0.08543594926595688
+        },
+        {
+         "'m": -0.5275272727012634
+        },
+        {
+         " curious": -1.6702145338058472
+        }
+       ]
+      },
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": [
+       13,
+       358,
+       2776,
+       264,
+       5458,
+       315,
+       279,
+       3822,
+       315,
+       23641,
+       11,
+       323,
+       358,
+       2776,
+       8014,
+       304,
+       279,
+       3920,
+       315,
+       279,
+       5810,
+       35688,
+       13,
+       358,
+       2776,
+       1083,
+       8014,
+       304,
+       279,
+       3920,
+       315,
+       279,
+       3738,
+       2487,
+       11,
+       323,
+       358,
+       2776,
+       22208,
+       911,
+       279,
+       3476,
+       315,
+       279,
+       3738,
+       2487,
+       304,
+       279,
+       5810,
+       1879,
+       13,
+       358,
+       2776,
+       264,
+       5458,
+       315,
+       279,
+       5810,
+       35688,
+       11,
+       323,
+       358,
+       2776,
+       22208
+      ],
+      "prompt_logprobs": null,
+      "prompt_token_ids": [
+       9707,
+       11,
+       1879
+      ],
+      "routed_experts": null
+     }
+    ],
+    "service_tier": null,
+    "system_fingerprint": "vllm-0.28.0-ab2ba28f",
+    "usage": {
+     "prompt_tokens": 3,
+     "total_tokens": 67,
+     "completion_tokens": 64,
+     "prompt_tokens_details": null,
+     "completion_tokens_details": null
+    },
+    "kv_transfer_params": null,
+    "ec_transfer_params": null,
+    "metrics": null
+   }
+  },
+  {
+   "name": "unknown_model",
+   "recorded": true,
+   "note": "A real error response, so the client's error path is tested against real bytes.",
+   "request": {
+    "model": "not/a-real-model",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 4,
+    "temperature": 0.0,
+    "logprobs": 1
+   },
+   "status": 404,
+   "response": {
+    "error": {
+     "message": "The model `not/a-real-model` does not exist.",
+     "type": "NotFoundError",
+     "param": "model",
+     "code": 404
+    }
+   }
+  },
+  {
+   "name": "missing_logprobs",
+   "recorded": false,
+   "note": "Constructed, not recorded: a 200 response with no `logprobs` on the choice, which is what Ollama's OpenAI shim returns (ollama#16117). The client must raise `ModelProtocolError` rather than accept a completion it cannot store logprobs for.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 4,
+    "temperature": 0.0,
+    "seed": 99,
+    "logprobs": 1
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-synthetic-missing-logprobs",
+    "object": "text_completion",
+    "created": 0,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I am",
+      "logprobs": null,
+      "finish_reason": "length",
+      "stop_reason": null
+     }
+    ],
+    "usage": {
+     "prompt_tokens": 3,
+     "completion_tokens": 4,
+     "total_tokens": 7
+    }
+   }
+  },
+  {
+   "name": "ragged_logprobs",
+   "recorded": false,
+   "note": "Constructed: `token_logprobs` shorter than `tokens`. A client that zipped them would silently drop the tail rather than notice, so this pins the length check.",
+   "request": {
+    "model": "Qwen/Qwen3-0.6B",
+    "prompt": [
+     9707,
+     11,
+     1879
+    ],
+    "max_tokens": 4,
+    "temperature": 0.0,
+    "seed": 98,
+    "logprobs": 1
+   },
+   "status": 200,
+   "response": {
+    "id": "cmpl-synthetic-ragged",
+    "object": "text_completion",
+    "created": 0,
+    "model": "Qwen/Qwen3-0.6B",
+    "choices": [
+     {
+      "index": 0,
+      "text": ". I am",
+      "token_ids": [
+       13,
+       358,
+       1079
+      ],
+      "logprobs": {
+       "tokens": [
+        ".",
+        " I",
+        " am"
+       ],
+       "token_logprobs": [
+        -1.0,
+        -2.0
+       ],
+       "top_logprobs": null,
+       "text_offset": null
+      },
+      "finish_reason": "length",
+      "stop_reason": null
+     }
+    ],
+    "usage": {
+     "prompt_tokens": 3,
+     "completion_tokens": 3,
+     "total_tokens": 6
+    }
+   }
+  }
+ ]
+}

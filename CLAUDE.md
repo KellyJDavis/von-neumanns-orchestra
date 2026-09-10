@@ -51,8 +51,12 @@ recorded `phase2_baseline.json`) is done: it freezes what the symbolic path curr
 that clause has something to be checked against. M3.1 is done too — the model layer's *types*:
 `lean_agent_core.roles.ModelRole`, `SamplingParams`/`CompletionRequest`/`Completion`/
 `CompletionResponse` and the `ModelBackend` protocol in `core.protocols`, and
-`lean_agent_models.{config,errors}`. No I/O yet. Still to come: M3.2 (the CI story for models — a
-replay server over recorded real vLLM responses), M3.3 (`template.py`), M3.4 (`client.py`), M3.5
+`lean_agent_models.{config,errors}`. No I/O yet. M3.2 is done — `tests/models/`: real vLLM
+responses recorded by hand (`record_fixtures.py`) and replayed by a genuine ASGI
+`/v1/completions` server (`replay_server.py`), which is how the model layer gets tested on a
+GPU-less CI box without mocking the client. Still to come: M3.3 (`template.py`, which also has to
+settle how a tokenizer is vendored — `tokenizer.json` for Qwen3-0.6B is 11 MB, too big to check in
+casually), M3.4 (`client.py`), M3.5
 (`router.py`), M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
 (`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
 M3.12 (the exit gate).
@@ -203,6 +207,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   lean_agent_eval.suites.survey_minif2f --out <path>` re-measures which of the 488 problems the null agent
   closes (~25 min) — that measurement is what `EASY_TAIL` is derived from, and it is checked in rather than
   recomputed by the gate.
+- Model-layer fixtures (M3.2, `tests/models/`): `uv run pytest tests/models` needs nothing but the workspace —
+  no GPU, no Postgres, no Lean — because it replays recorded vLLM responses through a real ASGI
+  `/v1/completions` app. Re-record them by hand against a real server when the wire format may have moved:
+  `source ~/.venv-vllm-metal/bin/activate && vllm serve Qwen/Qwen3-0.6B --port 8765 --max-model-len 2048`, then
+  `uv run python tests/models/record_fixtures.py --endpoint http://127.0.0.1:8765 --server-version "..."`.
 - Phase 2 baseline (M3.0, `lean_agent_eval.baseline` + `suites/data/phase2_baseline.json`): asserted by the same
   miniF2F gate, so it needs the same prerequisites. Re-record deliberately after reading the printed diff with
   `LEAN_AGENT_RERECORD_BASELINE=1 uv run pytest tests/eval/test_minif2f.py -k baseline`; never automatically.
@@ -931,6 +940,54 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: recorded-fixture facts (M3.2)
+
+These come from building `tests/models/` — the recorder, the replay server, and the fixture file
+everything later in Phase 3 will trust.
+
+- **CI has no GPU, and this repo does not mock.** Every other suite uses the real thing (real
+  PostgreSQL, real Lean kernel); the model layer cannot. The compromise is drawn one layer out
+  instead: a genuine ASGI app serving the genuine `/v1/completions` endpoint, which the client
+  calls over genuine HTTP, replaying **bytes recorded from a real vLLM 0.28.0** verbatim. What is
+  synthetic is only the token generation. A hand-written server returning a plausible shape would
+  test the client against whatever shape its author imagined, which is how a client ends up
+  correctly parsing a response nobody sends.
+- **An unmatched request is a loud 409, never a plausible default**, and matching is *exact* on the
+  request body. That makes the fixture file a contract on the client's request shape: if the client
+  quietly drops `return_token_ids` or renames a sampling field, every test fails until someone
+  re-records against a real server and reads the diff. A replay server that answered anyway would
+  keep the suite green against an answer to a question nobody asked. The 409 body lists what it
+  *does* have, so the diagnosis is in the failure rather than a debugging trip.
+- **Fixtures carry a `recorded` flag, and two of them are `false`.** `missing_logprobs` and
+  `ragged_logprobs` model servers that misbehave — the first is what Ollama's OpenAI shim actually
+  returns — and no correctly-behaving vLLM can produce them, so they have to be constructed. The
+  flag (asserted by a test) is what keeps a construction from later being mistaken for evidence
+  about vLLM.
+- **The determinism claim is now recorded rather than asserted.** `greedy_single` and
+  `greedy_single_repeat` are two separate requests with byte-identical bodies; a test compares
+  their recorded responses. That is what makes spec §7.2's R1 tier observable rather than
+  hypothetical — and it is evidence from a real server, not from this repo's own reasoning.
+- **The recorder is manual, like `vendor_minif2f` and `survey_minif2f`.** It needs a real vLLM,
+  which means a person and a machine: `vllm serve Qwen/Qwen3-0.6B --port 8765`, then
+  `uv run python tests/models/record_fixtures.py --endpoint http://127.0.0.1:8765`. What replay
+  cannot do is notice that vLLM's *next* version changed the shape; re-recording and reading the
+  diff is the only thing that can, which is the manual conformance run Phase 3 plans on.
+- **This lives in `tests/`, not in `packages/models`, and the deciding reason is the dependency.**
+  A fake server needs `fastapi`, and `lean_agent_models` is a shipped, independently publishable
+  package that otherwise depends only on `lean_agent_core`. `packages/eval`'s manual tools are a
+  different case — they are evaluation machinery, part of the product; a test double is not.
+- **`facebook/opt-125m` cannot be served by vllm-metal from the usual HF cache**: it is cached as
+  PyTorch `.bin` and the Metal backend needs safetensors ("No safetensors found in ..."). Reach for
+  `Qwen/Qwen3-0.6B` (1.4 GB, safetensors, real chat template) as the small local fixture model
+  instead. Also worth knowing: a cached `Goedel-Prover-V2-8B` entry may be a 4 KB metadata stub
+  with no weights actually downloaded.
+- **`vllm serve` has no `--disable-log-requests` flag in 0.28.0** — it errors out on unrecognized
+  arguments rather than warning, which reads as a server crash if the log is only skimmed.
+- **A readiness loop must not grep for "failed".** vLLM logs `WARNING ... failed to automatically
+  increase` about `ulimit` during a perfectly normal startup, so a loop watching for that word
+  gives up on a server that is starting fine. Wait on `curl /v1/models` succeeding, and treat only
+  `Traceback` or `Engine core initialization failed` as terminal.
 
 ## Implementation notes: model-layer type facts (M3.1)
 
