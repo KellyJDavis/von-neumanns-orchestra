@@ -409,3 +409,58 @@ END $$;
 
 GRANT EXECUTE ON FUNCTION claim_attempt TO app;
 GRANT EXECUTE ON FUNCTION reap_expired_attempts TO app;
+
+-- ---------------------------------------------------------------------------
+-- Bundle materialization (spec §4.1, §6.3). M2.7.
+
+-- Record the digest of a sealed bundle's compiled `.olean` against every obligation that names
+-- that bundle. **Write-once**: it only ever fills a NULL, never changes an existing value.
+--
+-- Not a plain UPDATE, because `sealed_olean_sha` is not in `app`'s permitted-column list and must
+-- not be. `mark_proved` accepts a proof only when `v.sealed_olean_sha_observed = o.sealed_olean_sha`
+-- -- an `app` that could write this column could set it to whatever digest a verdict happened to
+-- observe, which turns spec's seal-integrity check into a tautology and defeats the one thing it
+-- exists to catch (a worker importing a different bundle than the obligation was created against).
+--
+-- Write-once is what makes that hold over time rather than only at the first write: once an
+-- obligation's compiled bundle is named, no later materialization can rename it, so the artifact
+-- an obligation is judged against is fixed for its whole life.
+--
+-- A caller could still lie *here*, passing a digest it did not compute. That is safe in the only
+-- direction that matters: leanserv observes the real digest of the file it actually imported
+-- (M2.1.2), so a lie makes `mark_proved` refuse every subsequent proof rather than accept a bad
+-- one. Lying costs you your own proofs.
+--
+-- Returns how many obligations it filled. Zero is not an error -- a bundle can be re-materialized
+-- after a restart, and finding every obligation already stamped is the normal idempotent outcome.
+CREATE OR REPLACE FUNCTION materialize_bundle(p_bundle_sha bytea, p_olean_sha bytea)
+RETURNS int LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  v_filled int;
+BEGIN
+  IF p_olean_sha IS NULL THEN
+    RAISE EXCEPTION 'refusing to materialize bundle % with a NULL olean digest', p_bundle_sha;
+  END IF;
+
+  -- A bundle already stamped with a *different* digest means two different compilations of the
+  -- same sealed source, which should be impossible: the source is content-addressed, so a digest
+  -- mismatch says the build is not reproducible or the bundle root has been tampered with. Loud,
+  -- because silently keeping the first value would leave the two facts disagreeing forever.
+  IF EXISTS (
+    SELECT 1 FROM obligation
+    WHERE bundle_sha = p_bundle_sha
+      AND sealed_olean_sha IS NOT NULL
+      AND sealed_olean_sha <> p_olean_sha
+  ) THEN
+    RAISE EXCEPTION 'bundle % is already materialized with a different .olean digest', p_bundle_sha;
+  END IF;
+
+  UPDATE obligation SET sealed_olean_sha = p_olean_sha, updated_at = now()
+  WHERE bundle_sha = p_bundle_sha AND sealed_olean_sha IS NULL;
+  GET DIAGNOSTICS v_filled = ROW_COUNT;
+  RETURN v_filled;
+END $$;
+
+GRANT EXECUTE ON FUNCTION materialize_bundle TO app;

@@ -34,9 +34,12 @@ M2.2 (the obligation state machine — `lean_agent_core.state` plus the `SECURIT
 functions and cycle-guard trigger in `deploy/grants.sql`) and M2.3 (scheduler — `lean_agent_core.scheduler`:
 claim, lease, heartbeat, reaper) M2.4 (control loop — `lean_agent_core.worker`) and M2.5 (Policy/Action, the executor, and
 `SymbolicPortfolio` — the null agent proves real Lean goals with zero model calls) and M2.6 (ingestion —
-`lean_agent_api.ingestion`: submission → sealed goals → obligations, with §4.5 admission signals) are done; next
-is M2.7 (materialization), M2.8 (the public §6.1 API surface), M2.9 (CLI as its httpx client), M2.10
-(miniF2F exit-gate validation).
+`lean_agent_api.ingestion`: submission → sealed goals → obligations, with §4.5 admission signals) and M2.7's
+bundle materialization (`lean_agent_api.materialize`) are done — **the whole Phase 2 pipeline now runs end to
+end**: submission → ingestion → materialization → claim → null agent → link/replay/audit → `mark_proved`, with
+zero model calls (`tests/leanserv/test_end_to_end.py`). Spec §6.3 step 6's *output file* materialization is the
+one part of M2.7 not built; see the implementation note for exactly what it needs. Next is M2.8 (the public §6.1
+API surface), M2.9 (CLI as its httpx client), M2.10 (miniF2F exit-gate validation).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -761,6 +764,40 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   looked like ordinary work and is closed by `exact?` in ~230 ms via `Nat.add_comm` — which is the admission
   signal firing correctly. A goal that genuinely needs induction (`∀ n : Nat, 2 ^ n ≥ n + 1`) is what tests
   "the signal stays quiet on ordinary work".
+
+## Implementation notes: materialization facts (M2.7)
+
+- **Materialization is not an optimization; it is what makes an obligation provable at all.** Ingestion leaves
+  `sealed_olean_sha` NULL, and `mark_proved` compares the observed digest against it — NULL is never equal, so
+  before the bundle is compiled *no* obligation can reach `proved` however correct its proof. The end-to-end test
+  keeps the counterfactual (`materialize=False`) alongside the real path precisely so that stays visible.
+- **`sealed_olean_sha` must not be `app`-writable, so materialization goes through a `SECURITY DEFINER`
+  function.** An `app` that could write the column could set it to whatever digest a verdict happened to observe,
+  which turns spec's seal-integrity check into a tautology and defeats the one thing it catches — a worker
+  importing a different bundle than the obligation was created against. `materialize_bundle` is **write-once**
+  (fills NULL only), which extends that from "true at the first write" to "true for the obligation's whole life",
+  and it *raises* if asked to stamp an already-materialized bundle with a different digest, since two
+  compilations of one content-addressed source disagreeing means the build is not reproducible or the bundle root
+  was tampered with.
+- **A caller can still pass a digest it did not compute, and that is safe in the only direction that matters.**
+  leanserv observes the *real* digest of the file it actually imported (M2.1.2), so a lie makes `mark_proved`
+  refuse every subsequent proof rather than accept a bad one. Lying costs you your own proofs.
+- **`store_or_inline` is the wrong call when something must be retrievable later.** M2.6 stored the bundle source
+  with it, which deliberately stores *nothing* under 64 KiB — it decides how a value is carried in a column, a
+  different question — so every small bundle simply vanished and materialization had nothing to compile.
+  `blobs.put` is the right one, and its returned digest is sha256 of the content, i.e. exactly `bundle_sha`.
+- **`/v1/link` now records the accepted development as `verdict.proof_blob`.** That is the only place the proof
+  text can live without widening `app`'s grants: `obligation.proof_blob` is not in app's permitted-column list,
+  deliberately, and `verdict` is the row leanserv already writes.
+- **Spec §6.3 step 6 (output *file* materialization) is not built, and what blocks it is a schema question.**
+  Assembling "the file with each `sorry` replaced" needs the reassembly text `/v1/decompose` produced, which has
+  no column: its natural home, `obligation_edge.reassembly_blob` ("on the group, not the child"), does not apply
+  because ingestion creates roots and no edges. Deciding where it lives is tangled with the same
+  decomposition-edge design M2.4's seam already defers, so the half that *is* determinate (recording each hole's
+  accepted proof) is done and the assembly step waits for that decision rather than guessing at it.
+- **`/v1/base-env/materialize` (§6.2) is also absent.** It builds and snapshots a *base environment*, which is a
+  different artifact from a goal bundle, and spec §8 already defers the snapshot machinery it would need ("L3
+  snapshot persistence: warm sealing needs a warm worker, not a persisted snapshot").
 
 ## Implementation notes: blob store facts
 
