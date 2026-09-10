@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable, Iterator
 import pytest
 from lean_agent_core.enums import ObligationStatus
 from lean_agent_core.orm import Obligation, Verdict
+from lean_agent_core.scheduler import claim_attempt
 from lean_agent_core.state import (
     TRANSITIONS,
     GroupProgress,
@@ -697,3 +698,95 @@ async def _read_group_progress(url: str, obligation_id: uuid.UUID) -> list[Group
         )
     finally:
         await engine.dispose()
+
+
+# --- Known gap: reassembly scheduling (spec §6.4) ----------------------------------------------
+#
+# Spec §6.4's diagram has two arrows leaving `decomposed`:
+#
+#     decomposed ──group's children proved ∧ reassembly links──▶ proved
+#                ──every group has a failed child──────────────▶ blocked
+#
+# Neither is reachable today, and the two tests below are the executable statement of that. Both
+# are `xfail(strict=True)`, so they report as expected failures now and **fail loudly the moment
+# someone closes the gap** -- at which point the marker comes off and they become ordinary tests.
+#
+# Why it is not fixed here: nothing in `packages/` inserts an `obligation_edge`, so no component
+# can produce a `decomposed` obligation in the first place. The only policy that decomposes is
+# `DecomposeAndConquer`, which spec §8 places in **Phase 4** -- whose exit criterion ("a
+# multi-`sorry` file closed end to end with a materialized artifact that links") is precisely the
+# validation this design needs. Choosing between the available designs without a decomposing
+# policy to check them against would bake in an untested answer; see CLAUDE.md for the four open
+# questions and a provisional recommendation.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="reassembly scheduling gap: `claim_attempt` selects `status = 'open'`, so a parent "
+    "whose group is fully proved is never claimed and can never present the attempt spec §6.4 "
+    "requires ('Reassembly produces a real attempt ... and flows through mark_proved like "
+    "anything else'). Closing this is Phase 4 work -- see the section comment above.",
+)
+def test_a_decomposed_parent_with_a_proved_group_is_claimable(
+    fx: Fixture, app_async_database_url: str
+) -> None:
+    """Half one: nothing ever re-schedules a parent for reassembly.
+
+    Asserts on the claimed obligation's *identity*, not merely that something was claimed --
+    `claim_attempt` is global, so a bare "not None" would pass on any other run's leftover work.
+    """
+    parent = fx.obligation(status=ObligationStatus.DECOMPOSED)
+    group = uuid.uuid4()
+    for _ in range(2):
+        fx.edge(parent, fx.obligation(status=ObligationStatus.PROVED, depth=1), group)
+
+    async def run() -> uuid.UUID | None:
+        engine = create_async_engine(app_async_database_url)
+        try:
+            claimed = await claim_attempt(
+                async_sessionmaker(engine, expire_on_commit=False),
+                worker_id="reassembly-gap",
+                policy_id="p",
+                policy_config_hash=b"c",
+            )
+        finally:
+            await engine.dispose()
+        return claimed.obligation_id if claimed is not None else None
+
+    assert asyncio.run(run()) == parent
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="reassembly scheduling gap: nothing calls `mark_blocked`. A child reaching a terminal "
+    "status never causes its parents to be re-evaluated, so spec §6.4's "
+    "`decomposed --every group has a failed child--> blocked` arrow is unreachable and "
+    "`groups_exhausted` is dead code. Closing this is Phase 4 work -- see the section comment "
+    "above.",
+)
+def test_failing_every_group_s_child_blocks_the_parent(
+    fx: Fixture, machine: Callable[[MachineBody], None]
+) -> None:
+    """Half two: nothing propagates a child's terminal status upward.
+
+    Drives the transition the control loop itself performs (`budget_exhausted`, its "budget
+    exhausted -> failed" arrow) rather than setting statuses directly, so what is being tested is
+    the *absence of a hook* on the real path and not a hand-arranged database state.
+    """
+    parent = fx.obligation(status=ObligationStatus.DECOMPOSED)
+    children = []
+    for _ in range(2):
+        child = fx.obligation(
+            status=ObligationStatus.OPEN, depth=1, budget_attempts=1, spent_attempts=1
+        )
+        fx.edge(parent, child, uuid.uuid4())
+        children.append(child)
+
+    async def body(sm: ObligationStateMachine) -> None:
+        for child in children:
+            await sm.budget_exhausted(child)
+
+    machine(body)
+
+    assert all(fx.status_of(child) == "failed" for child in children)
+    assert fx.status_of(parent) == "blocked"
