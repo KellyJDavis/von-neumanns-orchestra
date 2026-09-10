@@ -313,10 +313,13 @@ def test_heartbeat_reports_a_lost_lease_rather_than_raising(
         assert result is not None
         claimed.append(result)
         fx.expire_lease(result.attempt_id)
-        assert await reap_expired_attempts(factory) == 1
+        # `>= 1`, not `== 1`: the reaper is a *global* sweeper, so an exact count would couple this
+        # test to the whole database being otherwise idle. What matters is this attempt.
+        assert await reap_expired_attempts(factory) >= 1
 
     sessions(body)
     (attempt,) = claimed
+    assert fx.row("attempt", "status::text", attempt.attempt_id) == ("expired",)
 
     engine = create_engine(app_database_url)
     try:
@@ -395,7 +398,7 @@ def test_reaper_expires_the_attempt_and_reopens_the_obligation_without_charging(
         assert result is not None
         claimed.append(result)
         fx.expire_lease(result.attempt_id)
-        assert await reap_expired_attempts(factory) == 1
+        assert await reap_expired_attempts(factory) >= 1
 
     sessions(body)
     (attempt,) = claimed
@@ -413,11 +416,20 @@ def test_reaper_leaves_a_live_lease_alone(
     healthy work at random."""
     obligation = fx.obligation()
 
+    claimed: list[ClaimedAttempt] = []
+
     async def body(factory: async_sessionmaker[AsyncSession]) -> None:
-        assert await _claim(factory) is not None
-        assert await reap_expired_attempts(factory) == 0
+        result = await _claim(factory)
+        assert result is not None
+        claimed.append(result)
+        # Deliberately not `== 0`: the reaper sweeps globally, so another test's expired lease
+        # would make an exact count fail for a reason that has nothing to do with this one. The
+        # property under test is that *this* live lease is left alone.
+        await reap_expired_attempts(factory)
 
     sessions(body)
+    (attempt,) = claimed
+    assert fx.row("attempt", "status::text", attempt.attempt_id) == ("claimed",)
     assert fx.row("obligation", "status::text", obligation) == ("in_progress",)
 
 

@@ -86,6 +86,16 @@ class Run(Base):
         server_default="{propext,Classical.choice,Quot.sound}",
     )
     max_depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default="6")
+    #: The submitted file with each `sorry` replaced by an application of its child lemma, as
+    #: `/v1/decompose` produced it -- spec §6.3 step 6's input ("write the file with each `sorry`
+    #: replaced"). NULL for a bare-statement submission, which has no file to reassemble.
+    #:
+    #: Not `obligation_edge.reassembly_blob`, which spec puts "on the group, not the child" -- that
+    #: is a *decomposition group*'s reassembly, produced when a policy decomposes an obligation.
+    #: A submitted file's reassembly is a different artifact belonging to the run: it exists before
+    #: any policy runs, has no parent obligation to hang off, and covers every root at once. Two
+    #: genuinely different things, which is why the edge column never fit.
+    reassembly_blob: Mapped[bytes | None] = mapped_column(LargeBinary)
     budget_tokens: Mapped[int | None] = mapped_column(BigInteger)
     budget_wallclock_ms: Mapped[int | None] = mapped_column(BigInteger)
     budget_kernel_ms: Mapped[int | None] = mapped_column(BigInteger)
