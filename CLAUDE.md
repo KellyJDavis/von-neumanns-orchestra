@@ -60,7 +60,9 @@ template → token ids without depending on `transformers`, held byte-for-byte t
 `ModelBackend` implementation over `/v1/completions`, driven in tests against M3.2's replay server,
 plus digest verification of the pinned tokenizer. M3.5 is done — `lean_agent_models.router`,
 `ModelRole` → backend, carrying the run manifest's `models` array (§7.3). Still to come:
-M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
+M3.6 is done — `lean_agent_models.cache` over a new `model_response_cache` table
+(migration `3bd1fe9a53fb`), plus `lean_agent_core.codecs` for the float32/int32 storage §6.5
+requires. Still to come: M3.7 (widened trajectory logging), M3.8
 (`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
 M3.12 (the exit gate).
 
@@ -950,6 +952,50 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: response-cache facts (M3.6)
+
+From building `model_response_cache`, `lean_agent_models.cache` and `lean_agent_core.codecs`
+against a real PostgreSQL 16 as the real `app` role.
+
+- **Not everything with a cache key may be cached.** Sampling at a nonzero temperature with *no
+  seed* is a request for fresh randomness, and two such calls share a key. Serving the second from
+  cache would turn `WholeProofSampler`'s "sample n proofs, check them all" into one proof checked
+  n times — and the pass rate would move for a reason nothing in the trajectory would show.
+  `is_cacheable` refuses those. Greedy decoding (`temperature == 0`) is cacheable without a seed,
+  because it is already a request for a reproducible answer.
+- **A separate table, not a widening of `verification_cache`.** That one is Lean-specific — keyed
+  on a base env and a declaration source, storing a `verdict_kind` — so sharing would give a key
+  space where a Lean check and a completion could collide, and a row half of whose columns are
+  always NULL.
+- **`app` writes this cache; `leanserv` writes `verification_cache`.** The two sit on opposite
+  sides of the §5.5 boundary: `verification_cache` records what the *kernel* said, so only the
+  service running the kernel may write it (same reason `verdict` is leanserv-only). A model
+  completion is the agent's own work. Granted INSERT and UPDATE and deliberately **not DELETE** —
+  eviction is a maintenance job with a policy behind it, not something a worker does mid-run. One
+  consequence in tests: cleanup runs as admin, because the role under test cannot delete.
+- **Storage is float32/int32 binary, not JSON, and the arithmetic is spec's own.** "About 4 GB per
+  10⁹ tokens" is 4 bytes each and no other number; a logprob rendered as JSON text costs 10–20
+  bytes, three to five times the budget the corpus was sized against. `codecs.py` holds the one
+  packing, used by this cache now and by `trajectory.{token_ids,logprobs}_blob` in M3.7 — if those
+  two ever disagreed, a trajectory replayed from the cache would not match the one it replayed.
+- **Real logprobs lose nothing to float32, which is worth knowing before optimising for it.**
+  Found by writing the test wrongly: it asserted the round trip was lossy and failed, because vLLM
+  computes logprobs in float32 already. A separate test uses a value that genuinely needs float64,
+  so the first test passing is evidence about vLLM's output rather than about the codec being a
+  no-op.
+- **Byte order is pinned little-endian, not native.** These bytes go into a database another
+  machine reads: native order would make a corpus unreadable on a big-endian host, and native
+  alignment would insert padding the length arithmetic does not expect.
+- **All of one request's samples are one row.** `n=8` is one cached *request*; serving three of
+  eight from cache and re-sampling the rest would be a different distribution than the one asked
+  for.
+- **Migration `3bd1fe9a53fb` has no enum columns**, so it needs none of the explicit `DROP TYPE`
+  the initial migration's `downgrade()` carries. Verified rather than assumed, per M1.5's rule:
+  applied, `alembic check`ed for drift, downgraded, and re-upgraded against a real PostgreSQL.
+- **Alembic's generated template does not satisfy this repo's lint rules** (`typing.Sequence`,
+  `Union[...]`, unsorted imports). `uv run ruff check --fix migrations/ && ruff format migrations/`
+  after every `revision --autogenerate`.
 
 ## Implementation notes: router facts (M3.5)
 

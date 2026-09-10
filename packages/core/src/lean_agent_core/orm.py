@@ -317,6 +317,45 @@ class VerificationCache(Base):
     last_hit_at: Mapped[datetime | None] = mapped_column()
 
 
+class ModelResponseCache(Base):
+    """Spec §6.5's response cache: "keyed on `sha256(prompt_tokens) ‖ model_id ‖
+    canonical(sampling) ‖ seed`".
+
+    A separate table from `verification_cache`, which is Lean-specific -- it is keyed on a base env
+    and a declaration source and stores a `verdict_kind`, none of which mean anything about a model
+    completion. Sharing one table would mean a key space where a Lean check and a sampled
+    completion could collide, and a row where half the columns are always NULL.
+
+    `completions_blob` holds every sample from one request, so `n=8` is one row rather than eight:
+    the request is what was cached, and serving three of eight samples from cache and re-sampling
+    the rest would be a different distribution than the one asked for.
+
+    Not tenant-scoped, for `verification_cache`'s reason (§7.2): a hit is a pure function of
+    content-addressed inputs, so the same prompt tokens against the same model with the same
+    sampling and seed is the same answer whoever asks.
+    """
+
+    __tablename__ = "model_response_cache"
+
+    cache_key: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
+    model_id: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Recorded so a cached response can be attributed exactly (§7.3). A cache hit that could not
+    #: say which weights and tokenizer produced it would make the trajectory it fills unreplayable.
+    weights_revision: Mapped[str | None] = mapped_column(Text)
+    tokenizer_revision: Mapped[str | None] = mapped_column(Text)
+    #: Both blob-suffixed (M1.8.4's `to_bytea`): inline when small, a CAS digest when not.
+    #: `prompt_token_ids_blob` is the *server's* echo, not the request's -- see `CompletionResponse`.
+    prompt_token_ids_blob: Mapped[bytes | None] = mapped_column(LargeBinary)
+    completions_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    n_completions: Mapped[int] = mapped_column(Integer, nullable=False)
+    elapsed_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    hits: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+    last_hit_at: Mapped[datetime | None] = mapped_column()
+
+    __table_args__ = (Index(None, "model_id"),)
+
+
 class Blob(Base):
     __tablename__ = "blob"
 

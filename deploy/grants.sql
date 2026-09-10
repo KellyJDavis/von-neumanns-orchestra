@@ -57,6 +57,16 @@ GRANT INSERT ON base_env TO app;
 GRANT UPDATE (priority, spent_attempts, spent_tokens, spent_kernel_ms, updated_at)
   ON obligation TO app;                       -- never GRANT UPDATE ON obligation
 GRANT UPDATE ON attempt TO app;
+-- `model_response_cache` (M3.6, spec §6.5's response cache) is written by `app`, not `leanserv`.
+-- The two caches sit on opposite sides of that boundary: `verification_cache` records what the
+-- *kernel* said, so only the service that runs the kernel may write it, and `verdict` rows are
+-- leanserv-only for the same reason. A model completion is not a judgement about anything -- it is
+-- the agent's own work, cached to avoid paying for it twice -- and the model client runs inside
+-- the worker, which is `app`.
+--
+-- INSERT and UPDATE, no DELETE: a hit bumps `hits`/`last_hit_at`, and eviction is a maintenance
+-- job rather than something a worker does mid-run.
+GRANT INSERT, UPDATE ON model_response_cache TO app;
 REVOKE INSERT ON verdict FROM app;            -- table-level revoke DOES work
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO app;
 
