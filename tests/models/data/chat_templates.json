@@ -1,0 +1,689 @@
+{
+ "provenance": {
+  "reference": "transformers 5.17.0",
+  "recorded_at": "2026-09-10T17:26:29+00:00",
+  "method": "AutoTokenizer.apply_chat_template(tokenize=False | True)",
+  "note": "Reference output from the real implementation. `template.py` reimplements the rendering half and is held to these bytes; nothing here is hand-written."
+ },
+ "models": [
+  {
+   "repo_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+   "directory": "tokenizers/TinyLlama-1.1B-Chat-v1.0",
+   "has_converted_tokenizer": true,
+   "cases": [
+    {
+     "conversation": "single_user",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove that 2 + 2 = 4 in Lean 4."
+      }
+     ],
+     "rendered": "<|user|>\nProve that 2 + 2 = 4 in Lean 4.</s>\n<|assistant|>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      393,
+      29871,
+      29906,
+      718,
+      29871,
+      29906,
+      353,
+      29871,
+      29946,
+      297,
+      951,
+      273,
+      29871,
+      29946,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13
+     ]
+    },
+    {
+     "conversation": "single_user",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove that 2 + 2 = 4 in Lean 4."
+      }
+     ],
+     "rendered": "<|user|>\nProve that 2 + 2 = 4 in Lean 4.</s>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      393,
+      29871,
+      29906,
+      718,
+      29871,
+      29906,
+      353,
+      29871,
+      29946,
+      297,
+      951,
+      273,
+      29871,
+      29946,
+      29889,
+      2,
+      13
+     ]
+    },
+    {
+     "conversation": "system_and_user",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "system",
+       "content": "You are a Lean 4 prover. Answer with a tactic block."
+      },
+      {
+       "role": "user",
+       "content": "Prove 2 + 2 = 4."
+      }
+     ],
+     "rendered": "<|system|>\nYou are a Lean 4 prover. Answer with a tactic block.</s>\n<|user|>\nProve 2 + 2 = 4.</s>\n<|assistant|>\n",
+     "token_ids": [
+      529,
+      29989,
+      5205,
+      29989,
+      29958,
+      13,
+      3492,
+      526,
+      263,
+      951,
+      273,
+      29871,
+      29946,
+      410,
+      369,
+      29889,
+      673,
+      411,
+      263,
+      260,
+      17911,
+      2908,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      29871,
+      29906,
+      718,
+      29871,
+      29906,
+      353,
+      29871,
+      29946,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13
+     ]
+    },
+    {
+     "conversation": "system_and_user",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "system",
+       "content": "You are a Lean 4 prover. Answer with a tactic block."
+      },
+      {
+       "role": "user",
+       "content": "Prove 2 + 2 = 4."
+      }
+     ],
+     "rendered": "<|system|>\nYou are a Lean 4 prover. Answer with a tactic block.</s>\n<|user|>\nProve 2 + 2 = 4.</s>\n",
+     "token_ids": [
+      529,
+      29989,
+      5205,
+      29989,
+      29958,
+      13,
+      3492,
+      526,
+      263,
+      951,
+      273,
+      29871,
+      29946,
+      410,
+      369,
+      29889,
+      673,
+      411,
+      263,
+      260,
+      17911,
+      2908,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      29871,
+      29906,
+      718,
+      29871,
+      29906,
+      353,
+      29871,
+      29946,
+      29889,
+      2,
+      13
+     ]
+    },
+    {
+     "conversation": "multi_turn",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove n + 0 = n."
+      },
+      {
+       "role": "assistant",
+       "content": "by simp"
+      },
+      {
+       "role": "user",
+       "content": "Now prove n + m = m + n."
+      }
+     ],
+     "rendered": "<|user|>\nProve n + 0 = n.</s>\n<|assistant|>\nby simp</s>\n<|user|>\nNow prove n + m = m + n.</s>\n<|assistant|>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      302,
+      718,
+      29871,
+      29900,
+      353,
+      302,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13,
+      1609,
+      3053,
+      2,
+      13,
+      29966,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      10454,
+      6356,
+      302,
+      718,
+      286,
+      353,
+      286,
+      718,
+      302,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13
+     ]
+    },
+    {
+     "conversation": "multi_turn",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove n + 0 = n."
+      },
+      {
+       "role": "assistant",
+       "content": "by simp"
+      },
+      {
+       "role": "user",
+       "content": "Now prove n + m = m + n."
+      }
+     ],
+     "rendered": "<|user|>\nProve n + 0 = n.</s>\n<|assistant|>\nby simp</s>\n<|user|>\nNow prove n + m = m + n.</s>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      302,
+      718,
+      29871,
+      29900,
+      353,
+      302,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13,
+      1609,
+      3053,
+      2,
+      13,
+      29966,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      10454,
+      6356,
+      302,
+      718,
+      286,
+      353,
+      286,
+      718,
+      302,
+      29889,
+      2,
+      13
+     ]
+    },
+    {
+     "conversation": "html_ish_content",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Show a < b & c > d, and the string \"x\" <tag>."
+      }
+     ],
+     "rendered": "<|user|>\nShow a < b & c > d, and the string \"x\" <tag>.</s>\n<|assistant|>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      8964,
+      263,
+      529,
+      289,
+      669,
+      274,
+      1405,
+      270,
+      29892,
+      322,
+      278,
+      1347,
+      376,
+      29916,
+      29908,
+      529,
+      4039,
+      15513,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13
+     ]
+    },
+    {
+     "conversation": "html_ish_content",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Show a < b & c > d, and the string \"x\" <tag>."
+      }
+     ],
+     "rendered": "<|user|>\nShow a < b & c > d, and the string \"x\" <tag>.</s>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      8964,
+      263,
+      529,
+      289,
+      669,
+      274,
+      1405,
+      270,
+      29892,
+      322,
+      278,
+      1347,
+      376,
+      29916,
+      29908,
+      529,
+      4039,
+      15513,
+      2,
+      13
+     ]
+    },
+    {
+     "conversation": "unicode_content",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove ∀ n : ℕ, n + 0 = n — with ← rewriting."
+      }
+     ],
+     "rendered": "<|user|>\nProve ∀ n : ℕ, n + 0 = n — with ← rewriting.</s>\n<|assistant|>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      29871,
+      30315,
+      302,
+      584,
+      29871,
+      30347,
+      29892,
+      302,
+      718,
+      29871,
+      29900,
+      353,
+      302,
+      813,
+      411,
+      29871,
+      30245,
+      337,
+      16554,
+      29889,
+      2,
+      13,
+      29966,
+      29989,
+      465,
+      22137,
+      29989,
+      29958,
+      13
+     ]
+    },
+    {
+     "conversation": "unicode_content",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove ∀ n : ℕ, n + 0 = n — with ← rewriting."
+      }
+     ],
+     "rendered": "<|user|>\nProve ∀ n : ℕ, n + 0 = n — with ← rewriting.</s>\n",
+     "token_ids": [
+      529,
+      29989,
+      1792,
+      29989,
+      29958,
+      13,
+      1184,
+      345,
+      29871,
+      30315,
+      302,
+      584,
+      29871,
+      30347,
+      29892,
+      302,
+      718,
+      29871,
+      29900,
+      353,
+      302,
+      813,
+      411,
+      29871,
+      30245,
+      337,
+      16554,
+      29889,
+      2,
+      13
+     ]
+    }
+   ]
+  },
+  {
+   "repo_id": "Qwen/Qwen3-0.6B",
+   "directory": "tokenizers/Qwen3-0.6B",
+   "has_converted_tokenizer": false,
+   "cases": [
+    {
+     "conversation": "single_user",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove that 2 + 2 = 4 in Lean 4."
+      }
+     ],
+     "rendered": "<|im_start|>user\nProve that 2 + 2 = 4 in Lean 4.<|im_end|>\n<|im_start|>assistant\n"
+    },
+    {
+     "conversation": "single_user",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove that 2 + 2 = 4 in Lean 4."
+      }
+     ],
+     "rendered": "<|im_start|>user\nProve that 2 + 2 = 4 in Lean 4.<|im_end|>\n"
+    },
+    {
+     "conversation": "system_and_user",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "system",
+       "content": "You are a Lean 4 prover. Answer with a tactic block."
+      },
+      {
+       "role": "user",
+       "content": "Prove 2 + 2 = 4."
+      }
+     ],
+     "rendered": "<|im_start|>system\nYou are a Lean 4 prover. Answer with a tactic block.<|im_end|>\n<|im_start|>user\nProve 2 + 2 = 4.<|im_end|>\n<|im_start|>assistant\n"
+    },
+    {
+     "conversation": "system_and_user",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "system",
+       "content": "You are a Lean 4 prover. Answer with a tactic block."
+      },
+      {
+       "role": "user",
+       "content": "Prove 2 + 2 = 4."
+      }
+     ],
+     "rendered": "<|im_start|>system\nYou are a Lean 4 prover. Answer with a tactic block.<|im_end|>\n<|im_start|>user\nProve 2 + 2 = 4.<|im_end|>\n"
+    },
+    {
+     "conversation": "multi_turn",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove n + 0 = n."
+      },
+      {
+       "role": "assistant",
+       "content": "by simp"
+      },
+      {
+       "role": "user",
+       "content": "Now prove n + m = m + n."
+      }
+     ],
+     "rendered": "<|im_start|>user\nProve n + 0 = n.<|im_end|>\n<|im_start|>assistant\nby simp<|im_end|>\n<|im_start|>user\nNow prove n + m = m + n.<|im_end|>\n<|im_start|>assistant\n"
+    },
+    {
+     "conversation": "multi_turn",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove n + 0 = n."
+      },
+      {
+       "role": "assistant",
+       "content": "by simp"
+      },
+      {
+       "role": "user",
+       "content": "Now prove n + m = m + n."
+      }
+     ],
+     "rendered": "<|im_start|>user\nProve n + 0 = n.<|im_end|>\n<|im_start|>assistant\nby simp<|im_end|>\n<|im_start|>user\nNow prove n + m = m + n.<|im_end|>\n"
+    },
+    {
+     "conversation": "html_ish_content",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Show a < b & c > d, and the string \"x\" <tag>."
+      }
+     ],
+     "rendered": "<|im_start|>user\nShow a < b & c > d, and the string \"x\" <tag>.<|im_end|>\n<|im_start|>assistant\n"
+    },
+    {
+     "conversation": "html_ish_content",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Show a < b & c > d, and the string \"x\" <tag>."
+      }
+     ],
+     "rendered": "<|im_start|>user\nShow a < b & c > d, and the string \"x\" <tag>.<|im_end|>\n"
+    },
+    {
+     "conversation": "unicode_content",
+     "add_generation_prompt": true,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove ∀ n : ℕ, n + 0 = n — with ← rewriting."
+      }
+     ],
+     "rendered": "<|im_start|>user\nProve ∀ n : ℕ, n + 0 = n — with ← rewriting.<|im_end|>\n<|im_start|>assistant\n"
+    },
+    {
+     "conversation": "unicode_content",
+     "add_generation_prompt": false,
+     "messages": [
+      {
+       "role": "user",
+       "content": "Prove ∀ n : ℕ, n + 0 = n — with ← rewriting."
+      }
+     ],
+     "rendered": "<|im_start|>user\nProve ∀ n : ℕ, n + 0 = n — with ← rewriting.<|im_end|>\n"
+    }
+   ]
+  }
+ ]
+}

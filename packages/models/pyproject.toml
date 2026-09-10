@@ -2,7 +2,7 @@
 name = "lean-agent-models"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = ["lean-agent-core"]
+dependencies = ["lean-agent-core", "jinja2>=3.1", "tokenizers>=0.20"]
 
 [tool.uv.sources]
 lean-agent-core = { workspace = true }

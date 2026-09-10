@@ -54,9 +54,9 @@ that clause has something to be checked against. M3.1 is done too — the model 
 `lean_agent_models.{config,errors}`. No I/O yet. M3.2 is done — `tests/models/`: real vLLM
 responses recorded by hand (`record_fixtures.py`) and replayed by a genuine ASGI
 `/v1/completions` server (`replay_server.py`), which is how the model layer gets tested on a
-GPU-less CI box without mocking the client. Still to come: M3.3 (`template.py`, which also has to
-settle how a tokenizer is vendored — `tokenizer.json` for Qwen3-0.6B is 11 MB, too big to check in
-casually), M3.4 (`client.py`), M3.5
+GPU-less CI box without mocking the client. M3.3 is done — `lean_agent_models.template`, chat
+template → token ids without depending on `transformers`, held byte-for-byte to recorded
+`transformers` output for two vendored tokenizers. Still to come: M3.4 (`client.py`), M3.5
 (`router.py`), M3.6 (`cache.py` + its migration), M3.7 (widened trajectory logging), M3.8
 (`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
 M3.12 (the exit gate).
@@ -207,6 +207,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   lean_agent_eval.suites.survey_minif2f --out <path>` re-measures which of the 488 problems the null agent
   closes (~25 min) — that measurement is what `EASY_TAIL` is derived from, and it is checked in rather than
   recomputed by the gate.
+- Chat templates (M3.3, `lean_agent_models.template`): covered by `uv run pytest tests/models`, offline. To
+  re-record the reference or vendor a new model's tokenizer, run the manual tool in an environment that has
+  `transformers` (this repo deliberately does not depend on it):
+  `uv run --with transformers python tests/models/record_templates.py`. It writes `tokenizer.converted.json`,
+  which is the tokenizer *as transformers configures it* — never upstream's `tokenizer.json`; see the notes below.
 - Model-layer fixtures (M3.2, `tests/models/`): `uv run pytest tests/models` needs nothing but the workspace —
   no GPU, no Postgres, no Lean — because it replays recorded vLLM responses through a real ASGI
   `/v1/completions` app. Re-record them by hand against a real server when the wire format may have moved:
@@ -940,6 +945,62 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: chat-template facts (M3.3)
+
+These come from building `lean_agent_models.template` — rendering a chat template to token ids
+without `transformers` — and holding it to the real implementation's output. **Three separate
+silent bugs**, each found by measuring rather than by reading the reference, and each producing a
+prompt or id sequence the model was never trained on with nothing raised.
+
+- **The reference's Jinja environment is not a default one.** `transformers` compiles chat
+  templates with `ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True,
+  extensions=[AssistantTracker, jinja2.ext.loopcontrols])`, overrides `tojson` with plain
+  `json.dumps(ensure_ascii=False)` (Jinja's built-in HTML-escapes), and supplies `raise_exception`
+  and `strftime_now`. Without `trim_blocks`/`lstrip_blocks`, TinyLlama's template renders with
+  extra newlines around every block.
+- **`add_special_tokens=False` on encode.** The template already emits whatever special tokens the
+  model expects, so encoding with `True` gives TinyLlama a second BOS.
+- **The tokenizer file is not the tokenizer.** `transformers` *rewrites* SentencePiece/Llama-family
+  tokenizers as it loads them: TinyLlama's `tokenizer.json` carries
+  `Sequence[Prepend("▁"), Replace(" "→"▁")]` as its normalizer and no pre-tokenizer, while
+  `AutoTokenizer(...).backend_tokenizer` has **no** normalizer and a
+  `Metaspace(prepend_scheme="first", split=false)` pre-tokenizer. Hand the raw file to `tokenizers`
+  and every special token *in the middle* of a prompt is followed by a spurious metaspace id
+  (`▁`, 29871). So `load_chat_tokenizer` requires `tokenizer.converted.json` —
+  `backend_tokenizer.to_str()`, produced once by `record_templates.py` and pinned — and refuses a
+  raw `tokenizer.json` by name rather than accepting it and being subtly wrong. Recording the
+  converted artifact beats reimplementing the conversion for reproducibility too: a `transformers`
+  upgrade can change how it converts, and a pinned artifact cannot. **Consequence for a
+  deployment**: a new model's tokenizer must be converted once by something that has
+  `transformers` before this system can prompt it.
+- **Every one of those three is invisible in Qwen3 and obvious in TinyLlama**, which is exactly why
+  both are vendored. Qwen3's template uses explicit `{%-` markers everywhere (so the environment
+  settings do not matter) and its BPE tokenizer adds no special tokens and needs no conversion.
+  Testing against the realistic model alone would have shipped all three.
+- **Vendoring cost, measured before choosing**: Qwen3's `tokenizer.json` is 11 MB, TinyLlama's
+  1.8 MB (1.4 MB converted). So TinyLlama carries the full render+encode path offline, and only
+  Qwen3's 9.5 KB `tokenizer_config.json` is vendored — enough for its hard template to be a render
+  conformance case, with no second copy of an encode path that is identical anyway.
+- **`transformers`' fast tokenizers *are* `tokenizers`.** `AutoTokenizer(...).backend_tokenizer` is
+  a `tokenizers.Tokenizer`, so the encoding half is the same library either way and only rendering
+  was reimplemented. That is what made "`tokenizers` + our own Jinja" viable at all — but note it
+  is viable only together with the converted-artifact rule above.
+- **`strftime_now` is refused unless the caller pins `now`.** Some templates put today's date in
+  the system prompt; left to the clock, the rendered prompt changes daily, which silently defeats
+  prefix caching (§6.6: bands 1–2 must be byte-stable "or prefix caching is defeated and cost
+  multiplies silently") and makes the trajectory unreplayable. The reference just calls the clock;
+  this module makes it a decision.
+- **`{% generation %}` is refused** rather than rendered without it. It needs the reference's
+  `AssistantTracker` extension to mark assistant-generated spans (which matters for RL later);
+  rendering the block as ordinary text would produce something subtly unlike the reference.
+- **A missing special token renders as empty string, not an error** — that is Jinja's behaviour, and
+  it is how a truncated prompt happens quietly. `tokenizer_config.json` writes special tokens either
+  as bare strings or as `AddedToken` objects, so both shapes are read; handling only one would leave
+  `eos_token` undefined for half the models in the wild.
+- **`apply_chat_template(tokenize=True)` returns a `BatchEncoding` in transformers 5.x**, not a flat
+  id list. Reading it as a list yields nonsense (`len(...) == 2`, the dict's keys) — worth knowing
+  when writing anything that compares against the reference.
 
 ## Implementation notes: recorded-fixture facts (M3.2)
 
