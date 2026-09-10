@@ -38,8 +38,8 @@ claim, lease, heartbeat, reaper) M2.4 (control loop — `lean_agent_core.worker`
 bundle materialization (`lean_agent_api.materialize`) are done — **the whole Phase 2 pipeline now runs end to
 end**: submission → ingestion → materialization → claim → null agent → link/replay/audit → `mark_proved`, with
 zero model calls, and out the other side as a **standalone materialized `.lean` file** with its `sorry`s filled
-(spec §6.3 step 6) — `tests/leanserv/test_end_to_end.py`. Next is M2.8 (the public §6.1
-API surface), M2.9 (CLI as its httpx client), M2.10 (miniF2F exit-gate validation).
+(spec §6.3 step 6) — `tests/leanserv/test_end_to_end.py`. M2.8 (the public §6.1 API surface —
+`lean_agent_api.app`) is done. Next is M2.9 (CLI as its httpx client), M2.10 (miniF2F exit-gate validation).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -824,6 +824,58 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
 - **`/v1/base-env/materialize` (§6.2) is also absent.** It builds and snapshots a *base environment*, which is a
   different artifact from a goal bundle, and spec §8 already defers the snapshot machinery it would need ("L3
   snapshot persistence: warm sealing needs a warm worker, not a persisted snapshot").
+
+## Implementation notes: public API facts (M2.8)
+
+- **Spec §5.5's grant list keeps turning out to be incomplete for §6.1's own endpoints.** `run`
+  (`POST /v1/runs`, M2.6), `run.status` (`POST /v1/runs/{id}/cancel`) and `base_env`
+  (`POST /v1/base-envs`) are all public endpoints whose tables `app` had no write on. Each was found
+  by a test hitting "permission denied", never by reading the list. Every grant added is the
+  narrowest that works -- `INSERT` only on `run` and `base_env`, column-level `UPDATE (status)` on
+  `run` -- because the alternative is exactly what §5.5 warns against: the submission's frozen
+  record (`manifest`, `axiom_allowlist`, `allow_sorry`, `reassembly_blob`) must not be editable
+  after the fact, or a published result means nothing.
+- **Cancel is `UPDATE run SET status`, and that *is* the whole mechanism.** `claim_attempt`
+  requires `r.status = 'running'`, so setting the column stops every future claim; live attempts are
+  deliberately left alone ("live attempts finish or expire"), since killing one discards work that
+  may be seconds from a verdict and the lease already bounds how long a cancelled run holds a
+  worker. The test asserts the *scheduling* consequence -- a later `claim_attempt` returns `None` --
+  not just the column.
+- **`:name::type` does not work in a SQLAlchemy `text()` query.** `SELECT :root::uuid` is parsed as
+  the parameter `:root` followed by the parameter `:uuid`, and asyncpg reports `syntax error at or
+  near ":"`. `CAST(:root AS uuid)` says the same thing without the collision. Worth knowing before
+  writing any recursive CTE that seeds from a bound id.
+- **Obligation listing is keyset-paginated on `id`, not `OFFSET`.** A run's obligations are being
+  inserted and updated while a client pages through them, and `OFFSET` over a moving set silently
+  skips and repeats rows.
+- **`/v1/runs/{id}/events` polls rather than using `LISTEN`/`NOTIFY`.** Push would mean a dedicated
+  backend connection per subscriber held open for the life of a run -- the same objection spec
+  raises against session-level advisory locks for leases ("pin one backend connection per in-flight
+  attempt ... to buy seconds of detection latency"). The stream emits a `snapshot` first so a
+  subscriber joining mid-run is not left guessing, then one `transition` per obligation whose status
+  actually changed, and ends when the run does.
+- **`/metrics` is hand-written Prometheus text exposition, no client library.** Every number is a
+  count of rows, so `prometheus_client` would add a dependency and a registry to format eight lines.
+  The test creates a run first and asserts on a *series* (`lean_agent_runs{status="running"}`),
+  because asserting only on the `# TYPE` header would pass against an endpoint emitting headers and
+  no data.
+- **`/healthz` touches nothing but the process; `/readyz` touches the database.** A liveness probe
+  that fails when Postgres is briefly unreachable gets the process killed for someone else's outage.
+- **`/v1/blobs/{sha}` refuses tenant-scoped blobs rather than serving them.** Spec marks the
+  endpoint tenant-scoped and `blob.tenant_id` carries the scope, but the check needs an
+  authenticated caller and multi-tenancy is post-MVP. Serving a tenant-owned blob from an endpoint
+  that cannot tell who is asking would be the wrong way to round that gap, so only shared
+  (`tenant_id IS NULL`) blobs are served and the rest are a 403 that says why.
+- **`POST /v1/runs` materializes synchronously and refuses outright without a materializer.** §4.1
+  keeps the build off the *hot path* (a check), not off submission, and a caller handed a 201 with
+  obligation ids should be able to act on them. A deployment with no materializer would accept work
+  that can never complete (M2.7), so it returns 503 instead of half-working.
+- **`base_env` registration is content-addressed over the recipe, and `curated` cannot be set by a
+  caller.** A duplicate digest would mean a second full warm-worker memory slot for an identical
+  environment (§6.2's header fragmentation), and a caller able to mark its own prelude curated could
+  opt itself into the hot pool.
+- **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
+  written", and that test is the cheapest check that no endpoint was quietly dropped.
 
 ## Implementation notes: blob store facts
 
