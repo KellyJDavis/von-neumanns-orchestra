@@ -1364,6 +1364,20 @@ It is worth knowing where that cost lives before adding to it.
   and ~30 s, so anything that causes an extra pool key or an extra `leanserv` fixture instance
   costs another warm-up. That is also why the module's fixtures (`leanserv`, `bundle_root`,
   `mathlib_base_env`, `mathlib`) are module-scoped: a function-scoped one silently multiplies it.
+- **One slow CI run is not a regression -- re-run the job before profiling anything.** M3.10's first
+  `lean` run spent **221 s** in the gate against M3.9's 111 s, which looked like a doubling; a
+  re-run of the *identical commit* on a fresh runner took **74 s**. A controlled local A/B (same
+  machine, verification cache cleared before each run) had already shown no code difference:
+  62 s / 67 s on the branch against 64 s on `main`. So the same code puts the gate anywhere from
+  ~74 s to ~221 s depending on the machine. The diagnosis that worked, in order: per-step timings
+  from `gh api .../actions/jobs/<id>`; the per-line timestamps in the job's log to localize the
+  growth to one test file; then the A/B -- and only then, if it reproduces, a profiler. Clear the
+  local `verification_cache` for any such A/B: it persists across local runs, and a warm cache
+  makes the gate's first run look nearly free.
+- **A change to any `LeanKernel` module costs the next CI run a rebuild.** `lean-action` rebuilt
+  `LeanKernel.Serve` (34 s) and relinked `kernel_tests` (9.6 s) after M3.10 touched `Serve.lean`,
+  against under 3 s per module for a PR that changes only test fixtures. A one-off per Lean change,
+  not a standing cost.
 - **Verify a refactor here by breaking something.** Sharing a fixture is exactly the change that can
   neuter a suite while leaving it green, so this one was checked the same way M3.0 was: a
   whitespace-only change to `SymbolicPortfolio.development` must still fail the baseline test with
