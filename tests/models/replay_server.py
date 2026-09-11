@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -83,6 +84,62 @@ def load_fixtures(path: Path = FIXTURE_PATH) -> Fixtures:
             for i in document["interactions"]
         ),
     )
+
+
+class RecordingTransport(httpx.AsyncBaseTransport):
+    """Passes requests through to a real server and keeps every exchange, verbatim.
+
+    The other way to record (M3.4's) is to rebuild each request with `CompletionsClient.build_body`
+    and post it separately. That is enough when the prompt is a fixed id list; it is not enough
+    once the prompt is *produced* -- a policy renders band 1, the pinned tokenizer turns it into
+    ids, the router merges configured sampling with the policy's -- because a separate recorder
+    would have to reproduce all of that and could drift from it. Recording through the transport
+    the real pipeline used means the fixture holds exactly the bytes that pipeline sent, and the
+    replay server's exact match then fails the moment any of those steps changes.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+        self.exchanges: list[tuple[dict[str, Any], int, dict[str, Any]]] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await self._inner.handle_async_request(request)
+        body = await response.aread()
+        self.exchanges.append((json.loads(request.content), response.status_code, json.loads(body)))
+        # Rebuilt rather than returned: the body has been consumed, and the inner response's
+        # framing headers (`transfer-encoding`, `content-length`) describe a stream that is gone.
+        return httpx.Response(
+            status_code=response.status_code,
+            headers={"content-type": response.headers.get("content-type", "application/json")},
+            content=body,
+        )
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def write_fixtures(
+    path: Path,
+    *,
+    provenance: dict[str, Any],
+    exchanges: list[tuple[dict[str, Any], int, dict[str, Any]]],
+    name: str,
+    note: str,
+) -> None:
+    """Write recorded exchanges in the schema `load_fixtures` reads, every one `recorded: true`."""
+    interactions = [
+        {
+            "name": name if len(exchanges) == 1 else f"{name}_{index}",
+            "recorded": True,
+            "note": note,
+            "request": request,
+            "status": status,
+            "response": response,
+        }
+        for index, (request, status, response) in enumerate(exchanges)
+    ]
+    document = {"provenance": provenance, "interactions": interactions}
+    path.write_text(json.dumps(document, indent=1, ensure_ascii=False) + "\n")
 
 
 def create_replay_app(fixtures: Fixtures | None = None) -> FastAPI:

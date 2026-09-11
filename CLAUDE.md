@@ -65,8 +65,12 @@ M3.6 is done — `lean_agent_models.cache` over a new `model_response_cache` tab
 requires. M3.7 is done — the executor can call a model through a `CompletionService` and the trajectory
 records what came back, filling the four columns M1.5 created and Phase 2 left NULL. M3.8 is done —
 `lean_agent_core.context`, §6.6's bands with both of the rules spec says matter more than the
-bands themselves. Still to come: M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11
-(trajectory viewer), M3.12 (the exit gate).
+bands themselves. M3.9 is done — `lean_agent_policies.whole_proof`: `WholeProofSampler` asks the
+prover role for *n* whole proofs and checks each, and the executor now sends each action's result
+back into the policy (`protocols.Observation`). It is the first time this system proves a goal with
+a language model: miniF2F's `imo_1959_p1`, which the null agent does not close, by
+Goedel-Prover-V2-8B -- replayed in CI from a recording, `tests/leanserv/test_whole_proof.py`. Still
+to come: M3.10 (`RepairLoop`), M3.11 (trajectory viewer), M3.12 (the exit gate).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -224,6 +228,13 @@ Two decisions drive nearly everything else in the design (spec §1):
   `/v1/completions` app. Re-record them by hand against a real server when the wire format may have moved:
   `source ~/.venv-vllm-metal/bin/activate && vllm serve Qwen/Qwen3-0.6B --port 8765 --max-model-len 2048`, then
   `uv run python tests/models/record_fixtures.py --endpoint http://127.0.0.1:8765 --server-version "..."`.
+- `WholeProofSampler` end to end (M3.9, `tests/leanserv/test_whole_proof.py`): same prerequisites as
+  the rest of `tests/leanserv` (built exe, Postgres with grants); replays
+  `tests/models/data/goedel_whole_proof.json`. Re-record against a live prover -- the *same test*,
+  in record mode, so the fixture holds exactly what the pipeline sent:
+  `source ~/.venv-vllm-metal/bin/activate && vllm serve Goedel-LM/Goedel-Prover-V2-8B --port 8766
+  --max-model-len 16384`, then `LEAN_AGENT_RECORD_VLLM=http://127.0.0.1:8766 uv run pytest
+  tests/leanserv/test_whole_proof.py` (~5 minutes on an M2 Max; see the notes below for why).
 - Phase 2 baseline (M3.0, `lean_agent_eval.baseline` + `suites/data/phase2_baseline.json`): asserted by the same
   miniF2F gate, so it needs the same prerequisites. Note the gate runs **once per module** (a module-scoped
   `gate_reports` fixture) and every test reads that one result — see the cost note below before adding a test
@@ -955,6 +966,103 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
 
+## Implementation notes: whole-proof sampling facts (M3.9)
+
+From building `lean_agent_policies.whole_proof` and running it against a real Goedel-Prover-V2-8B
+(vLLM 0.28.0 on vllm-metal, Apple M2 Max, 64 GiB) before designing it, then through the pipeline.
+
+- **Spec's `Policy.propose` had no channel back, and every Phase 3 policy needs one.** §6.6 wrote
+  `-> AsyncIterator[Action]`; a sampler cannot submit samples it is never shown, and `RepairLoop`'s
+  "feed diagnostics back" *is* a channel back. `propose` is now
+  `AsyncGenerator[Action, Observation | None]` and the executor `asend`s what it saw -- the
+  `CompletionResponse`, or the `CheckOutcome` of a screened-out submission. Spec updated. A sent
+  value is one recorded input per action, which replay can supply; a mutable "observations" object
+  the policy polled would be hidden state replay has to reconstruct. `SymbolicPortfolio` ignores
+  what it is sent, which costs nothing (`asend(None)` is `__anext__`).
+- **`break` out of an `async for` does not close the generator underneath**, so the executor closes
+  it in `finally`. The test for that has a trap: `asyncio.run` calls `shutdown_asyncgens` on exit,
+  closing every abandoned generator, so asserting "the policy's cleanup ran" *after* `asyncio.run`
+  passes with or without the fix. It reads the state inside the loop, and was confirmed to fail
+  with the `aclose` removed.
+- **What Goedel-Prover-V2-8B actually writes** (12 probe samples over three prompts): no `<think>`
+  section; a markdown plan, then **two** `lean4` blocks -- a sketch whose steps are `sorry`, then
+  the proof. **Take the last block**: the first elaborates (a `sorry` is a warning) and is what the
+  `sorryAx` screen exists to catch. The final block restates the theorem but **omits the header**
+  -- no imports, no `open` -- so its names resolve only because the development repeats the
+  prompt's `open BigOperators Real Nat Topology Rat`. 1.0k-2.3k tokens per sample here.
+- **Show the sealed statement, not the submitted signature**, since it is the only statement an
+  obligation has. Goedel handles `∀ (a b : ℝ), a * b = 180 → ...` without difficulty: every
+  sample opened with `intro a b h₁ h₂` and restated `theorem G_1` verbatim.
+- **The model's theorem goes in whole, as an auxiliary; the entry is still typed by the sealed
+  constant** (`def sol_n : G_n := by unfold G_n; exact Sol.G_n`). A weakened restatement is an
+  `exact` that fails, never a proof of the wrong thing -- §1.1 kept at the level of emitted text.
+  Cutting the tactic block out of `theorem ... := by <here>` instead would mean parsing Lean by
+  hand (indentation, `:= by` versus a term, the helper lemmas Goedel declares ahead of the
+  theorem). Only `import` lines are dropped, since the base env is fixed and `import` mid-file is
+  a parse error. Extracting a markdown fence from a model's *prose* is not the "regex over Lean
+  source" spec forbids: nothing about the block's meaning is inferred from its text.
+- **All 8 sealed-form samples elaborated with clean axiom cones** as the policy submits them --
+  4/4 on `imo_1959_p1`, which the M2.10 survey's portfolio does not close. ~0.2 s per check warm.
+- **Then the whole pipeline, live**: record mode ran submission → seal → materialize → claim →
+  sampler → Goedel over real HTTP → `/v1/check` → `/v1/link` → `mark_proved` and proved
+  `imo_1959_p1` in 363 s, almost all of it generation (4 samples, 1.5k-2.5k tokens, every one
+  ending `stop`). The recording is 924 KB; replaying it costs CI **~8 s** for the integration test.
+  Replay was checked to be genuinely exact by breaking it: one trailing space in the prompt asset
+  changes the rendered ids, and the test fails with the replay server's 409 rather than passing.
+- **Throughput is the binding constraint on a laptop**: ~8 tok/s per sequence and 23-32 tok/s
+  aggregate at n=4, so one 4-sample request takes 2.5-5 minutes. That is why CI replays, and why
+  M3.12's multi-prover comparison cannot run here at any useful k.
+- **`maxHeartbeats 400000`, not Goedel's harness's `0`**: spec §7.2 denies `0`, and M2.10 measured
+  the cost (a wallclock SIGKILL and ~30 s to re-warm a full-Mathlib worker). The prompt shows the
+  same value the development sets, so the model is told the budget it runs under.
+- **Goedel-Prover-V2-8B's tokenizer is byte-identical to Qwen3-0.6B's** (upstream `tokenizer.json`
+  sha256 `aeb13307...`, identical chat template; `tokenizer_config.json` differs only in
+  `padding_side`/`extra_special_tokens`, which rendering never reads). So the vendored converted
+  Qwen3 tokenizer (`41e00ecc...`, 5.4 MB) *is* the prover's, and CI renders the real prompt to the
+  real ids. The converted file is **not** the same JSON as upstream's even for this BPE family, so
+  M3.3's "convert, never load the raw file" rule is not only about SentencePiece.
+- **`load_context` had never had a caller, and had two bugs from M2.5.** `bundle_sha` was read
+  from `obligation.admission`, which ingestion never writes it into (M2.6 made it a column), so
+  every context carried `bundle_sha=""`; and `run.allow_sorry` was not read. Every integration
+  test used its own hand-written loader, which is how both survived. `level_params` turned out to
+  be persisted *nowhere* -- recorded as a known gap, not papered over.
+- **The end-to-end suite's `LeanService` adapter dropped `CheckOutcome.axioms`**, silently
+  disabling the `sorryAx` screen in every test using it. Harmless for portfolio tactics, and
+  exactly wrong for a model sample whose first code block is a `sorry` sketch.
+- **`trajectory.sampling` recorded the policy's overrides, not what was sent.** The first policy
+  relying on configured sampling asked for `{}`, and its trajectory said `sampling = {}`,
+  `seed = NULL` for a run at temperature 0.8 under seed 1234. `CompletionResponse` now carries the
+  effective `sampling`/`seed`, filled by `RoutedCompletions` (a backend only sees the merged
+  request, so it cannot report them).
+- **Record through the transport, not beside it.** M3.4's recorder rebuilds requests with
+  `build_body`, which suffices for a fixed id list. Once the prompt is *produced* -- band 1
+  rendered, tokenized by the pinned tokenizer, sampling merged -- a separate recorder would have to
+  reimplement that pipeline and could drift from it. `RecordingTransport` keeps exactly what the
+  real pipeline sent, so any step moving turns replay into a 409.
+- **`claim_attempt` is global, so a test that claims must scope the claim to its own work.** It
+  takes the *oldest* open obligation in *any* running run; `tests/leanserv/test_whole_proof.py`
+  passes its submission's tenant as `eligible_tenants` (spec §6.4's own mechanism) and requests
+  `sealed_obligation` as a **decoy** -- an older open obligation from another tenant -- asserting
+  the claim was its own. Verified both ways: without the scope the claim takes the decoy and the
+  test fails on that assertion. How this surfaced is worth recording honestly: one run of the test
+  failed while the full `tests/leanserv` suite was running beside it, its output was not captured,
+  and a staggered two-copies experiment did *not* reproduce a claim race -- so the decoy exists
+  because the mechanism is real, not because the original failure was diagnosed.
+- **Two pytest processes started at the same moment collide in session setup**, before any test
+  runs: `tests/conftest.py`'s `admin_engine` sets role passwords with `ALTER ROLE`, and concurrent
+  `ALTER ROLE`s fail with "tuple concurrently updated". So "run it twice in parallel" is not a
+  concurrency test of anything in this repo unless the starts are staggered; CI runs one process.
+- **The integration test's base env is seven Mathlib modules, not `Mathlib`**: 3.7 s and 2.0 GiB to
+  warm against 14.4 s and 6.0 GiB, and the pipeline needs two workers (seal keys on the base env,
+  link on base env + bundle). Lighter still is ruled out by `open`: an `open` of a namespace the
+  environment lacks is a hard error, so the env must define all five Goedel names. The prompt names
+  these modules, so the recording is the model answering for this environment.
+- **`ContextBuilder` still has no caller, and that is the finding rather than an omission.** The
+  sampler's whole context is band 1, and it has to be rendered in the prover's *trained* format
+  ("Complete the following Lean 4 code"), not under `ContextBuilder`'s `# Goal` headings -- a
+  whole-proof prover is a model of one prompt shape. The builder's first real use is M3.10, where
+  band 2 appears, and that milestone has to answer how bands map onto a trained prompt.
+
 ## Implementation notes: context-band facts (M3.8)
 
 From building `lean_agent_core.context`. Spec §6.6 says two rules matter more than the bands
@@ -1219,9 +1327,10 @@ prompt or id sequence the model was never trained on with nothing raised.
   settings do not matter) and its BPE tokenizer adds no special tokens and needs no conversion.
   Testing against the realistic model alone would have shipped all three.
 - **Vendoring cost, measured before choosing**: Qwen3's `tokenizer.json` is 11 MB, TinyLlama's
-  1.8 MB (1.4 MB converted). So TinyLlama carries the full render+encode path offline, and only
-  Qwen3's 9.5 KB `tokenizer_config.json` is vendored — enough for its hard template to be a render
-  conformance case, with no second copy of an encode path that is identical anyway.
+  1.8 MB (1.4 MB converted). So TinyLlama carried the full render+encode path offline, and at M3.3
+  only Qwen3's 9.5 KB `tokenizer_config.json` was vendored. M3.9 vendored Qwen3's converted
+  tokenizer too (5.4 MB), for a reason M3.3 did not have: it is byte-identical to the real prover's
+  (see the M3.9 notes).
 - **`transformers`' fast tokenizers *are* `tokenizers`.** `AutoTokenizer(...).backend_tokenizer` is
   a `tokenizers.Tokenizer`, so the encoding half is the same library either way and only rendering
   was reimplemented. That is what made "`tokenizers` + our own Jinja" viable at all — but note it

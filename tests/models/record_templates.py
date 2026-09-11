@@ -18,9 +18,15 @@ recorded vLLM responses.
   `True` it acquires a second BOS), and the metaspace conversion below. Small enough to vendor
   whole, so the render *and* encode halves are both checkable offline.
 - *Qwen3* has a 4 KB template using `namespace()`, `tojson`, `.split()`, `loop.*` and eighteen
-  conditionals -- a realistic one, close in shape to the prover models this system will actually
-  run. Only its `tokenizer_config.json` is vendored (9.5 KB); its `tokenizer.json` is 11 MB and
-  would buy nothing the TinyLlama one does not, since the encode path is identical.
+  conditionals -- a realistic one. Its converted tokenizer is vendored too (M3.9), for a reason
+  that did not exist at M3.3: **`Goedel-LM/Goedel-Prover-V2-8B`, the prover spec's Appendix B
+  names, is a Qwen3 fine-tune whose tokenizer is byte-identical to Qwen3-0.6B's** (upstream
+  `tokenizer.json` sha256 `aeb13307...`, converted `41e00ecc...`, identical chat template; its
+  `tokenizer_config.json` differs only in `padding_side` and `extra_special_tokens`, neither of
+  which rendering reads). So this one artifact is the real prover's tokenizer, and a test can
+  render `WholeProofSampler`'s actual prompt to the exact ids a recorded Goedel response was
+  answering. The converted file is 4.5 MB -- `to_str()` is compact -- against upstream's 11 MB,
+  and it is *not* the same JSON as upstream's, so the conversion matters here as well.
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ DATA = Path(__file__).parent / "data"
 #: `(repo id, vendor tokenizer.json too?)`. See the module docstring for why only one gets weights.
 MODELS: list[tuple[str, bool]] = [
     ("TinyLlama/TinyLlama-1.1B-Chat-v1.0", True),
-    ("Qwen/Qwen3-0.6B", False),
+    ("Qwen/Qwen3-0.6B", True),
 ]
 
 #: Message shapes worth pinning: a bare user turn, a system prompt, a multi-turn exchange, and
@@ -59,6 +65,19 @@ CONVERSATIONS: dict[str, list[dict[str, str]]] = {
     ],
     "unicode_content": [
         {"role": "user", "content": "Prove ∀ n : ℕ, n + 0 = n — with ← rewriting."}
+    ],
+    # The shape a prover prompt actually has: a fenced Lean block with its header, binders,
+    # subscripts and a `∀`, which is where a tokenizer's handling of newlines-before-backticks
+    # and multi-byte math symbols gets exercised together.
+    "lean_prover_prompt": [
+        {
+            "role": "user",
+            "content": (
+                "Complete the following Lean 4 code:\n\n```lean4\nimport Mathlib\n\n"
+                "theorem G_1 : ∀ (a b : ℝ), a * b = 180 → 2 * (a + b) = 54 → "
+                "a ^ 2 + b ^ 2 = 369 := by\n  sorry\n```\n\nBefore producing the Lean 4 code."
+            ),
+        }
     ],
 }
 

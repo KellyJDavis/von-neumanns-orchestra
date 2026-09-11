@@ -14,7 +14,7 @@ such justification.
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -195,6 +195,16 @@ class Policy(Protocol):
     a list would compute every proposal even after the first one succeeded, which for a timed
     portfolio is the whole cost.
 
+    It is a generator in the full sense, not only an iterator: after performing an action the
+    executor **sends back what it observed** (`Observation`), so `response = yield
+    RequestCompletion(...)` is how a policy sees the tokens it asked for. Spec writes the return
+    type as `AsyncIterator[Action]`, which has no channel back at all -- and every Phase 3 policy
+    needs one: `WholeProofSampler` cannot submit samples it was never shown, and `RepairLoop`'s
+    "feed diagnostics back" is the definition of the thing. The alternatives were worse: a mutable
+    "observations" object the policy polls is hidden state a replay would have to reconstruct,
+    whereas a sent value is exactly one recorded input per action. `SymbolicPortfolio` ignores what
+    is sent, which costs it nothing -- `asend(None)` on a generator is `__anext__`.
+
     Every attribute is declared read-only (a `@property`, not a bare annotation), which is not a
     style choice. A plain `id: str` in a Protocol demands a *settable* attribute, so a frozen
     dataclass -- the natural way to write a policy whose configuration cannot drift from its
@@ -216,7 +226,9 @@ class Policy(Protocol):
     @property
     def roles(self) -> frozenset[ModelRole]: ...
 
-    def propose(self, ctx: ObligationContext, budget: Budget) -> AsyncIterator[Action]: ...
+    def propose(
+        self, ctx: ObligationContext, budget: Budget
+    ) -> AsyncGenerator[Action, Observation | None]: ...
 
 
 @dataclass(frozen=True)
@@ -318,6 +330,32 @@ class CompletionResponse:
     tokenizer_revision: str | None = None
     cache_hit: bool = False
     elapsed_ms: int = 0
+    #: What was actually *asked* -- the deployment's configured sampling with the policy's
+    #: overrides applied, and the seed that won. `None` from a backend, which only ever sees the
+    #: merged request; filled by the completion service that did the merging.
+    #:
+    #: Added in M3.9, when the first real policy asked for no overrides at all and its trajectory
+    #: recorded `sampling = {}` and `seed = NULL` while the model sampled 4 completions at
+    #: temperature 0.8 under seed 1234. `trajectory.sampling` is what makes a run reproducible
+    #: from its record (§7.3); recording the policy's *request* instead of the *effective* values
+    #: was right only for policies that override everything, which is the opposite of what §6.5
+    #: asks ("four config files and no code").
+    sampling: SamplingParams | None = None
+    seed: int | None = None
+
+
+#: What the executor sends back into `Policy.propose` after performing an action.
+#:
+#: * `RequestCompletion` -> the `CompletionResponse`, every sample of it.
+#: * `SubmitProof` screened out by `/v1/check` -> that `CheckOutcome`, diagnostics and axiom cone
+#:   included, so a policy can tell "did not elaborate" from "elaborated via `sorry`".
+#:
+#: Nothing else is ever sent, and the absences are the design rather than gaps: a `SubmitProof`
+#: that reaches `/v1/link` ends the attempt (its one verdict is spent), so there is no later point
+#: at which a policy could act on the result; `Abandon` ends the stream by definition; and
+#: `CallTool`/`Decompose` are refused before anything happens. `None` is sent on the first step,
+#: which is how a generator is started.
+Observation = CheckOutcome | CompletionResponse
 
 
 class ModelBackend(Protocol):

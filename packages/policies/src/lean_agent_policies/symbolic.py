@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 from lean_agent_core.actions import Action, Budget, ObligationContext, SubmitProof
-from lean_agent_core.protocols import Policy
+from lean_agent_core.protocols import Observation, Policy
 from lean_agent_core.roles import ModelRole
 
 #: Spec §6.6's portfolio, in a deliberate order: cheap and decisive first, expensive and general
@@ -134,7 +134,9 @@ class SymbolicPortfolio:
             f"end {namespace}"
         )
 
-    async def propose(self, ctx: ObligationContext, budget: Budget) -> AsyncIterator[Action]:
+    async def propose(
+        self, ctx: ObligationContext, budget: Budget
+    ) -> AsyncGenerator[Action, Observation | None]:
         """Yield one submission per tactic, lazily.
 
         A generator rather than a list so the executor's "stop at the first success" actually

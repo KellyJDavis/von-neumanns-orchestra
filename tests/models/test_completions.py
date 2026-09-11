@@ -219,3 +219,27 @@ class _FixedTokenizer:
 
     def encode(self, text: str) -> tuple[int, ...]:
         return self._real.encode(text)
+
+
+def test_the_response_reports_the_sampling_and_seed_that_were_actually_sent(
+    fixtures: Fixtures,
+) -> None:
+    """A backend cannot say -- it sees only the merged request -- so the service that merged the
+    deployment's configuration with the policy's overrides reports the result. That is what a
+    trajectory must record (M3.9: the first real policy overrode nothing, and its trajectory said
+    `sampling = {}`)."""
+
+    async def body(service: RoutedCompletions) -> CompletionResponse:
+        service.tokenizers[ModelRole.PROVER] = _FixedTokenizer(RECORDED_PROMPT)  # type: ignore[assignment]
+        return await service.complete(
+            RequestCompletion(
+                role=ModelRole.PROVER,
+                messages=(Message(role="user", content="hi"),),
+                sampling={"temperature": 0.0, "max_tokens": 8},
+            )
+        )
+
+    # The seed comes from configuration, the max_tokens from the policy: both are "what was sent".
+    response = _run(fixtures, body, _config(seed=1234))
+    assert response.sampling == SamplingParams(temperature=0.0, top_p=1.0, max_tokens=8, n=1)
+    assert response.seed == 1234

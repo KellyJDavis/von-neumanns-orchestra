@@ -73,12 +73,19 @@ class LeanServiceOverTestClient:
         payload: dict[str, object] = {"base_env_digest": base_env_digest, "body": body}
         if bundle_sha is not None:
             payload["bundle_sha"] = bundle_sha
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
         data = self._post("/v1/check", payload)
         return CheckOutcome(
             ok=data["ok"],
             diagnostics=tuple(data["diagnostics"]),
             cache_hit=data["cache_hit"],
             elapsed_ms=data["elapsed_ms"],
+            # Carried since M3.9. Without it every check reads as having an empty axiom cone, so
+            # the executor's `sorryAx` screen (M2.10) silently passed everything in this suite --
+            # harmless for the portfolio's tactics, and exactly wrong for a model's sample, whose
+            # first code block is a `sorry` sketch.
+            axioms=tuple(data.get("axioms", ())),
         )
 
     async def seal(
