@@ -76,18 +76,26 @@ def test_rendering_matches_transformers_byte_for_byte(reference: dict[str, Any])
                 f"add_generation_prompt={case['add_generation_prompt']}"
             )
             checked += 1
-    assert checked == 20, "the reference should cover both models across every conversation"
+    assert checked == 24, "the reference should cover both models across every conversation"
 
 
 def test_token_ids_match_transformers_byte_for_byte(reference: dict[str, Any]) -> None:
-    """Render *and* encode, end to end, against ids the reference produced."""
-    model = _model(reference, "TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-    chat = load_chat_tokenizer(DATA / model["directory"])
-    for case in model["cases"]:
-        ids = chat.to_token_ids(
-            case["messages"], add_generation_prompt=case["add_generation_prompt"]
-        )
-        assert list(ids) == case["token_ids"], case["conversation"]
+    """Render *and* encode, end to end, against ids the reference produced.
+
+    Both models since M3.9. Qwen3's converted tokenizer is byte-identical to Goedel-Prover-V2-8B's
+    -- the prover spec's Appendix B names -- so the Qwen3 half of this test is the real prover's
+    prompt path being held to `transformers`, including a fenced-Lean prover prompt."""
+    checked = 0
+    for model in reference["models"]:
+        assert model["has_converted_tokenizer"], model["repo_id"]
+        chat = load_chat_tokenizer(DATA / model["directory"])
+        for case in model["cases"]:
+            ids = chat.to_token_ids(
+                case["messages"], add_generation_prompt=case["add_generation_prompt"]
+            )
+            assert list(ids) == case["token_ids"], f"{model['repo_id']} / {case['conversation']}"
+            checked += 1
+    assert checked == 24
 
 
 # --------------------------------------------------------------------------------------------

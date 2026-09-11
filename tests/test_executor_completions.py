@@ -28,7 +28,7 @@ from lean_agent_core.actions import (
 )
 from lean_agent_core.enums import ProvenanceClass
 from lean_agent_core.executor import PolicyContractError, PolicyExecutor, TrajectoryStep
-from lean_agent_core.protocols import Completion, CompletionResponse
+from lean_agent_core.protocols import Completion, CompletionResponse, SamplingParams
 from lean_agent_core.roles import ModelRole
 from lean_agent_core.state import ObligationOutcome
 
@@ -47,6 +47,11 @@ class RecordingCompletions:
     provenance: ProvenanceClass = ProvenanceClass.OPEN_WEIGHTS
     samples: tuple[Completion, ...] = (SAMPLE,)
     requests: list[RequestCompletion] = field(default_factory=list)
+    #: What the service reports it actually sent, as `RoutedCompletions` does after merging the
+    #: deployment's configured sampling with the policy's overrides. `None` models a service that
+    #: does not say, which leaves the executor recording the policy's request.
+    effective: SamplingParams | None = None
+    effective_seed: int | None = None
 
     async def complete(self, request: RequestCompletion) -> CompletionResponse:
         self.requests.append(request)
@@ -57,6 +62,8 @@ class RecordingCompletions:
             model_weights_hash="w-abc",
             tokenizer_revision="t-def",
             elapsed_ms=17,
+            sampling=self.effective,
+            seed=self.effective_seed,
         )
 
     def provenance_for(self, role: ModelRole) -> ProvenanceClass:
@@ -253,3 +260,16 @@ def test_a_symbolic_attempt_still_writes_no_token_columns() -> None:
     assert trajectories.written["model_id"] is None
     assert trajectories.written["provenance"] is ProvenanceClass.SYMBOLIC
     assert result.outcome is ObligationOutcome.RETRYABLE_FAILURE  # type: ignore[attr-defined]
+
+
+def test_the_trajectory_records_the_sampling_that_was_sent_not_only_the_overrides() -> None:
+    """M3.9's finding. A policy relying on the deployment's configured sampling asks for no
+    overrides, so recording the *request* stored `sampling = {}` and `seed = NULL` for a run that
+    sampled at temperature 0.8 under seed 1234 -- a trajectory that could not say how it was
+    produced. When the service reports what it sent, that is what is recorded."""
+    configured = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=4096, n=4)
+    service = RecordingCompletions(effective=configured, effective_seed=1234)
+    _, trajectories = _execute(ScriptedPolicy(), service)
+
+    assert trajectories.written["sampling"] == configured.canonical()
+    assert trajectories.written["seed"] == 1234

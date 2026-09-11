@@ -768,11 +768,13 @@ Action = (SubmitProof | Decompose | CallTool | RequestCompletion | Abandon)
 class Policy(Protocol):
     id: str; config_hash: bytes
     tools: frozenset[str]; roles: frozenset[ModelRole]
-    async def propose(self, ctx: ObligationContext,
-                      budget: Budget) -> AsyncIterator[Action]: ...
+    def propose(self, ctx: ObligationContext, budget: Budget
+                ) -> AsyncGenerator[Action, Observation | None]: ...
+
+Observation = CheckOutcome | CompletionResponse   # sent back after each action
 ```
 
-The executor performs side effects, not the policy. That is what keeps trajectories replayable and the tool allowlist enforceable.
+The executor performs side effects, not the policy. That is what keeps trajectories replayable and the tool allowlist enforceable. After performing an action the executor **sends back what it observed** — the completion for a `RequestCompletion`, the check result for a screened-out `SubmitProof` — so `response = yield RequestCompletion(...)` is how a policy reads its samples. *(Revised in M3.9 from `AsyncIterator[Action]`, which has no channel back: `WholeProofSampler` cannot submit samples it is never shown, and `RepairLoop`'s "feed diagnostics back" is the definition of one. A sent value is one recorded input per action, which a replay can supply; a mutable observations object would be hidden state it would have to reconstruct.)*
 
 **Context bands**, in eviction priority:
 

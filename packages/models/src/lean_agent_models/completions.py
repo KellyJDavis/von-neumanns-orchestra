@@ -99,6 +99,9 @@ class RoutedCompletions:
                     # budget report wants: a cached run that reported ~0 ms would understate what
                     # producing these tokens actually took.
                     elapsed_ms=hit.elapsed_ms,
+                    # The cache key covers both, so these are exactly what the hit answered.
+                    sampling=sampling,
+                    seed=seed,
                 )
 
         started = time.monotonic()
@@ -116,6 +119,10 @@ class RoutedCompletions:
             tokenizer_revision=response.tokenizer_revision or tokenizer.revision,
             cache_hit=False,
             elapsed_ms=response.elapsed_ms or int((time.monotonic() - started) * 1000),
+            # The merged values this service actually sent, which a backend cannot report: it
+            # never saw the configuration or the policy's overrides, only their result.
+            sampling=sampling,
+            seed=seed,
         )
 
         if self.cache is not None and cacheable:

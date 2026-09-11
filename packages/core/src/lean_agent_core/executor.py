@@ -27,6 +27,12 @@ A candidate that passes `check` and then fails `link` ends the attempt. That com
 information, not noise -- `check` only elaborates, while `link` re-checks in the kernel with forced
 options, replays, and audits, so a gap between them is exactly the environment-hacking or
 axiom-cone case those passes exist to catch.
+
+**Observations flow back into the policy.** A policy's `propose` is driven with `asend`, and after
+each action the executor sends in what it saw -- the `CompletionResponse` for a `RequestCompletion`,
+the `CheckOutcome` for a screened-out `SubmitProof` (see `protocols.Observation`). Until M3.9 there
+was no channel back at all, which was fine for a portfolio that decides everything up front and is
+impossible for a policy that has to read the samples it asked for.
 """
 
 from __future__ import annotations
@@ -34,7 +40,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections import Counter
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -43,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from lean_agent_core.actions import (
     Abandon,
+    Action,
     Budget,
     CallTool,
     Decompose,
@@ -61,6 +69,7 @@ from lean_agent_core.protocols import (
     Completion,
     CompletionResponse,
     LeanService,
+    Observation,
     Policy,
 )
 from lean_agent_core.roles import ModelRole
@@ -157,6 +166,33 @@ class TrajectoryStep:
     action: str
     ok: bool
     detail: str | None = None
+
+
+class _Proposals:
+    """A policy's `propose` generator, driven the way `protocols.Observation` describes.
+
+    An `async for` over this is an `async for` over the policy's actions, except that each step sends
+    in whatever the previous action produced (`observe`), or `None` when it produced nothing a policy
+    can act on. There is one pending observation and the next step consumes it, so an observation
+    can neither leak into a later step nor be delivered twice.
+    """
+
+    def __init__(self, generator: AsyncGenerator[Action, Observation | None]) -> None:
+        self._generator = generator
+        self._pending: Observation | None = None
+
+    def observe(self, observation: Observation) -> None:
+        self._pending = observation
+
+    def __aiter__(self) -> _Proposals:
+        return self
+
+    async def __anext__(self) -> Action:
+        pending, self._pending = self._pending, None
+        return await self._generator.asend(pending)
+
+    async def aclose(self) -> None:
+        await self._generator.aclose()
 
 
 class TrajectoryWriter:
@@ -300,141 +336,161 @@ class PolicyExecutor:
         tokens_in = 0
         tokens_out = 0
 
-        async for action in self._policy.propose(ctx, budget):
-            match action:
-                case SubmitProof():
-                    screened = await self._lean.check(
-                        base_env_digest=ctx.base_env_digest,
-                        body=action.development,
-                        bundle_sha=ctx.bundle_sha,
-                        timeout_ms=action.timeout_ms,
-                    )
-                    kernel_ms += screened.elapsed_ms
-                    if not screened.ok:
+        proposals = _Proposals(self._policy.propose(ctx, budget))
+        try:
+            async for action in proposals:
+                match action:
+                    case SubmitProof():
+                        screened = await self._lean.check(
+                            base_env_digest=ctx.base_env_digest,
+                            body=action.development,
+                            bundle_sha=ctx.bundle_sha,
+                            timeout_ms=action.timeout_ms,
+                        )
+                        kernel_ms += screened.elapsed_ms
+                        if not screened.ok:
+                            steps.append(
+                                TrajectoryStep(
+                                    label=action.label,
+                                    action="SubmitProof/check",
+                                    ok=False,
+                                    detail=_first(screened.diagnostics),
+                                )
+                            )
+                            proposals.observe(screened)
+                            continue
+                        if SORRY_AXIOM in screened.axioms and not ctx.allow_sorry:
+                            # `ok` is true and the candidate is still not a proof. A `sorry` is a
+                            # *warning* in Lean, so a body that leaves the goal open elaborates
+                            # cleanly -- and the search tactics do this constantly: `apply?` reports
+                            # "found a partial proof", emits its suggestions, and lets Lean's error
+                            # recovery fill the hole with `sorryAx`.
+                            #
+                            # Screening on `ok` alone therefore spent this attempt's *one* verdict on
+                            # a candidate the audit was always going to reject, and the `break` below
+                            # then ended the attempt -- so with `exact?`/`apply?`/`rw?` sitting ahead
+                            # of `linarith` in the portfolio, the tactics that would actually have
+                            # closed the goal were unreachable. Found by M2.10's miniF2F gate; every
+                            # tactic after the first suggestion tactic was dead code before this.
+                            #
+                            # Gated on the run's own `allow_sorry` so this screen says exactly what
+                            # the audit will say: a run that permits `sorryAx` would have accepted
+                            # this candidate, and skipping it here would deny that run a result it
+                            # asked for.
+                            steps.append(
+                                TrajectoryStep(
+                                    label=action.label,
+                                    action="SubmitProof/check",
+                                    ok=False,
+                                    detail=f"elaborated but depends on {SORRY_AXIOM}",
+                                )
+                            )
+                            proposals.observe(screened)
+                            continue
+                        result = await self._lean.link(
+                            attempt_id=attempt_id,
+                            obligation_id=ctx.obligation_id,
+                            base_env_digest=ctx.base_env_digest,
+                            bundle_sha=ctx.bundle_sha,
+                            goal=ctx.goal_decl,
+                            entry=action.entry,
+                            development=action.development,
+                            timeout_ms=action.timeout_ms,
+                        )
+                        kernel_ms += result.elapsed_ms
                         steps.append(
                             TrajectoryStep(
                                 label=action.label,
-                                action="SubmitProof/check",
-                                ok=False,
-                                detail=_first(screened.diagnostics),
+                                action="SubmitProof",
+                                ok=result.proved,
+                                detail=None if result.proved else _first(result.diagnostics),
                             )
                         )
-                        continue
-                    if SORRY_AXIOM in screened.axioms and not ctx.allow_sorry:
-                        # `ok` is true and the candidate is still not a proof. A `sorry` is a
-                        # *warning* in Lean, so a body that leaves the goal open elaborates
-                        # cleanly -- and the search tactics do this constantly: `apply?` reports
-                        # "found a partial proof", emits its suggestions, and lets Lean's error
-                        # recovery fill the hole with `sorryAx`.
-                        #
-                        # Screening on `ok` alone therefore spent this attempt's *one* verdict on
-                        # a candidate the audit was always going to reject, and the `break` below
-                        # then ended the attempt -- so with `exact?`/`apply?`/`rw?` sitting ahead
-                        # of `linarith` in the portfolio, the tactics that would actually have
-                        # closed the goal were unreachable. Found by M2.10's miniF2F gate; every
-                        # tactic after the first suggestion tactic was dead code before this.
-                        #
-                        # Gated on the run's own `allow_sorry` so this screen says exactly what
-                        # the audit will say: a run that permits `sorryAx` would have accepted
-                        # this candidate, and skipping it here would deny that run a result it
-                        # asked for.
+                        if result.proved:
+                            outcome = ObligationOutcome.PROVED
+                        # Either way the attempt is over: the one verdict this attempt may ever have
+                        # has now been written, so a further submission could not be linked even if a
+                        # later tactic would have worked. A retry is a new attempt, which is exactly
+                        # what `verdict.attempt_id` being a primary key is telling us to do.
+                        break
+                    case Abandon():
                         steps.append(
                             TrajectoryStep(
-                                label=action.label,
-                                action="SubmitProof/check",
-                                ok=False,
-                                detail=f"elaborated but depends on {SORRY_AXIOM}",
+                                label="abandon", action="Abandon", ok=False, detail=action.reason
                             )
                         )
-                        continue
-                    result = await self._lean.link(
-                        attempt_id=attempt_id,
-                        obligation_id=ctx.obligation_id,
-                        base_env_digest=ctx.base_env_digest,
-                        bundle_sha=ctx.bundle_sha,
-                        goal=ctx.goal_decl,
-                        entry=action.entry,
-                        development=action.development,
-                        timeout_ms=action.timeout_ms,
-                    )
-                    kernel_ms += result.elapsed_ms
-                    steps.append(
-                        TrajectoryStep(
-                            label=action.label,
-                            action="SubmitProof",
-                            ok=result.proved,
-                            detail=None if result.proved else _first(result.diagnostics),
-                        )
-                    )
-                    if result.proved:
-                        outcome = ObligationOutcome.PROVED
-                    # Either way the attempt is over: the one verdict this attempt may ever have
-                    # has now been written, so a further submission could not be linked even if a
-                    # later tactic would have worked. A retry is a new attempt, which is exactly
-                    # what `verdict.attempt_id` being a primary key is telling us to do.
-                    break
-                case Abandon():
-                    steps.append(
-                        TrajectoryStep(
-                            label="abandon", action="Abandon", ok=False, detail=action.reason
-                        )
-                    )
-                    break
-                case CallTool():
-                    # Checked before anything happens: an allowlist enforced after the call is not
-                    # an allowlist. `ToolClient` does not exist yet, so every tool is outside it.
-                    if action.tool not in self._policy.tools:
+                        break
+                    case CallTool():
+                        # Checked before anything happens: an allowlist enforced after the call is not
+                        # an allowlist. `ToolClient` does not exist yet, so every tool is outside it.
+                        if action.tool not in self._policy.tools:
+                            raise PolicyContractError(
+                                f"policy {self._policy.id} proposed tool {action.tool!r}, which is "
+                                f"outside its own allowlist {sorted(self._policy.tools)}"
+                            )
                         raise PolicyContractError(
-                            f"policy {self._policy.id} proposed tool {action.tool!r}, which is "
-                            f"outside its own allowlist {sorted(self._policy.tools)}"
+                            f"tool {action.tool!r} is allowlisted but no ToolClient is wired up yet"
                         )
-                    raise PolicyContractError(
-                        f"tool {action.tool!r} is allowlisted but no ToolClient is wired up yet"
-                    )
-                case Decompose():
-                    raise PolicyContractError(
-                        "Decompose is not executable yet: it needs each child sealed, its edges "
-                        "inserted and its bundle materialized (M2.6/M2.7), not just /v1/decompose"
-                    )
-                case RequestCompletion():
-                    if action.role not in self._policy.roles:
+                    case Decompose():
                         raise PolicyContractError(
-                            f"policy {self._policy.id} requested role {action.role.value!r}, "
-                            f"which is outside its own declared roles "
-                            f"{sorted(r.value for r in self._policy.roles)}. `Policy.roles` is "
-                            "what a router checks before the run starts, so a policy that asks "
-                            "for more than it declared makes that check meaningless."
+                            "Decompose is not executable yet: it needs each child sealed, its edges "
+                            "inserted and its bundle materialized (M2.6/M2.7), not just /v1/decompose"
                         )
-                    if self._completions is None:
-                        raise PolicyContractError(
-                            f"policy {self._policy.id} requested completions from role "
-                            f"{action.role.value!r}, but this executor has no completion service. "
-                            "A policy declaring roles needs one wired up."
-                        )
+                    case RequestCompletion():
+                        if action.role not in self._policy.roles:
+                            raise PolicyContractError(
+                                f"policy {self._policy.id} requested role {action.role.value!r}, "
+                                f"which is outside its own declared roles "
+                                f"{sorted(r.value for r in self._policy.roles)}. `Policy.roles` is "
+                                "what a router checks before the run starts, so a policy that asks "
+                                "for more than it declared makes that check meaningless."
+                            )
+                        if self._completions is None:
+                            raise PolicyContractError(
+                                f"policy {self._policy.id} requested completions from role "
+                                f"{action.role.value!r}, but this executor has no completion service. "
+                                "A policy declaring roles needs one wired up."
+                            )
 
-                    sample = await self._completions.complete(action)
-                    completions += 1
-                    # Every sample's cost is counted, not just a winner's -- the same principle as
-                    # kernel time above, and the reason §7.5 reports "pass@k with the budget that
-                    # produced it".
-                    tokens_in += len(sample.prompt_token_ids)
-                    tokens_out += sum(len(c.token_ids) for c in sample.completions)
-                    sampled.extend(sample.completions)
-                    prompt_token_ids = sample.prompt_token_ids or prompt_token_ids
-                    model_id = sample.model_id
-                    model_weights_hash = sample.model_weights_hash or model_weights_hash
-                    tokenizer_revision = sample.tokenizer_revision or tokenizer_revision
-                    model_provenance = self._completions.provenance_for(action.role)
-                    sampling = dict(action.sampling) or sampling
-                    seed = action.seed if action.seed is not None else seed
-                    steps.append(
-                        TrajectoryStep(
-                            label=action.role.value,
-                            action="RequestCompletion",
-                            ok=True,
-                            detail=f"{len(sample.completions)} sample(s) from {sample.model_id}",
+                        sample = await self._completions.complete(action)
+                        completions += 1
+                        # Every sample's cost is counted, not just a winner's -- the same principle as
+                        # kernel time above, and the reason §7.5 reports "pass@k with the budget that
+                        # produced it".
+                        tokens_in += len(sample.prompt_token_ids)
+                        tokens_out += sum(len(c.token_ids) for c in sample.completions)
+                        sampled.extend(sample.completions)
+                        prompt_token_ids = sample.prompt_token_ids or prompt_token_ids
+                        model_id = sample.model_id
+                        model_weights_hash = sample.model_weights_hash or model_weights_hash
+                        tokenizer_revision = sample.tokenizer_revision or tokenizer_revision
+                        model_provenance = self._completions.provenance_for(action.role)
+                        # What was actually sent, when the service says: the policy's own
+                        # overrides are only part of it, and for a policy relying on the
+                        # deployment's configured sampling they are empty (see
+                        # `CompletionResponse.sampling`).
+                        if sample.sampling is not None:
+                            sampling = sample.sampling.canonical()
+                        else:
+                            sampling = dict(action.sampling) or sampling
+                        if sample.seed is not None:
+                            seed = sample.seed
+                        elif action.seed is not None:
+                            seed = action.seed
+                        steps.append(
+                            TrajectoryStep(
+                                label=action.role.value,
+                                action="RequestCompletion",
+                                ok=True,
+                                detail=_sample_detail(sample),
+                            )
                         )
-                    )
+                        proposals.observe(sample)
+        finally:
+            # `break` out of an `async for` does not close the generator underneath it; that
+            # is left to garbage collection, which would run a policy's cleanup at some
+            # arbitrary later point on whatever loop happens to be current. Closed here, once.
+            await proposals.aclose()
 
         provenance = resolve_provenance(model_provenance, completions)
         await self._trajectories.write(
@@ -465,6 +521,20 @@ class PolicyExecutor:
         return run
 
 
+def _sample_detail(response: CompletionResponse) -> str:
+    """How many samples came back and how each one ended.
+
+    `finish_reason` is the first thing to read when a sampling policy proves nothing: `length`
+    across the board means the token budget cut every sample off before it reached a proof, which
+    no amount of resampling fixes -- and without it in the step, that reads exactly like a model
+    that tried and failed.
+    """
+    reasons = Counter(c.finish_reason for c in response.completions)
+    ends = ", ".join(f"{reason}×{count}" for reason, count in sorted(reasons.items()))
+    cached = "; cached" if response.cache_hit else ""
+    return f"{len(response.completions)} sample(s) from {response.model_id}; finish {ends}{cached}"
+
+
 def _first(diagnostics: tuple[str, ...]) -> str | None:
     """The head of the diagnostics, truncated. Spec §6.6: "never summarize kernel output --
     truncate instead ... keep the error head". A trajectory step is a label, not a transcript;
@@ -480,38 +550,60 @@ async def load_context(
     obligation_id: uuid.UUID,
     run_id: uuid.UUID,
 ) -> tuple[ObligationContext, Budget]:
-    """Spec §6.4's `load_context`, at band 1 (see `actions.ObligationContext` on why only band 1).
+    """Spec §6.4's `load_context`: band 1, plus the run's rules a policy's screen must agree with.
 
-    `bundle_sha` is read from the obligation's own `admission` JSON rather than a column of its
-    own: `obligation` has `sealed_olean_sha` (the *compiled* bundle's digest, what `mark_proved`
-    compares) but no column for the *source* digest that names the module a worker must import.
-    Adding a column is a migration and a schema change to spec's own table; ingestion (M2.6) is
-    what will actually decide where this belongs, and it is the thing that writes the row.
+    Rewritten in M3.9, when `WholeProofSampler` became its first caller. It had never had one --
+    every integration test carried its own hand-written loader -- which is how two bugs survived
+    from M2.5: `bundle_sha` was read out of `obligation.admission`, which ingestion never writes it
+    into (M2.6 gave it a column of its own), so every context came back with `bundle_sha=""` and
+    no bundle to link against; and `run.allow_sorry` was not read at all, so a run permitting
+    `sorry` got the stricter screen.
+
+    `base_env_imports` comes from the base env's recipe: band 1 is "sealed goal, pretty-printed,
+    **plus base env**", and a prompt that shows a model the goal without saying what it was
+    elaborated against leaves it guessing which lemmas exist.
+
+    `level_params` is left empty because nothing persists it: ingestion seals a goal with its
+    universe parameters but stores neither a column nor an admission entry for them. Harmless for
+    every goal so far (miniF2F has no universe-polymorphic statement) and recorded as a known gap
+    rather than papered over with a read of a key that is never written.
     """
     async with session_factory() as session:
         row = (
             await session.execute(
                 text(
-                    "SELECT o.base_env_digest, o.goal_src, o.decl_name, o.admission, "
+                    "SELECT o.base_env_digest, o.bundle_sha, o.goal_src, o.decl_name, "
                     "o.budget_attempts - o.spent_attempts, "
-                    "r.budget_tokens, r.budget_kernel_ms "
-                    "FROM obligation o JOIN run r ON r.id = o.run_id WHERE o.id = :id"
+                    "r.budget_tokens, r.budget_kernel_ms, r.allow_sorry, b.recipe "
+                    "FROM obligation o JOIN run r ON r.id = o.run_id "
+                    "JOIN base_env b ON b.digest = o.base_env_digest WHERE o.id = :id"
                 ),
                 {"id": obligation_id},
             )
         ).one()
-    base_env_digest, goal_src, decl_name, admission, attempts_left, tokens, kernel_ms = row
+    (
+        base_env_digest,
+        bundle_sha,
+        goal_src,
+        decl_name,
+        attempts_left,
+        tokens,
+        kernel_ms,
+        allow_sorry,
+        recipe,
+    ) = row
     entry = decl_name.replace("LeanAgent.Goals.G_", "LeanAgent.Sol.sol_", 1)
     return (
         ObligationContext(
             obligation_id=obligation_id,
             run_id=run_id,
             base_env_digest=bytes(base_env_digest).hex(),
-            bundle_sha=str(admission.get("bundle_sha", "")),
+            bundle_sha=bytes(bundle_sha).hex(),
             goal_decl=decl_name,
             goal_src=goal_src,
             entry=entry,
-            level_params=tuple(admission.get("level_params", [])),
+            allow_sorry=bool(allow_sorry),
+            base_env_imports=tuple(str(module) for module in recipe.get("imports", [])),
         ),
         Budget(
             attempts_remaining=int(attempts_left),

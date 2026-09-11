@@ -132,6 +132,11 @@ class ObligationContext:
     #: (the state machine and the privilege model being two views of one guarantee). Defaults to
     #: the column's own default, so a caller that does not set it gets the stricter behaviour.
     allow_sorry: bool = False
+    #: The base environment's imports, from `base_env.recipe` -- the "plus base env" half of band
+    #: 1. A symbolic policy never needs them; a model does, because a prompt that shows the goal
+    #: without saying what it was elaborated against asks the model to guess which lemmas exist.
+    #: Empty means "not loaded", not "no imports": every real base env imports something.
+    base_env_imports: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
