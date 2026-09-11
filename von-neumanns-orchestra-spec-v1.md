@@ -458,8 +458,8 @@ CREATE TABLE trajectory (
   sampling       jsonb NOT NULL,
   seed           bigint,
   steps_blob     bytea NOT NULL,   -- JSONL of rendered steps
-  token_ids_blob bytea,            -- prompt + completion token ids
-  logprobs_blob  bytea,            -- sampled-token logprobs, float32
+  token_ids_blob bytea,            -- prompt + completion token ids, per request (M3.10)
+  logprobs_blob  bytea,            -- sampled-token logprobs, float32, per request
   n_steps        int NOT NULL,
   created_at     timestamptz NOT NULL DEFAULT now()
 );

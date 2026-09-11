@@ -20,7 +20,7 @@ from lean_agent_core.blobs import LocalBlobStore, from_bytea
 from lean_agent_core.codecs import decode_trajectory_logprobs, decode_trajectory_token_ids
 from lean_agent_core.enums import ProvenanceClass
 from lean_agent_core.executor import TrajectoryWriter
-from lean_agent_core.protocols import Completion
+from lean_agent_core.protocols import Completion, Exchange
 from sqlalchemy import Engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -80,11 +80,15 @@ def test_completions_round_trip_through_the_trajectory_columns(
                 attempt_id=attempt,
                 provenance=ProvenanceClass.OPEN_WEIGHTS,
                 steps=[],
-                sampling={"temperature": 0.8, "n": 2},
                 model_id="Goedel-LM/Goedel-Prover-V2-8B",
-                seed=1234,
-                prompt_token_ids=PROMPT,
-                completions=SAMPLES,
+                exchanges=(
+                    Exchange(
+                        prompt_token_ids=PROMPT,
+                        completions=SAMPLES,
+                        sampling={"temperature": 0.8, "n": 2},
+                        seed=1234,
+                    ),
+                ),
                 model_weights_hash="w-abc",
                 tokenizer_revision="t-def",
             )
@@ -116,10 +120,9 @@ def test_completions_round_trip_through_the_trajectory_columns(
     assert logprobs_blob is not None
 
     async def read() -> None:
-        prompt, completions = decode_trajectory_token_ids(
-            await from_bytea(blobs, bytes(tokens_blob))
-        )
-        logprobs = decode_trajectory_logprobs(await from_bytea(blobs, bytes(logprobs_blob)))
+        (exchange,) = decode_trajectory_token_ids(await from_bytea(blobs, bytes(tokens_blob)))
+        (logprobs,) = decode_trajectory_logprobs(await from_bytea(blobs, bytes(logprobs_blob)))
+        prompt, completions = exchange.prompt, list(exchange.completions)
 
         # The prompt/completion boundary survives, which is the only thing replay needs from this
         # column: on-policy RL cannot compute a loss over tokens it cannot separate from the
@@ -184,8 +187,9 @@ def test_a_long_completion_goes_to_the_blob_store(
                 provenance=ProvenanceClass.OPEN_WEIGHTS,
                 steps=[],
                 model_id="m",
-                prompt_token_ids=PROMPT,
-                completions=(long_sample,),
+                exchanges=(
+                    Exchange(prompt_token_ids=PROMPT, completions=(long_sample,), sampling={}),
+                ),
             )
         finally:
             await engine.dispose()
@@ -199,7 +203,62 @@ def test_a_long_completion_goes_to_the_blob_store(
         ).scalar_one()
 
     async def read() -> None:
-        _, completions = decode_trajectory_token_ids(await from_bytea(blobs, bytes(tokens_blob)))
-        assert completions[0] == long_sample.token_ids
+        (exchange,) = decode_trajectory_token_ids(await from_bytea(blobs, bytes(tokens_blob)))
+        assert exchange.completions[0] == long_sample.token_ids
+
+    asyncio.run(read())
+
+
+def test_each_request_keeps_its_own_prompt_and_sampling(
+    app_async_database_url: str, admin_engine: Engine, attempt: uuid.UUID, tmp_path: Path
+) -> None:
+    """M3.10's finding. A repair loop asks twice in one attempt: once for several samples, then
+    once more with a conversation that contains a failed answer and its errors. Stored the M3.7
+    way -- one prompt, every completion -- the repair's answer would be recorded as conditioned on
+    the *opening* prompt, which it was not; replay and RL both need each answer with the exact
+    context it saw. The columns keep the opening request's sampling; each exchange keeps its own."""
+    repair_prompt = (*PROMPT, 77, 78, 79)
+    repair = Completion(
+        token_ids=(5, 6), logprobs=(-0.5, -0.25), text="fixed", finish_reason="stop"
+    )
+    engine = create_async_engine(app_async_database_url)
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    writer = TrajectoryWriter(async_sessionmaker(engine, expire_on_commit=False), blobs)
+
+    async def main() -> None:
+        try:
+            await writer.write(
+                attempt_id=attempt,
+                provenance=ProvenanceClass.OPEN_WEIGHTS,
+                steps=[],
+                model_id="m",
+                exchanges=(
+                    Exchange(PROMPT, SAMPLES, {"temperature": 0.8, "n": 2}, 1234),
+                    Exchange(repair_prompt, (repair,), {"temperature": 0.8, "n": 1}, 1234),
+                ),
+            )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(main())
+    with admin_engine.connect() as conn:
+        sampling, seed, tokens_blob, logprobs_blob = conn.execute(
+            text(
+                "SELECT sampling, seed, token_ids_blob, logprobs_blob FROM trajectory "
+                "WHERE attempt_id = :id"
+            ),
+            {"id": attempt},
+        ).one()
+    assert (sampling, seed) == ({"temperature": 0.8, "n": 2}, 1234)
+
+    async def read() -> None:
+        opening, repaired = decode_trajectory_token_ids(await from_bytea(blobs, bytes(tokens_blob)))
+        assert opening.prompt == PROMPT
+        assert opening.completions == tuple(s.token_ids for s in SAMPLES)
+        assert repaired.prompt == repair_prompt, "the repair's answer must keep the repair's prompt"
+        assert repaired.completions == (repair.token_ids,)
+        assert repaired.sampling == {"temperature": 0.8, "n": 1}
+        logprobs = decode_trajectory_logprobs(await from_bytea(blobs, bytes(logprobs_blob)))
+        assert logprobs == [[s.logprobs for s in SAMPLES], [repair.logprobs]]
 
     asyncio.run(read())

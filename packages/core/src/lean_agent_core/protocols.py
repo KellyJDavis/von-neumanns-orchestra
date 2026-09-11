@@ -358,6 +358,26 @@ class CompletionResponse:
 Observation = CheckOutcome | CompletionResponse
 
 
+@dataclass(frozen=True)
+class Exchange:
+    """One request an attempt made, and what came back: the unit a trajectory records.
+
+    Added in M3.10, when `RepairLoop` became the first policy to make more than one request per
+    attempt. Until then a trajectory held one prompt and every completion, so a second request's
+    completions would have been stored against the *first* request's prompt -- a pairing that is
+    silently wrong for replay and for RL, which needs each completion with the exact context it
+    was conditioned on. `sampling` and `seed` are per exchange for the same reason: a repair asks
+    for one sample where the opening request asked for several.
+    """
+
+    prompt_token_ids: tuple[int, ...]
+    completions: tuple[Completion, ...]
+    #: The effective sampling (`SamplingParams.canonical()`) when the service reported it, else
+    #: the policy's own overrides -- the most specific account of what was asked that exists.
+    sampling: dict[str, object]
+    seed: int | None = None
+
+
 class ModelBackend(Protocol):
     """Spec Appendix A. One serving endpoint behind one `ModelRole`.
 

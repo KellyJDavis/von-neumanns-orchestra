@@ -133,7 +133,12 @@ worker need: two unrelated submissions must never see each other's names. -/
 def checkAgainst (baseEnv : Environment) (body : String) : IO CheckResponse := do
   try
     let (env, messages) ← Lean.Elab.process body baseEnv {}
-    let diagnostics ← messages.toList.toArray.mapM (·.toString)
+    -- `includeEndPos` (M3.10): each diagnostic reads `<input>:L:C-L':C': ...`, not just `L:C`. A
+    -- repair loop shows a prover *where* in its own code each error is, and a prover trained on
+    -- REPL output was shown the whole span; with the start alone every span degrades to "from here
+    -- to the end of the line". The cache key names this format (`api.py`), so a result cached in
+    -- the old format is never served as if it were the new one.
+    let diagnostics ← messages.toList.toArray.mapM (·.toString (includeEndPos := true))
     let ok := !messages.hasErrors
     -- Only computed when the body elaborated: `collectAxioms` walks the whole transitive
     -- dependency cone of every new declaration -- the dominant per-declaration cost in gate 7's

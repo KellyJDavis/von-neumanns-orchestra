@@ -28,6 +28,7 @@ not for one it was not given.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
 import json
 import os
@@ -43,10 +44,11 @@ from fastapi.testclient import TestClient
 from lean_agent_api.ingestion import Ingestor, Submission
 from lean_agent_api.materialize import BundleMaterializer
 from lean_agent_core.actions import ObligationContext
-from lean_agent_core.blobs import LocalBlobStore
+from lean_agent_core.blobs import LocalBlobStore, from_bytea
+from lean_agent_core.codecs import decode_trajectory_token_ids
 from lean_agent_core.enums import ProvenanceClass
 from lean_agent_core.executor import PolicyExecutor, TrajectoryWriter, load_context
-from lean_agent_core.protocols import SamplingParams
+from lean_agent_core.protocols import Policy, SamplingParams
 from lean_agent_core.roles import ModelRole
 from lean_agent_core.scheduler import ClaimedAttempt, claim_attempt
 from lean_agent_core.state import ObligationOutcome, ObligationStateMachine
@@ -55,6 +57,7 @@ from lean_agent_models.completions import RoutedCompletions
 from lean_agent_models.config import BackendConfig
 from lean_agent_models.router import ModelRouter, build_backend
 from lean_agent_models.template import load_chat_tokenizer
+from lean_agent_policies.repair import RepairLoop
 from lean_agent_policies.whole_proof import WholeProofSampler
 from lean_agent_serv.api import create_app
 from lean_agent_serv.cache import VerificationCacheStore
@@ -103,6 +106,21 @@ BASE_ENV_IMPORTS = (
 SAMPLING = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=4096, n=4)
 SEED = 1234
 
+#: M3.10. A problem whose first samples all fail and a repair succeeds, found by running the real
+#: `RepairLoop` against the live prover over candidate problems (see CLAUDE.md's M3.10 notes).
+REPAIR_FIXTURES = MODELS_DATA / "goedel_repair_loop.json"
+REPAIR_PROBLEM = "mathd_algebra_209"
+#: One first sample: the point is the repair, and every first sample that fails is one more
+#: sequential repair chain to record and replay.
+REPAIR_SAMPLING = dataclasses.replace(SAMPLING, n=1)
+#: Chosen by trying seeds, the same way the problem was chosen, because most seeds never reach a
+#: repair. Over seeds 1234 (two samples), 7, 42, 99, 314, 2024, 5 and 11, Goedel's first sample
+#: proved this problem outright five times; seed 5's first repair ran out of tokens, seed 2024's two
+#: repairs both failed, and seed 11's second repair linked -- the recording this replays. A seed is
+#: a legitimate test input (the recording is still exactly what the real pipeline did with it), and
+#: a lone seeded request replays deterministically, so the choice holds.
+REPAIR_SEED = 11
+
 
 @pytest.fixture
 def base_env(admin_engine: Engine) -> Iterator[str]:
@@ -149,128 +167,142 @@ def leanserv(
     asyncio.run(engine.dispose())
 
 
-def _model_http(endpoint: str | None) -> tuple[httpx.AsyncClient, RecordingTransport | None]:
+def _model_http(
+    endpoint: str | None, fixtures: Path
+) -> tuple[httpx.AsyncClient, RecordingTransport | None]:
     if endpoint is not None:
         recorder = RecordingTransport(httpx.AsyncHTTPTransport())
         return httpx.AsyncClient(transport=recorder, base_url=endpoint), recorder
-    replay = create_replay_app(load_fixtures(GOEDEL_FIXTURES))
+    replay = create_replay_app(load_fixtures(fixtures))
     return (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=replay), base_url="http://replay"),
         None,
     )
 
 
-def test_a_sampled_proof_closes_a_goal_the_null_agent_could_not(
-    admin_engine: Engine,
-    base_env: str,
-    leanserv: TestClient,
-    bundle_root: Path,
-    lake_project_dir: Path,
-    app_async_database_url: str,
-    tmp_path: Path,
-    sealed_obligation: SealedObligation,
-) -> None:
-    """`sealed_obligation` is a decoy: an open, claimable obligation belonging to another tenant,
-    created before this test's own. `claim_attempt` takes the *oldest* open obligation in *any*
-    running run, so an unscoped claim here takes the decoy -- verified by removing the scope below
-    -- and the test then fails on another run's goal. The decoy keeps the scope from being dropped
-    as unnecessary; the scope keeps the test from depending on nothing else being open.
-    """
-    # The premise, from M2.10's survey of all 488 problems: the portfolio does not close this one.
-    assert PROBLEM not in MEASURED_TAIL
+@dataclasses.dataclass(frozen=True)
+class Proved:
+    claimed: ClaimedAttempt
+    ctx: ObligationContext
+    outcome: ObligationOutcome
 
-    (problem,) = load_corpus().by_id([PROBLEM])
-    submission = Submission(
-        base_env_digest=base_env,
-        tenant_id=uuid.uuid4(),
-        source=problem.as_sorry() + "\n",
-        budget_attempts=1,
-    )
-    policy = WholeProofSampler()
-    endpoint = os.environ.get(RECORD_ENV)
-    run_ids: list[uuid.UUID] = []
 
-    async def main() -> tuple[ClaimedAttempt, ObligationContext, ObligationOutcome, list[object]]:
-        engine = create_async_engine(app_async_database_url)
-        http, recorder = _model_http(endpoint)
-        try:
-            sessions = async_sessionmaker(engine, expire_on_commit=False)
-            blobs = LocalBlobStore(tmp_path / "app_blobs")
-            lean = LeanServiceOverTestClient(leanserv)
+@dataclasses.dataclass
+class Pipeline:
+    """The whole pipeline for one problem and one policy, in replay or record mode."""
 
-            ingested = await Ingestor(session_factory=sessions, lean=lean, blobs=blobs).ingest(
-                submission
-            )
-            run_ids.append(ingested.run_id)
-            await BundleMaterializer(
-                session_factory=sessions,
-                blobs=blobs,
-                bundle_root=bundle_root,
-                lake_project_dir=lake_project_dir,
-            ).materialize_run(ingested.run_id)
+    admin_engine: Engine
+    base_env: str
+    leanserv: TestClient
+    bundle_root: Path
+    lake_project_dir: Path
+    app_async_database_url: str
+    tmp_path: Path
+    decoy: SealedObligation
+    run_ids: list[uuid.UUID] = dataclasses.field(default_factory=list)
 
-            config = BackendConfig(
-                role=ModelRole.PROVER,
-                backend="vllm",
-                model_id=MODEL_ID,
-                provenance=ProvenanceClass.OPEN_WEIGHTS,
-                endpoint=str(http.base_url),
-                tokenizer_dir=TOKENIZER_DIR,
-                tokenizer_revision=TOKENIZER_SHA256,
-                weights_revision=WEIGHTS_REVISION,
-                seed=SEED,
-                sampling=SAMPLING,
-            )
-            service = RoutedCompletions(
-                router=ModelRouter(
-                    backends={ModelRole.PROVER: build_backend(config, client=http)},
-                    configs={ModelRole.PROVER: config},
-                ),
-                tokenizers={
-                    ModelRole.PROVER: load_chat_tokenizer(
-                        TOKENIZER_DIR, expect_sha256=TOKENIZER_SHA256
-                    )
-                },
-            )
-            claimed = await claim_attempt(
-                sessions,
-                worker_id="whole-proof",
-                policy_id=policy.id,
-                policy_config_hash=policy.config_hash,
-                # Scoped to this submission's tenant: spec §6.4's `$eligible_tenants`. The claim is
-                # otherwise global by design (see this test's docstring and its decoy).
-                eligible_tenants=[submission.tenant_id],
-            )
-            assert claimed is not None
-            assert claimed.obligation_id != sealed_obligation.id
-            assert claimed.run_id == ingested.run_id, "claimed another tenant's obligation"
-            executor = PolicyExecutor(
-                policy=policy,
-                lean=lean,
-                trajectories=TrajectoryWriter(sessions, blobs),
-                # The shipped loader, not a hand-written one: its first real caller (see its
-                # docstring for the two bugs that went unnoticed while it had none).
-                context_loader=lambda o, r: load_context(sessions, o, r),
-                completions=service,
-            )
-            ctx, _ = await load_context(sessions, claimed.obligation_id, claimed.run_id)
-            outcome = (await executor.runner()(claimed)).outcome
-            if outcome is ObligationOutcome.PROVED:
-                await ObligationStateMachine(sessions).mark_proved(
-                    claimed.obligation_id, claimed.attempt_id
+    @property
+    def blobs(self) -> LocalBlobStore:
+        return LocalBlobStore(self.tmp_path / "app_blobs")
+
+    def prove(
+        self,
+        *,
+        policy: Policy,
+        problem_id: str,
+        sampling: SamplingParams,
+        fixtures: Path,
+        note: str,
+        seed: int = SEED,
+    ) -> Proved:
+        # The premise, from M2.10's survey of all 488 problems: the portfolio does not close it.
+        assert problem_id not in MEASURED_TAIL
+        (problem,) = load_corpus().by_id([problem_id])
+        submission = Submission(
+            base_env_digest=self.base_env,
+            tenant_id=uuid.uuid4(),
+            source=problem.as_sorry() + "\n",
+            budget_attempts=1,
+        )
+        endpoint = os.environ.get(RECORD_ENV)
+
+        async def main() -> tuple[Proved, list[object]]:
+            engine = create_async_engine(self.app_async_database_url)
+            http, recorder = _model_http(endpoint, fixtures)
+            try:
+                sessions = async_sessionmaker(engine, expire_on_commit=False)
+                lean = LeanServiceOverTestClient(self.leanserv)
+                ingested = await Ingestor(
+                    session_factory=sessions, lean=lean, blobs=self.blobs
+                ).ingest(submission)
+                self.run_ids.append(ingested.run_id)
+                await BundleMaterializer(
+                    session_factory=sessions,
+                    blobs=self.blobs,
+                    bundle_root=self.bundle_root,
+                    lake_project_dir=self.lake_project_dir,
+                ).materialize_run(ingested.run_id)
+
+                config = BackendConfig(
+                    role=ModelRole.PROVER,
+                    backend="vllm",
+                    model_id=MODEL_ID,
+                    provenance=ProvenanceClass.OPEN_WEIGHTS,
+                    endpoint=str(http.base_url),
+                    tokenizer_dir=TOKENIZER_DIR,
+                    tokenizer_revision=TOKENIZER_SHA256,
+                    weights_revision=WEIGHTS_REVISION,
+                    seed=seed,
+                    sampling=sampling,
                 )
-            return claimed, ctx, outcome, list(recorder.exchanges if recorder else [])
-        finally:
-            await http.aclose()
-            await engine.dispose()
+                service = RoutedCompletions(
+                    router=ModelRouter(
+                        backends={ModelRole.PROVER: build_backend(config, client=http)},
+                        configs={ModelRole.PROVER: config},
+                    ),
+                    tokenizers={
+                        ModelRole.PROVER: load_chat_tokenizer(
+                            TOKENIZER_DIR, expect_sha256=TOKENIZER_SHA256
+                        )
+                    },
+                )
+                claimed = await claim_attempt(
+                    sessions,
+                    worker_id="whole-proof",
+                    policy_id=policy.id,
+                    policy_config_hash=policy.config_hash,
+                    # Scoped to this submission's tenant: spec §6.4's `$eligible_tenants`. The
+                    # claim is otherwise global by design -- see the decoy.
+                    eligible_tenants=[submission.tenant_id],
+                )
+                assert claimed is not None
+                assert claimed.obligation_id != self.decoy.id
+                assert claimed.run_id == ingested.run_id, "claimed another tenant's obligation"
+                executor = PolicyExecutor(
+                    policy=policy,
+                    lean=lean,
+                    trajectories=TrajectoryWriter(sessions, self.blobs),
+                    # The shipped loader, not a hand-written one (M3.9).
+                    context_loader=lambda o, r: load_context(sessions, o, r),
+                    completions=service,
+                )
+                ctx, _ = await load_context(sessions, claimed.obligation_id, claimed.run_id)
+                outcome = (await executor.runner()(claimed)).outcome
+                if outcome is ObligationOutcome.PROVED:
+                    await ObligationStateMachine(sessions).mark_proved(
+                        claimed.obligation_id, claimed.attempt_id
+                    )
+                return Proved(claimed, ctx, outcome), list(recorder.exchanges if recorder else [])
+            finally:
+                await http.aclose()
+                await engine.dispose()
 
-    try:
-        claimed, ctx, outcome, exchanges = asyncio.run(main())
+        proved, exchanges = asyncio.run(main())
         if endpoint is not None:
             # Written before any assertion, so a recording whose samples all failed is still kept
-            # and can be read; the assertions below then fail on it, loudly.
+            # and can be read; the assertions then fail on it, loudly.
             write_fixtures(
-                GOEDEL_FIXTURES,
+                fixtures,
                 provenance={
                     "recorded_from": "vllm 0.28.0 (vllm-metal 0.28.0.dev20260910151954), Apple M2 Max",
                     "endpoint_path": "/v1/completions",
@@ -285,30 +317,121 @@ def test_a_sampled_proof_closes_a_goal_the_null_agent_could_not(
                     ),
                     "note": (
                         "Recorded through RecordingTransport by tests/leanserv/test_whole_proof.py "
-                        f"in record mode: {PROBLEM}, base env {list(BASE_ENV_IMPORTS)}, sampling "
-                        f"{SAMPLING.canonical()}, seed {SEED}. The request is exactly what the "
-                        "pipeline built; the response is the server's, verbatim."
+                        f"in record mode: {problem_id} under {policy.id}, base env "
+                        f"{list(BASE_ENV_IMPORTS)}, sampling {sampling.canonical()}, seed {seed}. "
+                        "Each request is exactly what the pipeline built; each response is the "
+                        "server's, verbatim."
                     ),
                 },
                 exchanges=exchanges,  # type: ignore[arg-type]
-                name=f"{PROBLEM}_whole_proof",
-                note="WholeProofSampler's one request for this obligation, and vLLM's answer.",
+                name=f"{problem_id}_{policy.id}",
+                note=note,
             )
-        _assert_proved(admin_engine, claimed, ctx, outcome, policy)
-    finally:
-        with admin_engine.connect() as conn:
-            for run_id in run_ids:
+        return proved
+
+    def cleanup(self) -> None:
+        with self.admin_engine.connect() as conn:
+            for run_id in self.run_ids:
                 conn.execute(text("DELETE FROM run WHERE id = :id"), {"id": run_id})
             conn.commit()
 
 
-def _assert_proved(
+@pytest.fixture
+def pipeline(
     admin_engine: Engine,
-    claimed: ClaimedAttempt,
-    ctx: ObligationContext,
-    outcome: ObligationOutcome,
-    policy: WholeProofSampler,
+    base_env: str,
+    leanserv: TestClient,
+    bundle_root: Path,
+    lake_project_dir: Path,
+    app_async_database_url: str,
+    tmp_path: Path,
+    sealed_obligation: SealedObligation,
+) -> Iterator[Pipeline]:
+    """`sealed_obligation` is a decoy: an open, claimable obligation belonging to another tenant,
+    created before this test's own. `claim_attempt` takes the *oldest* open obligation in *any*
+    running run, so an unscoped claim takes the decoy -- verified by removing the scope -- and the
+    test then fails on another run's goal. The decoy keeps the scope from being dropped as
+    unnecessary; the scope keeps the test from depending on nothing else being open.
+    """
+    built = Pipeline(
+        admin_engine,
+        base_env,
+        leanserv,
+        bundle_root,
+        lake_project_dir,
+        app_async_database_url,
+        tmp_path,
+        sealed_obligation,
+    )
+    try:
+        yield built
+    finally:
+        built.cleanup()
+
+
+def test_a_sampled_proof_closes_a_goal_the_null_agent_could_not(pipeline: Pipeline) -> None:
+    proved = pipeline.prove(
+        policy=WholeProofSampler(),
+        problem_id=PROBLEM,
+        sampling=SAMPLING,
+        fixtures=GOEDEL_FIXTURES,
+        note="WholeProofSampler's one request for this obligation, and vLLM's answer.",
+    )
+    _assert_proved(pipeline.admin_engine, proved, SAMPLING, SEED)
+
+
+def test_a_repair_closes_a_goal_the_first_samples_could_not(pipeline: Pipeline) -> None:
+    """M3.10 end to end: every first sample fails `/v1/check`, the kernel's errors go back to the
+    model in its trained repair format, and a repaired proof links, replays and audits."""
+    proved = pipeline.prove(
+        policy=RepairLoop(),
+        problem_id=REPAIR_PROBLEM,
+        sampling=REPAIR_SAMPLING,
+        fixtures=REPAIR_FIXTURES,
+        note="One of RepairLoop's requests for this obligation, and vLLM's answer.",
+        seed=REPAIR_SEED,
+    )
+    _assert_proved(pipeline.admin_engine, proved, REPAIR_SAMPLING, REPAIR_SEED)
+
+    with pipeline.admin_engine.connect() as conn:
+        steps_blob, tokens_blob = conn.execute(
+            text("SELECT steps_blob, token_ids_blob FROM trajectory WHERE attempt_id = :id"),
+            {"id": proved.claimed.attempt_id},
+        ).one()
+
+    async def read() -> tuple[list[dict[str, object]], list[object]]:
+        steps = json.loads(await from_bytea(pipeline.blobs, bytes(steps_blob)))
+        exchanges = decode_trajectory_token_ids(
+            await from_bytea(pipeline.blobs, bytes(tokens_blob))
+        )
+        return steps, list(exchanges)
+
+    steps, exchanges = asyncio.run(read())
+    submissions = [s for s in steps if str(s["action"]).startswith("SubmitProof")]
+    winner = submissions[-1]
+    assert winner["ok"] is True and winner["action"] == "SubmitProof"
+    assert "repair" in str(winner["label"]), f"proved by a first sample: {winner['label']}"
+    assert all(s["ok"] is False for s in submissions[:-1])
+
+    opening, *repairs = exchanges
+    assert repairs, "a repair is a second request, and the trajectory must record it separately"
+    for repair in repairs:
+        assert repair.sampling["n"] == 1  # type: ignore[attr-defined]
+        # §6.6's byte-stability, observed in real token ids: a repair's conversation starts with
+        # the opening prompt, so its ids begin with the opening prompt's ids -- which is what
+        # lets a server's prefix cache reuse that prefill across rounds.
+        prefix = opening.prompt  # type: ignore[attr-defined]
+        assert repair.prompt[: len(prefix)] == prefix  # type: ignore[attr-defined]
+
+
+def _assert_proved(
+    admin_engine: Engine, proved: Proved, sampling: SamplingParams, seed: int
 ) -> None:
+    claimed, ctx, outcome = proved.claimed, proved.ctx, proved.outcome
+    # First, and with its own message. An attempt that proved nothing has no verdict row, so
+    # querying for one fails with `NoResultFound` -- true, and useless as a diagnosis; two of the
+    # seeds tried for the repair recording failed exactly that way before this line moved up.
+    assert outcome is ObligationOutcome.PROVED, f"the attempt did not prove the goal: {outcome}"
     with admin_engine.connect() as conn:
         status, bundle_sha = conn.execute(
             text("SELECT status::text, bundle_sha FROM obligation WHERE id = :id"),
@@ -324,8 +447,8 @@ def _assert_proved(
         trajectory = conn.execute(
             text(
                 "SELECT provenance::text, model_id, tokenizer_revision, "
-                "sampling, seed, token_ids_blob IS NOT NULL, logprobs_blob IS NOT NULL, "
-                "steps_blob FROM trajectory WHERE attempt_id = :id"
+                "sampling, seed, token_ids_blob IS NOT NULL, logprobs_blob IS NOT NULL "
+                "FROM trajectory WHERE attempt_id = :id"
             ),
             {"id": claimed.attempt_id},
         ).one()
@@ -335,17 +458,18 @@ def _assert_proved(
     assert ctx.base_env_imports == BASE_ENV_IMPORTS
     assert ctx.allow_sorry is False
 
-    assert outcome is ObligationOutcome.PROVED
     assert status == "proved"
     assert verdict == ("proved", True, True, True)
 
-    provenance, model_id, tokenizer, sampling, seed, has_ids, has_logprobs, _ = trajectory
+    provenance, model_id, tokenizer, recorded_sampling, recorded_seed, has_ids, has_logprobs = (
+        trajectory
+    )
     # §7.1: derived from the backend that served the completions, not asserted by the writer.
     assert provenance == ProvenanceClass.OPEN_WEIGHTS.value
     assert model_id == MODEL_ID
     assert tokenizer == TOKENIZER_SHA256
-    # The *effective* sampling -- configured, since this policy overrides nothing -- not the
-    # policy's empty override dict (see `CompletionResponse.sampling`).
-    assert sampling == SAMPLING.canonical()
-    assert seed == SEED
+    # The *effective* sampling of the opening request -- configured, since neither policy
+    # overrides it -- not the policy's empty override dict (see `CompletionResponse.sampling`).
+    assert recorded_sampling == sampling.canonical()
+    assert recorded_seed == seed
     assert has_ids and has_logprobs, "§9: token ids and logprobs cannot be recomputed later"

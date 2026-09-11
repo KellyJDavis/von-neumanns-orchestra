@@ -147,8 +147,11 @@ def test_a_completion_is_recorded_with_its_tokens_and_logprobs() -> None:
     _, trajectories = _execute(ScriptedPolicy(), RecordingCompletions())
 
     written = trajectories.written
-    assert written["completions"] == (SAMPLE,)
-    assert written["prompt_token_ids"] == (9707, 11, 1879)
+    exchanges = written["exchanges"]
+    assert isinstance(exchanges, tuple)
+    (exchange,) = exchanges
+    assert exchange.completions == (SAMPLE,)
+    assert exchange.prompt_token_ids == (9707, 11, 1879)
     assert written["model_id"] == "Goedel-LM/Goedel-Prover-V2-8B"
     # Ids alone are not interpretable: the same ids mean different text under a different
     # tokenizer, and the same prompt gives different ids under different weights (§7.3).
@@ -239,8 +242,9 @@ def test_the_policys_sampling_and_seed_reach_the_service_and_the_trajectory() ->
     (asked,) = service.requests
     assert asked.sampling == {"temperature": 0.8, "n": 4}
     assert asked.seed == 1234
-    assert trajectories.written["sampling"] == {"temperature": 0.8, "n": 4}
-    assert trajectories.written["seed"] == 1234
+    (exchange,) = trajectories.written["exchanges"]  # type: ignore[misc]
+    assert exchange.sampling == {"temperature": 0.8, "n": 4}
+    assert exchange.seed == 1234
 
 
 def test_a_symbolic_attempt_still_writes_no_token_columns() -> None:
@@ -255,8 +259,7 @@ def test_a_symbolic_attempt_still_writes_no_token_columns() -> None:
 
     result, trajectories = _execute(SilentPolicy(roles=frozenset()), None)
 
-    assert trajectories.written["completions"] == ()
-    assert trajectories.written["prompt_token_ids"] == ()
+    assert trajectories.written["exchanges"] == ()
     assert trajectories.written["model_id"] is None
     assert trajectories.written["provenance"] is ProvenanceClass.SYMBOLIC
     assert result.outcome is ObligationOutcome.RETRYABLE_FAILURE  # type: ignore[attr-defined]
@@ -271,5 +274,37 @@ def test_the_trajectory_records_the_sampling_that_was_sent_not_only_the_override
     service = RecordingCompletions(effective=configured, effective_seed=1234)
     _, trajectories = _execute(ScriptedPolicy(), service)
 
-    assert trajectories.written["sampling"] == configured.canonical()
-    assert trajectories.written["seed"] == 1234
+    (exchange,) = trajectories.written["exchanges"]  # type: ignore[misc]
+    assert exchange.sampling == configured.canonical()
+    assert exchange.seed == 1234
+
+
+def test_each_request_is_recorded_with_its_own_prompt() -> None:
+    """A policy that asks twice -- a repair after a failed sample -- gets two exchanges, each with
+    the prompt its completions actually answered. Before M3.10 the second request's prompt
+    overwrote the first, and every completion was stored against it."""
+
+    @dataclass
+    class Answering(RecordingCompletions):
+        async def complete(self, request: RequestCompletion) -> CompletionResponse:
+            self.requests.append(request)
+            prompt = tuple(range(len(self.requests) * 3))
+            return CompletionResponse(
+                completions=self.samples, prompt_token_ids=prompt, model_id="m"
+            )
+
+    @dataclass(frozen=True)
+    class TwiceAsking(ScriptedPolicy):
+        async def propose(self, ctx: ObligationContext, budget: Budget) -> AsyncIterator[Action]:
+            for turn in ("first", "second"):
+                yield RequestCompletion(
+                    role=ModelRole.PROVER,
+                    messages=(Message(role="user", content=turn),),
+                    sampling={"n": 1},
+                )
+
+    _, trajectories = _execute(TwiceAsking(), Answering())
+    first, second = trajectories.written["exchanges"]  # type: ignore[misc]
+    assert first.prompt_token_ids == (0, 1, 2)
+    assert second.prompt_token_ids == (0, 1, 2, 3, 4, 5)
+    assert first.completions == second.completions == (SAMPLE,)

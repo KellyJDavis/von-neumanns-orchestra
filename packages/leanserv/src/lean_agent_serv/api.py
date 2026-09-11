@@ -377,6 +377,14 @@ def _check_worker_key(req: CheckRequest) -> str:
     return f"{req.base_env_digest}+{_bundle_module_name(req.bundle_sha)}"
 
 
+#: The format a `check`'s diagnostics are rendered in, carried in its cache key. `Serve.lean`
+#: started including each message's end position in M3.10; a key that did not say so would serve
+#: a result cached in the old format -- start position only -- as if it were the new one, and a
+#: repair prompt built from it would differ cold and warm. Same reasoning as `bundle_sha` being in
+#: the key: what the cached value *means* has to be part of what it is cached under.
+_CHECK_FORMAT: dict[str, str] = {"diagnostics": "lean-message-with-end-position"}
+
+
 async def _run_check(
     pool: LeanReplPool,
     cache: VerificationCacheStore,
@@ -393,7 +401,9 @@ async def _run_check(
     # different things), and a key that ignored it would serve one bundle's answer for another's
     # question -- a wrong *acceptance*, not just a stale one.
     cache_key = compute_cache_key(
-        base_env_digest, req.body, {"bundle_sha": req.bundle_sha} if req.bundle_sha else {}
+        base_env_digest,
+        req.body,
+        {"bundle_sha": req.bundle_sha, **_CHECK_FORMAT} if req.bundle_sha else dict(_CHECK_FORMAT),
     )
     hit = await _cache_hit_response(cache, cache_key)
     if hit is not None:
@@ -436,7 +446,9 @@ async def _run_check_batch(
     req: CheckBatchRequest,
 ) -> CheckBatchResponse:
     base_env_digest = _parse_digest(req.base_env_digest)
-    cache_keys = [compute_cache_key(base_env_digest, body, {}) for body in req.bodies]
+    cache_keys = [
+        compute_cache_key(base_env_digest, body, dict(_CHECK_FORMAT)) for body in req.bodies
+    ]
     results: list[CheckResponse | None] = [await _cache_hit_response(cache, k) for k in cache_keys]
 
     miss_indices = [i for i, r in enumerate(results) if r is None]
