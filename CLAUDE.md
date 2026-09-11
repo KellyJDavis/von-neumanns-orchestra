@@ -63,10 +63,10 @@ plus digest verification of the pinned tokenizer. M3.5 is done — `lean_agent_m
 M3.6 is done — `lean_agent_models.cache` over a new `model_response_cache` table
 (migration `3bd1fe9a53fb`), plus `lean_agent_core.codecs` for the float32/int32 storage §6.5
 requires. M3.7 is done — the executor can call a model through a `CompletionService` and the trajectory
-records what came back, filling the four columns M1.5 created and Phase 2 left NULL. Still to
-come: M3.8
-(`ContextBuilder`), M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11 (trajectory viewer),
-M3.12 (the exit gate).
+records what came back, filling the four columns M1.5 created and Phase 2 left NULL. M3.8 is done —
+`lean_agent_core.context`, §6.6's bands with both of the rules spec says matter more than the
+bands themselves. Still to come: M3.9/M3.10 (`WholeProofSampler`, `RepairLoop`), M3.11
+(trajectory viewer), M3.12 (the exit gate).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -954,6 +954,47 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: context-band facts (M3.8)
+
+From building `lean_agent_core.context`. Spec §6.6 says two rules matter more than the bands
+themselves, and both are enforced structurally rather than left to whoever assembles a prompt.
+
+- **"Never summarize kernel output" means there is no summarizing path at all.** A summary is a
+  paraphrase produced by something that does not know what the kernel meant, and the model then
+  reasons about the paraphrase. `truncate_kernel_output` keeps the error head, drops *whole*
+  hypotheses, and marks the gap with a count. The test states this as a property — every
+  non-marker line of the output appears verbatim in the input — which a summarizing implementation
+  could not satisfy.
+- **"By hypothesis" is the load-bearing half of that rule.** A hypothesis sliced mid-type reads as
+  a *different* hypothesis rather than a missing one, and the model cannot tell which it is looking
+  at. Whole lines only.
+- **The `⊢` goal line survives whatever else goes.** Not stated in spec, but a diagnostic that
+  dropped the goal in favour of hypotheses would be describing a problem it no longer states.
+- **Byte-stability is scoped to *resamples*, not to reconfigurations — and getting that wrong is
+  easy.** A first test asserted the prefix was identical across two different `budget_tokens`
+  values and failed, correctly: band 2's cap is a fraction of the budget, so a different budget is
+  a different prefix. That is not a resample, it is a different experiment. The rule that actually
+  bites is at a *fixed* budget: bands 3–6 vary between resamples (a new error joins the history, a
+  different premise is retrieved) and must never move a byte of bands 1–2. Both sides are now
+  pinned, the second so nobody "fixes" the first by making the cap absolute.
+- **Bands 1–2 are rendered from their own inputs alone.** That is what makes the stability
+  structural rather than incidental: nothing computed from bands 3–6 feeds back into them.
+- **A band is evicted whole, never cut in half.** A band cut mid-entry reads as a complete list
+  that happens to be short, which is worse than an absent one — the model takes it for everything
+  there is. Likewise an empty band contributes no heading at all: an empty "# Premises" tells the
+  model a search happened and found nothing, which is a different claim from not having searched.
+- **`Band` is an `IntEnum` because eviction order *is* the numeric order.** A separate ordering
+  table could drift from the band numbers; this cannot.
+- **The 30% kernel cap is a default, not a finding.** Spec marks it **[measure]** and nobody has.
+  It stays a *hard* cap regardless — an unbounded goal state can be enormous, and crowding out
+  every retrieved premise is the failure the cap exists to prevent.
+- **Token counting is injected, not imported.** Counting needs a tokenizer, tokenizers live in
+  `lean_agent_models`, and `models` already depends on `core`. A `Callable[[str], int]` keeps the
+  dependency pointing the right way; a caller passes `len(ChatTokenizer.encode(...))`.
+- **What was dropped is reported, never silently applied.** A run whose premises were all evicted
+  is a different experiment from one where they fitted, and nothing downstream could tell without
+  being told.
 
 ## Implementation notes: trajectory-logging facts (M3.7)
 
