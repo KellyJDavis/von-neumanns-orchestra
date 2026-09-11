@@ -142,6 +142,9 @@ class TokenExchange:
     completions: tuple[tuple[int, ...], ...]
     sampling: dict[str, object]
     seed: int | None
+    #: Parallel to `completions`. Empty for an exchange recorded before M3.11, which stored none --
+    #: an honest "not recorded" rather than a guessed `stop`.
+    finish_reasons: tuple[str, ...] = ()
 
 
 def encode_trajectory_token_ids(exchanges: Sequence[Exchange]) -> bytes:
@@ -165,6 +168,9 @@ def encode_trajectory_token_ids(exchanges: Sequence[Exchange]) -> bytes:
                     ],
                     "sampling": exchange.sampling,
                     "seed": exchange.seed,
+                    # Why each sample ended (M3.11): `length` means the budget cut it off, which a
+                    # viewer has to be able to say about one sample, not only in aggregate.
+                    "finish_reasons": [c.finish_reason for c in exchange.completions],
                 }
                 for exchange in exchanges
             ]
@@ -182,6 +188,7 @@ def decode_trajectory_token_ids(payload: bytes) -> list[TokenExchange]:
             completions=tuple(unpack_token_ids(bytes.fromhex(ids)) for ids in entry["completions"]),
             sampling=dict(entry["sampling"]),
             seed=entry["seed"],
+            finish_reasons=tuple(entry.get("finish_reasons", ())),
         )
         for entry in document["exchanges"]
     ]

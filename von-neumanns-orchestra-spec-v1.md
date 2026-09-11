@@ -582,6 +582,7 @@ All request and response bodies are Pydantic models; the OpenAPI document is gen
 | `GET` | `/v1/obligations/{id}/attempts` | |
 | `GET` | `/v1/attempts/{id}` | |
 | `GET` | `/v1/attempts/{id}/trajectory` | Rendered prompts, completions, tool calls, verdict |
+| `GET` | `/attempts/{id}` | The read-only trajectory viewer (§7.4): the same data as HTML, prompts decoded from their stored token ids *(M3.11)* |
 | `GET` | `/v1/base-envs` | Curated and registered base environments |
 | `POST` | `/v1/base-envs` | Register a project prelude; returns `digest` |
 | `GET` | `/v1/blobs/{sha256}` | Tenant-scoped |

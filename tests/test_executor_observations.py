@@ -196,3 +196,15 @@ def test_the_step_says_how_each_sample_ended() -> None:
     (step,) = trajectories.steps
     assert step.action == "RequestCompletion"
     assert step.detail == "2 sample(s) from Goedel-LM/Goedel-Prover-V2-8B; finish length×1, stop×1"
+
+
+def test_steps_record_what_was_submitted_and_everything_the_kernel_said() -> None:
+    """M3.11. Before this a failed candidate's text was stored nowhere, and only the head of its
+    first diagnostic survived -- so a trajectory could say sample 2 failed and not what sample 2
+    was, or why. Each request step also names the exchange it produced."""
+    _, trajectories, _ = _run(Listening(script=("bad", "good")))
+    request, screened, linked = trajectories.steps
+
+    assert (request.action, request.exchange) == ("RequestCompletion", 0)
+    assert (screened.development, screened.diagnostics) == ("bad", ("error: bad proof",))
+    assert linked.action == "SubmitProof" and linked.development == "good"

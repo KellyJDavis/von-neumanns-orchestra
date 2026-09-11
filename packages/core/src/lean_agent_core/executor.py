@@ -166,6 +166,16 @@ class TrajectoryStep:
     action: str
     ok: bool
     detail: str | None = None
+    #: The exact development a `SubmitProof` step submitted (M3.11). Before this the only copy of a
+    #: *failed* candidate was nowhere -- `check` caches results by the body's digest, not its text
+    #: -- so a trajectory viewer could say that sample 2 failed and not what sample 2 was.
+    development: str | None = None
+    #: Every diagnostic the check or link reported, not just `detail`'s truncated head. They are
+    #: what a repair turn was built from, and what a person debugging a policy reads first.
+    diagnostics: tuple[str, ...] = ()
+    #: For a `RequestCompletion` step, the index of the exchange it produced in
+    #: `token_ids_blob` -- the link between a step and the prompt and completions it stands for.
+    exchange: int | None = None
 
 
 class _Proposals:
@@ -357,6 +367,8 @@ class PolicyExecutor:
                                     action="SubmitProof/check",
                                     ok=False,
                                     detail=_first(screened.diagnostics),
+                                    development=action.development,
+                                    diagnostics=screened.diagnostics,
                                 )
                             )
                             proposals.observe(screened)
@@ -385,6 +397,8 @@ class PolicyExecutor:
                                     action="SubmitProof/check",
                                     ok=False,
                                     detail=f"elaborated but depends on {SORRY_AXIOM}",
+                                    development=action.development,
+                                    diagnostics=screened.diagnostics,
                                 )
                             )
                             proposals.observe(screened)
@@ -406,6 +420,8 @@ class PolicyExecutor:
                                 action="SubmitProof",
                                 ok=result.proved,
                                 detail=None if result.proved else _first(result.diagnostics),
+                                development=action.development,
+                                diagnostics=result.diagnostics,
                             )
                         )
                         if result.proved:
@@ -488,6 +504,7 @@ class PolicyExecutor:
                                 action="RequestCompletion",
                                 ok=True,
                                 detail=_sample_detail(sample),
+                                exchange=len(exchanges) - 1,
                             )
                         )
                         proposals.observe(sample)

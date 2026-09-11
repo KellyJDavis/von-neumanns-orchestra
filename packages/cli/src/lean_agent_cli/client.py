@@ -69,6 +69,9 @@ class ApiClient:
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         return dict(self._request("POST", "/v1/runs", json=payload))
 
+    def get_trajectory(self, attempt_id: uuid.UUID | str) -> dict[str, Any]:
+        return dict(self._request("GET", f"/v1/attempts/{attempt_id}/trajectory"))
+
     def get_run(self, run_id: uuid.UUID | str) -> dict[str, Any]:
         return dict(self._request("GET", f"/v1/runs/{run_id}"))
 

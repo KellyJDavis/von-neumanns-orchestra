@@ -50,6 +50,7 @@ from typing import Any
 import jinja2
 import jinja2.ext
 from jinja2.sandbox import ImmutableSandboxedEnvironment
+from lean_agent_core.protocols import TokenDecoder, TokenizerResolver
 from tokenizers import Tokenizer
 
 from lean_agent_models.errors import ModelBackendError
@@ -178,6 +179,18 @@ class ChatTokenizer:
         """
         return tuple(self.tokenizer.encode(text, add_special_tokens=False).ids)
 
+    def decode(self, token_ids: Sequence[int]) -> str:
+        """The text `token_ids` encode, special tokens included (`protocols.TokenDecoder`, M3.11).
+
+        This is how the trajectory viewer shows a prompt: from the ids a model was actually sent,
+        never by re-rendering the policy's messages. It is exact, not approximate -- measured,
+        `decode(to_token_ids(messages)) == render(messages)` for every recorded conversation of
+        both vendored tokenizers (TinyLlama's SentencePiece and Qwen3's byte-level BPE, 24 cases),
+        and `tests/models/test_template.py` holds that. Special tokens are kept because they are
+        part of what the model saw: a prompt shown without `<|im_start|>` is a paraphrase of one.
+        """
+        return str(self.tokenizer.decode(list(token_ids), skip_special_tokens=False))
+
     def to_token_ids(
         self,
         messages: Sequence[Mapping[str, Any]],
@@ -288,3 +301,33 @@ def load_chat_tokenizer(
         tokenizer=Tokenizer.from_str(converted.read_text()),
         revision=revision if revision is not None else actual,
     )
+
+
+@dataclass(frozen=True)
+class TokenizerRegistry:
+    """Tokenizers by the revision a trajectory recorded, for the trajectory viewer (M3.11).
+
+    `trajectory.tokenizer_revision` is the digest of the converted tokenizer that produced the ids
+    (M3.4), so a registry keyed the same way resolves exactly the tokenizer the ids came from, or
+    nothing. There is deliberately no fallback to "a tokenizer for the same model": two revisions
+    of one model can tokenize differently, and a viewer that decoded with the wrong one would show
+    a prompt nobody sent.
+    """
+
+    by_revision: Mapping[str, ChatTokenizer]
+
+    @classmethod
+    def from_directories(cls, directories: Sequence[Path]) -> TokenizerRegistry:
+        loaded = [load_chat_tokenizer(directory) for directory in directories]
+        return cls({t.revision: t for t in loaded if t.revision is not None})
+
+    def __call__(self, revision: str) -> ChatTokenizer | None:
+        return self.by_revision.get(revision)
+
+
+def _conforms_to_viewer_protocols(registry: TokenizerRegistry) -> TokenizerResolver:
+    """`ChatTokenizer` is a `TokenDecoder` and the registry a `TokenizerResolver`, checked by
+    `mypy --strict` rather than at the viewer's first request."""
+    decoder: TokenDecoder | None = registry("digest")
+    del decoder
+    return registry

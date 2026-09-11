@@ -14,7 +14,7 @@ such justification.
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -399,3 +399,22 @@ class ModelBackend(Protocol):
     async def complete(self, request: CompletionRequest) -> CompletionResponse: ...
 
     async def tokenize(self, text: str) -> tuple[int, ...]: ...
+
+
+class TokenDecoder(Protocol):
+    """Turns stored token ids back into the text they encode (M3.11).
+
+    The trajectory viewer's *only* route to a prompt. Spec §7.4 asks for "exact rendered prompts
+    (not reconstructions)", and the ids in `token_ids_blob` are the one record of what a model was
+    actually sent -- re-rendering the policy's messages through a template would be a
+    reconstruction, and would silently disagree with the trajectory the day a template or a
+    tokenizer changed. A protocol in `core`, implemented in `models`, for `CompletionService`'s
+    reason: `models` depends on `core`, never the reverse.
+    """
+
+    def decode(self, token_ids: Sequence[int]) -> str: ...
+
+
+#: Finds the decoder for a `trajectory.tokenizer_revision`. `None` means this deployment does not
+#: have that tokenizer, and a viewer must then show the ids rather than guess at their text.
+TokenizerResolver = Callable[[str], TokenDecoder | None]

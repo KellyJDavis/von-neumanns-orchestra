@@ -72,8 +72,9 @@ a language model: miniF2F's `imo_1959_p1`, which the null agent does not close, 
 Goedel-Prover-V2-8B -- replayed in CI from a recording, `tests/leanserv/test_whole_proof.py`. M3.10
 is done -- `lean_agent_policies.{repair,feedback}`: `RepairLoop` shows each failed sample the
 kernel's errors in Goedel-Prover-V2's trained repair format and resamples, and a trajectory now
-records every request of an attempt separately (`protocols.Exchange`). Still to come: M3.11
-(trajectory viewer), M3.12 (the exit gate).
+records every request of an attempt separately (`protocols.Exchange`). M3.11 is done -- the read-only trajectory viewer (spec §7.4): `GET /v1/attempts/{id}/trajectory`,
+the same data as a page at `GET /attempts/{id}`, and `lean-agent trajectory <id>`, each showing every
+prompt decoded from the token ids actually sent. Still to come: M3.12 (the exit gate).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -238,6 +239,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   `source ~/.venv-vllm-metal/bin/activate && vllm serve Goedel-LM/Goedel-Prover-V2-8B --port 8766
   --max-model-len 16384`, then `LEAN_AGENT_RECORD_VLLM=http://127.0.0.1:8766 uv run pytest
   tests/leanserv/test_whole_proof.py` (~5 minutes on an M2 Max; see the notes below for why).
+- The trajectory viewer (M3.11): `lean-agent trajectory <attempt_id>` in a terminal, `GET
+  /attempts/<attempt_id>` as a page, or `GET /v1/attempts/<attempt_id>/trajectory` as JSON. Prompts
+  are decoded only when the API was built with a `TokenizerRegistry` holding the tokenizer the
+  trajectory recorded (`create_app(..., tokenizers=TokenizerRegistry.from_directories([...]))`);
+  otherwise the ids are shown, with a note saying why.
 - Phase 2 baseline (M3.0, `lean_agent_eval.baseline` + `suites/data/phase2_baseline.json`): asserted by the same
   miniF2F gate, so it needs the same prerequisites. Note the gate runs **once per module** (a module-scoped
   `gate_reports` fixture) and every test reads that one result — see the cost note below before adding a test
@@ -968,6 +974,49 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: trajectory-viewer facts (M3.11)
+
+From building `lean_agent_api.{trajectories,viewer}` and holding them to a real recorded Goedel run.
+
+- **"Exact rendered prompts (not reconstructions)" means decoding the stored ids, never
+  re-rendering the policy's messages.** Re-rendering would be a reconstruction, and it would
+  silently disagree with the record the day a template, prompt asset or tokenizer moved -- exactly
+  when someone is debugging. The ids in `token_ids_blob` are the only record of what was sent, and
+  they are decoded with the tokenizer whose digest the trajectory recorded (`TokenizerRegistry`,
+  keyed the same way, with no "same model" fallback: two revisions can tokenize differently). No
+  matching tokenizer means the viewer shows the ids and says why.
+- **Decoding is exact here, which is what makes that honest, and it is measured, not assumed.**
+  `decode(to_token_ids(messages)) == render(messages)` for all 24 reference conversations of both
+  vendored tokenizer families (SentencePiece TinyLlama, byte-level BPE Qwen3 = Goedel). End to end,
+  the viewer's opening prompt is byte-identical to the chat template's render, and every prompt to
+  the ids the replay server received, decoded.
+- **vLLM's `text` is not the reference for a sample -- it drops the end-of-turn token.** vLLM
+  detokenizes with special tokens skipped, so a `finish_reason = stop` sample's `text` omits the
+  `<|im_end|>` the model generated, which is in `token_ids` with a logprob. The viewer shows it,
+  because it was generated. Found by the test's first version, which compared against `text` and
+  failed on exactly that token after 5,040 identical characters; the difference is now pinned to
+  precisely it.
+- **The trajectory could not answer the questions a viewer is for, so it records more.** A failed
+  candidate's development text was stored nowhere (the check cache is keyed by digest, not text);
+  only the first 500 characters of its first diagnostic survived; a completion's `finish_reason`
+  was dropped; and nothing linked a step to its exchange. `TrajectoryStep` now carries
+  `development`, `diagnostics` and `exchange`, and `token_ids_blob` each sample's finish reason.
+  Rows written earlier read as "not recorded", never as a guessed `stop`.
+- **Read-only is enforced by the database.** Every viewer query runs in `SET TRANSACTION READ
+  ONLY`. The test's control half matters: the same insert succeeds for `app` outside that session
+  (it may insert into `base_env`), so the refusal is the transaction mode, not a missing grant.
+- **The page treats everything a model saw or wrote as untrusted text.** It is all escaped (spec
+  §7.2 treats AI-generated proofs as malicious code), which matters beyond safety: an unescaped
+  `<|im_start|>` is swallowed by the browser as an unknown tag, and the page shows a prompt nobody
+  sent. No script, no CDN (it must work offline, which is where this system runs), and nothing is
+  truncated, only collapsed. It lives outside `/v1` because it is a page for a person.
+- **`packages/api` still does not depend on `models`.** Decoding is injected through
+  `protocols.TokenizerResolver`, the `CompletionService` pattern again: `core` names the protocol,
+  `models` implements it (`ChatTokenizer.decode`, `TokenizerRegistry`), the deployment wires them.
+- **The exactness test is checked to bite.** Making `decode` skip special tokens -- the smallest
+  plausible slip -- fails it; the viewer test compares against three references none of which is
+  its own code path (the wire ids, the template's render, the server's ids).
 
 ## Implementation notes: repair-loop facts (M3.10)
 

@@ -150,6 +150,76 @@ class AttemptSummary(BaseModel):
     verdict: VerdictBody | None = None
 
 
+class PromptBody(BaseModel):
+    """One prompt exactly as the model received it (spec §7.4: "exact rendered prompts (not
+    reconstructions)").
+
+    `text` is the stored token ids decoded with the tokenizer the trajectory recorded -- never the
+    policy's messages re-rendered, which would be a reconstruction that silently disagrees with the
+    record the day a template or tokenizer changes. When this deployment does not have that
+    tokenizer, `text` is `None` and `token_ids` carries the ids themselves, with `note` saying why.
+    """
+
+    token_count: int
+    text: str | None
+    decoded_with: str | None
+    token_ids: list[int] | None = None
+    note: str | None = None
+
+
+class CompletionBody(BaseModel):
+    """One sample, decoded the same way as its prompt, with how it ended."""
+
+    index: int
+    token_count: int
+    text: str | None
+    #: `None` for an exchange recorded before M3.11, which stored none -- not a guessed `stop`.
+    finish_reason: str | None
+    logprob_sum: float
+    token_ids: list[int] | None = None
+
+
+class ExchangeBody(BaseModel):
+    """One request an attempt made (`protocols.Exchange`) and every sample it got back."""
+
+    index: int
+    sampling: dict[str, Any]
+    seed: int | None
+    prompt: PromptBody
+    completions: list[CompletionBody]
+
+
+class StepBody(BaseModel):
+    """`executor.TrajectoryStep`, as stored. Fields added after a row was written default."""
+
+    label: str
+    action: str
+    ok: bool
+    detail: str | None = None
+    development: str | None = None
+    diagnostics: list[str] = Field(default_factory=list)
+    exchange: int | None = None
+
+
+class ToolCallBody(BaseModel):
+    step_index: int
+    server: str
+    tool: str
+    trust: str
+    ok: bool
+    latency_ms: int
+    args: str
+    result: str | None
+
+
+class VerdictDetail(VerdictBody):
+    """The verdict in full: what leanserv wrote, including the accepted proof text."""
+
+    kernels_agreeing: list[str]
+    diagnostics: list[str]
+    proof: str | None
+
+
 class TrajectoryResponse(BaseModel):
     """Spec §6.1: "Rendered prompts, completions, tool calls, verdict".
 
@@ -160,9 +230,16 @@ class TrajectoryResponse(BaseModel):
     attempt_id: uuid.UUID
     provenance: str
     model_id: str | None
+    model_weights_hash: str | None = None
+    tokenizer_revision: str | None = None
+    #: The opening request's effective sampling and seed; each exchange carries its own.
+    sampling: dict[str, Any] = Field(default_factory=dict)
+    seed: int | None = None
     n_steps: int
-    steps: list[dict[str, Any]]
-    verdict: VerdictBody | None = None
+    steps: list[StepBody]
+    exchanges: list[ExchangeBody] = Field(default_factory=list)
+    tool_calls: list[ToolCallBody] = Field(default_factory=list)
+    verdict: VerdictDetail | None = None
 
 
 class BaseEnvBody(BaseModel):

@@ -23,6 +23,7 @@ import pytest
 from lean_agent_models.template import (
     ChatTemplate,
     TemplateError,
+    TokenizerRegistry,
     load_chat_template,
     load_chat_tokenizer,
     tokenizer_digest,
@@ -321,3 +322,32 @@ def test_an_explicit_revision_wins_over_the_computed_digest(reference: dict[str,
     directory = DATA / _model(reference, "TinyLlama/TinyLlama-1.1B-Chat-v1.0")["directory"]
     chat = load_chat_tokenizer(directory, revision="upstream-abc123")
     assert chat.revision == "upstream-abc123"
+
+
+def test_decoding_the_ids_gives_back_the_rendered_prompt_exactly(reference: dict[str, Any]) -> None:
+    """M3.11. The trajectory viewer shows a prompt by decoding the ids that were sent, and that is
+    only honest if decoding is exact. It is, for every recorded conversation of both vendored
+    tokenizers -- SentencePiece (TinyLlama) and byte-level BPE (Qwen3 = Goedel-Prover-V2-8B)."""
+    checked = 0
+    for model in reference["models"]:
+        chat = load_chat_tokenizer(DATA / model["directory"])
+        for case in model["cases"]:
+            ids = chat.to_token_ids(
+                case["messages"], add_generation_prompt=case["add_generation_prompt"]
+            )
+            assert chat.decode(ids) == case["rendered"], (
+                f"{model['repo_id']} / {case['conversation']}"
+            )
+            checked += 1
+    assert checked == 24
+
+
+def test_the_registry_resolves_only_the_exact_recorded_tokenizer(reference: dict[str, Any]) -> None:
+    """Keyed by the digest `trajectory.tokenizer_revision` records, with no fallback to "a
+    tokenizer for the same model": decoding with the wrong one would show a prompt nobody sent."""
+    directories = [DATA / model["directory"] for model in reference["models"]]
+    registry = TokenizerRegistry.from_directories(directories)
+    for directory in directories:
+        resolved = registry(tokenizer_digest(directory))
+        assert resolved is not None and resolved.revision == tokenizer_digest(directory)
+    assert registry("0" * 64) is None
