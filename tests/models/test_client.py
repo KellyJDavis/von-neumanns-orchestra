@@ -13,6 +13,7 @@ against an answer to a different question. `record_fixtures.py` builds its reque
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ import pytest
 from lean_agent_core.enums import ProvenanceClass
 from lean_agent_core.protocols import CompletionRequest, CompletionResponse, SamplingParams
 from lean_agent_core.roles import ModelRole
-from lean_agent_models.client import CompletionsClient
+from lean_agent_models.client import CompletionsClient, default_timeout_s
 from lean_agent_models.config import BackendConfig
 from lean_agent_models.errors import ModelProtocolError, ModelUnavailable
 from lean_agent_models.template import load_chat_tokenizer
@@ -341,3 +342,42 @@ def test_tokenize_is_local_and_needs_no_server() -> None:
     ids = asyncio.run(main())
     assert ids
     assert all(isinstance(token, int) for token in ids)
+
+
+def test_the_timeout_follows_the_answer_it_allows_for() -> None:
+    """M3.12. A non-streaming request is silent until it finishes, so its allowance has to cover
+    decoding every token it may produce: at the provers' 40,960 that is about three hours, where a
+    fixed 600 s would call a slow-but-succeeding answer an infrastructure failure. The request's
+    own `timeout_ms` wins, then configuration, then the derivation."""
+    derived = CompletionsClient(_config(), load_chat_tokenizer(TOKENIZER_DIR))
+    long = CompletionRequest(prompt_token_ids=(1,), sampling=SamplingParams(max_tokens=40960))
+    assert derived.timeout_s(long) == default_timeout_s(40960) == 600 + 40960 / 4
+    assert derived.timeout_s(dataclasses.replace(long, timeout_ms=5000)) == 5.0
+
+    configured = CompletionsClient(
+        dataclasses.replace(_config(), request_timeout_s=90.0), load_chat_tokenizer(TOKENIZER_DIR)
+    )
+    assert configured.timeout_s(long) == 90.0
+    assert configured.timeout_s(dataclasses.replace(long, timeout_ms=5000)) == 5.0
+
+
+def test_the_request_on_the_wire_carries_the_derived_timeout(fixtures: Fixtures) -> None:
+    """Not just computed: the HTTP request sent for a recorded completion carries it."""
+    seen: list[dict[str, float]] = []
+
+    class Watch(httpx.AsyncBaseTransport):
+        def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+            self._inner = inner
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            seen.append(request.extensions["timeout"])
+            return await self._inner.handle_async_request(request)
+
+    async def main() -> None:
+        replay = httpx.ASGITransport(app=create_replay_app(fixtures))
+        async with httpx.AsyncClient(transport=Watch(replay), base_url="http://replay") as http:
+            client = CompletionsClient(_config(), load_chat_tokenizer(TOKENIZER_DIR), client=http)
+            await client.complete(GREEDY)
+
+    asyncio.run(main())
+    assert [(t["read"], t["connect"]) for t in seen] == [(default_timeout_s(8), 10.0)]

@@ -25,7 +25,11 @@ from lean_agent_core.actions import (
 )
 from lean_agent_core.protocols import CheckOutcome, Completion, CompletionResponse
 from lean_agent_core.roles import ModelRole
-from lean_agent_policies.repair import GOEDEL_CORRECTION, RepairLoop
+from lean_agent_policies.repair import (
+    DEFAULT_PROMPT_BUDGET_TOKENS,
+    GOEDEL_CORRECTION,
+    RepairLoop,
+)
 from lean_agent_policies.whole_proof import PromptTemplate, WholeProofSampler
 
 #: Goedel-Prover-V2's correction turn with its two placeholders, pinned as a literal so editing
@@ -233,7 +237,10 @@ def test_a_sample_that_wrote_no_proof_is_neither_submitted_nor_repaired() -> Non
 def test_a_chain_whose_next_prompt_would_not_fit_is_not_repaired() -> None:
     """The history grows by a whole answer and a page of errors each round, and a prompt past the
     server's context is a rejected request rather than a worse repair."""
-    replies = iter([response(answer("a"), prompt_tokens=12_200)])
+    # Just under the budget, so the next round's answer and errors push it over -- relative, so the
+    # test keeps meaning this when the default moves (it was 12,288 until M3.12).
+    near_budget = DEFAULT_PROMPT_BUDGET_TOKENS - 88
+    replies = iter([response(answer("a"), prompt_tokens=near_budget)])
     actions = Executor(respond=lambda _: next(replies), judge=lambda _: failed("a")).run(
         RepairLoop()
     )

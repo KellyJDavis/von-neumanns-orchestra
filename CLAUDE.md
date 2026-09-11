@@ -74,7 +74,10 @@ is done -- `lean_agent_policies.{repair,feedback}`: `RepairLoop` shows each fail
 kernel's errors in Goedel-Prover-V2's trained repair format and resamples, and a trajectory now
 records every request of an attempt separately (`protocols.Exchange`). M3.11 is done -- the read-only trajectory viewer (spec §7.4): `GET /v1/attempts/{id}/trajectory`,
 the same data as a page at `GET /attempts/{id}`, and `lean-agent trajectory <id>`, each showing every
-prompt decoded from the token ids actually sent. Still to come: M3.12 (the exit gate).
+prompt decoded from the token ids actually sent. M3.12 (the exit gate) is in progress: the prover
+token limit is now the provers' whole 40,960-token context, with every downstream limit moved to
+accept it (see the M3.12 notes); the three-prover miniF2F ranking and the corpus exporter's
+provenance test are still to come.
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -239,6 +242,11 @@ Two decisions drive nearly everything else in the design (spec §1):
   `source ~/.venv-vllm-metal/bin/activate && vllm serve Goedel-LM/Goedel-Prover-V2-8B --port 8766
   --max-model-len 16384`, then `LEAN_AGENT_RECORD_VLLM=http://127.0.0.1:8766 uv run pytest
   tests/leanserv/test_whole_proof.py` (~5 minutes on an M2 Max; see the notes below for why).
+  16384 is what those recordings were made at, and the test pins it (`RECORDED_CONTEXT_TOKENS`).
+- Serving a prover for real work (M3.12): at its whole 40,960-token context, which is the
+  default `vllm serve` picks for all three provers, and must match `[models.prover]
+  context_tokens` -- `vllm serve <model> --port 8766 --max-model-len 40960`. A server started
+  with a smaller window rejects requests that do not fit it (HTTP 400); see the M3.12 notes.
 - The trajectory viewer (M3.11): `lean-agent trajectory <attempt_id>` in a terminal, `GET
   /attempts/<attempt_id>` as a page, or `GET /v1/attempts/<attempt_id>/trajectory` as JSON. Prompts
   are decoded only when the API was built with a `TokenizerRegistry` holding the tokenizer the
@@ -975,6 +983,89 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
 
+## Implementation notes: token-limit facts (M3.12)
+
+From raising the prover's token limit off spec Appendix B's 4,096, which M3.10 showed was too small
+(every sample of three hard problems was cut off at it), and moving every limit downstream with it.
+
+- **The three provers share one hard limit, and it is the context, not an output length.**
+  Goedel-Prover-V2-8B, Pythagoras-Prover-4B and Kimina-Prover-Distill-8B are all
+  `Qwen3ForCausalLM` with `max_position_embeddings = 40960` and no rope scaling (read off each
+  `config.json`). The other numbers on their cards are usage examples or evaluation settings, not
+  limits: Goedel's snippet uses `max_new_tokens=32768`, Pythagoras's `8192` (its paper evaluates at
+  30,000), Kimina's `max_tokens=8096`. So the smallest maximum of the three is the window itself.
+- **Goedel-Prover-V2's own pipeline fills the window**: `MAX_MODEL_LEN=40960` and
+  `max_tokens = max_model_len`, so every request gets whatever its prompt leaves, and repair
+  prompts over three quarters of the window are dropped. Appendix B now says `max_tokens = 40960`
+  with `context_tokens = 40960`, and `RepairLoop`'s prompt budget is 30,720 -- that same three
+  quarters -- which leaves every repair at least 10,240 tokens to answer in.
+- **vLLM rejects prompt + `max_tokens` over its window, so the cap has to be ours -- and reading
+  its source said the opposite.** vLLM 0.28.0's completions path contains `get_max_tokens`, which
+  computes `min(max_model_len - prompt, max_tokens)` and reads exactly like a silent cap. It is
+  never reached for that case: `renderers/params.py` validates first and answers HTTP 400 --
+  "This model's maximum context length is 40960 tokens. However, you requested 100 output tokens
+  and your prompt contains 40900 input tokens, for a total of 41000 tokens." Found only by asking
+  a live server; the first version of this design, built on the source reading, documented a
+  silent cap. So with `max_tokens = 40960`, *every* uncapped request would be rejected.
+  `BackendConfig.context_tokens` (the served `--max-model-len`) lets `RoutedCompletions` send
+  `min(max_tokens, context - prompt)` (`fit_to_context`) -- the value recorded on the trajectory
+  and in the cache key, because it is what was asked -- and a prompt that leaves no room is a
+  `ModelProtocolError` before anything is sent. vllm-metal adds no platform cap of its own.
+- **`context_tokens` must match the server.** One started with a smaller `--max-model-len`
+  rejects every request that fits ours but not its own -- loudly, since a 400 is a
+  `ModelProtocolError`. `GET /v1/models` reports vLLM's `max_model_len`; check it before a run.
+  `RepairLoop`'s prompt budget has to fit inside it too: a 30,720-token repair prompt against a
+  16,384 context is refused by `fit_to_context` -- loudly, as the 400 it replaces was, and a
+  `ModelBackendError` is not an `InfraError`, so the mismatch is not retried for free.
+- **Verified live against Goedel served at 40,960, not only in replay.** Raw requests: a
+  40,961-token prompt, and a 40,900-token prompt asking for 100, are both refused instantly
+  (400); the same 40,900-token prompt asking for exactly the 60 that `fit_to_context` sends is
+  accepted and stops at 60 with `length` -- the cap's boundary is exact, not off by one. And one
+  real request through `RoutedCompletions` -> `CompletionsClient` configured `max_tokens =
+  context_tokens = 40960`: a 50-token prompt went out with `max_tokens = 40910` and an HTTP read
+  timeout of 10,827.5 s (600 + 40,910 / 4), the response recorded `sampling.max_tokens = 40910`,
+  and Goedel answered in 781 tokens (`stop`, 46 s).
+- **What a long window costs on the M2 Max, measured.** Prefilling 40,900 tokens took ~190 s on
+  its own (the request took 213.8 s for 60 tokens). Decoding ran ~17 tok/s for one sequence on a
+  short prompt and ~4 tok/s once the context neared 40,960 -- attention over the whole context is
+  paid on every token. vLLM's periodic "Avg prompt throughput" line misled while measuring this:
+  it averages over a 10-second interval, and the one ~190-second prefill step landed in a single
+  interval reported as "4,089 tokens/s". Time the request, not the log line.
+- **The client's timeout now follows `max_tokens`.** A fixed 600 s was already marginal at 4,096
+  under load (M3.10), and a non-streaming request is silent until it finishes, so the default is
+  `600 + max_tokens / 4` seconds -- about three hours at 40,960. 600 s covers a full-window
+  prefill (~190 s) with room to queue; 4 tok/s is the rate measured near the end of the window,
+  and an answer decodes faster than that on the way there, so it covers one sequence running to
+  the end. It does **not** cover `n = 8` all running long at once (only 5.66 full-window sequences
+  fit the KV cache); such a deployment sets `request_timeout_s`, and `CompletionRequest.
+  timeout_ms` overrides per request. A test asserts the value the HTTP request actually carries,
+  not only the arithmetic.
+- **Nothing else was in the way, checked rather than assumed.** The lease is extended by a
+  heartbeat *thread* (M2.3), so a multi-hour request holds it; nothing caps an attempt's
+  wallclock; and `Budget.tokens_remaining` is handed to policies and read by none, so
+  `budget_tokens` (default 1,000,000) stops nothing. Worth knowing before anything enforces it: at
+  40,960 one Goedel-style attempt -- 8 samples, then 16 repairs -- can exceed it.
+- **The M3.9/M3.10 recordings are undisturbed, shown three ways.** They replay unchanged with the
+  cap active at the context they were served at (16,384) and the repair budget they were made with
+  (12,288), both pinned in the test. Shrinking the pinned context to 4,096 makes both fail with the
+  replay server's 409, so the cap is on the recorded wire path and the recordings do pin
+  `max_tokens`. And with the new defaults in place of the pins (30,720 and 40,960) both still pass:
+  no recorded prompt comes near either limit, and no diagnostic was long enough to be cut
+  differently. The pins say what was recorded; they are not holding anything together.
+- **A test sized against the old default broke, and that is the pattern to avoid.**
+  `test_a_chain_whose_next_prompt_would_not_fit_is_not_repaired` used a 12,200-token prompt --
+  just under 12,288 -- and silently stopped testing anything once the default moved. It is now
+  relative to `DEFAULT_PROMPT_BUDGET_TOKENS`.
+- **The KV cache is the same size for all three**: 36 layers x 8 KV heads x 128 x (K, V) x 2
+  bytes is 144 KiB per token for the 4B and both 8Bs alike, so one sequence at the full window
+  holds 5.6 GiB. The window, not the parameter count, is what limits how many long answers fit at
+  once. Measured: `vllm serve Goedel-LM/Goedel-Prover-V2-8B --max-model-len 40960` on the M2 Max
+  (64 GiB) starts in ~20 s with a 34.17 GB KV cache -- 231,728 tokens, exactly 144 KiB each --
+  and reports a maximum concurrency of **5.66 full-window requests**. So `n = 8` samples cannot
+  all run to the full window at once; vLLM queues and preempts rather than failing, but it is the
+  reason a long-answer run is slower than its sample count suggests. The server leaves ~3 GB of
+  the machine free, so do not run the Mathlib-bearing suites beside it.
+
 ## Implementation notes: trajectory-viewer facts (M3.11)
 
 From building `lean_agent_api.{trajectories,viewer}` and holding them to a real recorded Goedel run.
@@ -1125,6 +1216,7 @@ kernel, and Goedel's own published pipeline code (read, and run locally, never c
   sharing one M2 Max, requests for the slowest problems exceeded it and surfaced as
   `ModelTimeout`. That is the correct classification -- a slow server is not evidence about the
   goal -- but a deployment batching this heavily on small hardware needs a larger timeout.
+  (M3.12 replaced the fixed 600 s with one derived from each request's `max_tokens`.)
 - **Batching is where the throughput is.** One 4-sample request ran at 23-32 tok/s; 24 concurrent
   sequences ran at 115-122 tok/s on the same M2 Max. The executor performs one `RequestCompletion`
   at a time, so a repair round is sequential across chains -- worth revisiting once throughput, not

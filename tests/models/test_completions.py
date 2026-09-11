@@ -11,6 +11,7 @@ cover is the routing, the templating and the decision of *whether* to cache at a
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,10 @@ from lean_agent_core.actions import Message, RequestCompletion
 from lean_agent_core.enums import ProvenanceClass
 from lean_agent_core.protocols import CompletionResponse, SamplingParams
 from lean_agent_core.roles import ModelRole
-from lean_agent_models.completions import RoutedCompletions
+from lean_agent_models.cache import compute_response_cache_key
+from lean_agent_models.completions import RoutedCompletions, fit_to_context
 from lean_agent_models.config import BackendConfig
+from lean_agent_models.errors import ModelProtocolError
 from lean_agent_models.router import ModelRouter, build_backend
 from lean_agent_models.template import load_chat_tokenizer, tokenizer_digest
 from replay_server import Fixtures, create_replay_app, load_fixtures
@@ -243,3 +246,94 @@ def test_the_response_reports_the_sampling_and_seed_that_were_actually_sent(
     response = _run(fixtures, body, _config(seed=1234))
     assert response.sampling == SamplingParams(temperature=0.0, top_p=1.0, max_tokens=8, n=1)
     assert response.seed == 1234
+
+
+def _greedy(max_tokens: int) -> RequestCompletion:
+    """The recorded greedy request (temperature 0, seed 1234), asking for `max_tokens`."""
+    return RequestCompletion(
+        role=ModelRole.PROVER,
+        messages=(Message(role="user", content="hello"),),
+        sampling={"temperature": 0.0, "max_tokens": max_tokens},
+        seed=1234,
+    )
+
+
+def test_max_tokens_is_capped_to_what_the_prompt_leaves_of_the_served_context(
+    fixtures: Fixtures,
+) -> None:
+    """M3.12. vLLM rejects a request whose prompt plus `max_tokens` exceeds its window (HTTP 400,
+    verified live), so asking for the whole window only works capped. With 11 tokens of context
+    and a 3-token prompt, 64 becomes 8 --
+    and the replay server, which matches bodies exactly, answers only because 8 is what went on
+    the wire: the recorded request asked for 8."""
+
+    async def body(service: RoutedCompletions) -> CompletionResponse:
+        service.tokenizers[ModelRole.PROVER] = _FixedTokenizer(RECORDED_PROMPT)  # type: ignore[assignment]
+        return await service.complete(_greedy(64))
+
+    response = _run(fixtures, body, _config(context_tokens=len(RECORDED_PROMPT) + 8))
+    assert response.sampling.max_tokens == 8, "the trajectory records what was sent"
+    assert response.completions
+
+
+def test_a_request_that_fits_the_served_context_is_sent_as_asked(fixtures: Fixtures) -> None:
+    async def body(service: RoutedCompletions) -> CompletionResponse:
+        service.tokenizers[ModelRole.PROVER] = _FixedTokenizer(RECORDED_PROMPT)  # type: ignore[assignment]
+        return await service.complete(_greedy(8))
+
+    assert _run(fixtures, body, _config(context_tokens=40960)).sampling.max_tokens == 8
+
+
+def test_the_cache_is_keyed_on_the_capped_request(fixtures: Fixtures) -> None:
+    """A hit has to answer the question that would have been sent, and that is the capped one."""
+    keys: list[bytes] = []
+
+    class _Store:
+        async def get(self, key: bytes) -> None:
+            keys.append(key)
+
+        async def put(self, key: bytes, response: CompletionResponse) -> None:
+            pass
+
+    async def body(service: RoutedCompletions) -> CompletionResponse:
+        cached = dataclasses.replace(service, cache=_Store())  # type: ignore[arg-type]
+        cached.tokenizers[ModelRole.PROVER] = _FixedTokenizer(RECORDED_PROMPT)  # type: ignore[assignment]
+        return await cached.complete(_greedy(64))
+
+    _run(fixtures, body, _config(context_tokens=len(RECORDED_PROMPT) + 8))
+    capped = SamplingParams(temperature=0.0, max_tokens=8)
+    assert keys == [compute_response_cache_key(RECORDED_PROMPT, "Qwen/Qwen3-0.6B", capped, 1234)]
+
+
+def test_a_prompt_that_fills_the_served_context_is_refused_before_anything_is_sent(
+    fixtures: Fixtures,
+) -> None:
+    """The server would reject it however often it was sent, so it is not sent at all."""
+    sent: list[object] = []
+
+    async def body(service: RoutedCompletions) -> CompletionResponse:
+        service.tokenizers[ModelRole.PROVER] = _FixedTokenizer(RECORDED_PROMPT)  # type: ignore[assignment]
+        backend = service.router.backend_for(ModelRole.PROVER)
+        original = backend.complete
+
+        async def spy(request: Any) -> Any:
+            sent.append(request)
+            return await original(request)
+
+        backend.complete = spy  # type: ignore[method-assign]
+        return await service.complete(_greedy(8))
+
+    with pytest.raises(ModelProtocolError, match="leaves no room for an answer"):
+        _run(fixtures, body, _config(context_tokens=len(RECORDED_PROMPT)))
+    assert sent == []
+
+
+def test_fit_to_context_caps_and_never_raises_the_limit() -> None:
+    wide = SamplingParams(max_tokens=40960)
+    assert fit_to_context(wide, 500, None) is wide, "no declared context, nothing capped"
+    assert fit_to_context(wide, 500, 40960).max_tokens == 40460
+    assert fit_to_context(wide, 40959, 40960).max_tokens == 1
+    narrow = SamplingParams(max_tokens=100)
+    assert fit_to_context(narrow, 500, 40960) is narrow, "a cap, never a raise"
+    with pytest.raises(ModelProtocolError):
+        fit_to_context(wide, 40960, 40960)

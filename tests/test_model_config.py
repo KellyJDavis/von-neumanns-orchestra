@@ -25,7 +25,8 @@ endpoint = "http://vllm:8000"
 model_id = "Goedel-LM/Goedel-Prover-V2-8B"
 tokenizer_revision = "abc123"
 provenance = "open_weights"
-sampling = { temperature = 0.8, top_p = 0.95, max_tokens = 4096, n = 8 }
+sampling = { temperature = 0.8, top_p = 0.95, max_tokens = 40960, n = 8 }
+context_tokens = 40960
 
 [models.informal]
 backend = "vllm"
@@ -47,10 +48,13 @@ def test_appendix_b_s_own_example_parses() -> None:
     assert prover.endpoint == "http://vllm:8000"
     assert prover.tokenizer_revision == "abc123"
     assert prover.provenance is ProvenanceClass.OPEN_WEIGHTS
-    assert prover.sampling == SamplingParams(temperature=0.8, top_p=0.95, max_tokens=4096, n=8)
+    assert prover.sampling == SamplingParams(temperature=0.8, top_p=0.95, max_tokens=40960, n=8)
+    assert prover.context_tokens == 40960
+    assert prover.request_timeout_s is None
 
     # Every optional key really is optional, and the defaults are the documented ones.
     informal = models[ModelRole.INFORMAL]
+    assert informal.context_tokens is None
     assert informal.endpoint is None
     assert informal.tokenizer_revision is None
     assert informal.seed is None
@@ -171,3 +175,24 @@ def test_a_completion_requires_logprobs_parallel_to_its_tokens() -> None:
     assert len(completion.logprobs) == len(completion.token_ids)
     with pytest.raises(TypeError):
         Completion(token_ids=(13,), text=".", finish_reason="length")  # type: ignore[call-arg]
+
+
+_MINIMAL = {"backend": "vllm", "model_id": "m", "provenance": "open_weights"}
+
+
+def test_a_configured_request_timeout_is_read_as_seconds() -> None:
+    assert parse_backend("prover", {**_MINIMAL, "request_timeout_s": 90}).request_timeout_s == 90.0
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "40960", 40960.0])
+def test_a_context_that_is_not_a_positive_integer_is_rejected(value: object) -> None:
+    """M3.12. Every request's `max_tokens` is capped against this, so `context_tokens = true` or a
+    quoted number is a typo that would otherwise cap every answer to one token or fail late."""
+    with pytest.raises(ConfigError, match="context_tokens must be a positive integer"):
+        parse_backend("prover", {**_MINIMAL, "context_tokens": value})
+
+
+@pytest.mark.parametrize("value", [0, -5.0, False, "600"])
+def test_a_timeout_that_is_not_a_positive_number_is_rejected(value: object) -> None:
+    with pytest.raises(ConfigError, match="request_timeout_s must be a positive number"):
+        parse_backend("prover", {**_MINIMAL, "request_timeout_s": value})

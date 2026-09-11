@@ -104,10 +104,18 @@ BASE_ENV_IMPORTS = (
     "Mathlib.Tactic.Linarith",
     "Mathlib.Data.Nat.GCD.Basic",
 )
-#: Spec Appendix B's `[models.prover].sampling`, with `n = 4` rather than 8: the recording has to
-#: be replayed on every CI run and stored in the repository, and four samples already carry the
-#: point -- several independent attempts, each checked.
+#: Spec Appendix B's `[models.prover].sampling` as it stood when this was recorded (M3.12 raised
+#: `max_tokens` to 40,960), with `n = 4` rather than 8: the recording has to be replayed on every
+#: CI run and stored in the repository, and four samples already carry the point -- several
+#: independent attempts, each checked.
 SAMPLING = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=4096, n=4)
+
+#: The context both recordings were served at (`--max-model-len 16384`) and the repair prompt
+#: budget that went with it -- three quarters, Goedel's pipeline's filter. M3.12 moved the defaults
+#: to the provers' full 40,960; pinning the recorded values keeps the recordings meaning what they
+#: recorded. Under them no prompt comes near the cap, so capping is exercised and changes nothing.
+RECORDED_CONTEXT_TOKENS = 16_384
+RECORDED_PROMPT_BUDGET_TOKENS = 12_288
 SEED = 1234
 
 #: M3.10. A problem whose first samples all fail and a repair succeeds, found by running the real
@@ -258,6 +266,7 @@ class Pipeline:
                     weights_revision=WEIGHTS_REVISION,
                     seed=seed,
                     sampling=sampling,
+                    context_tokens=RECORDED_CONTEXT_TOKENS,
                 )
                 service = RoutedCompletions(
                     router=ModelRouter(
@@ -390,7 +399,7 @@ def test_a_repair_closes_a_goal_the_first_samples_could_not(
     """M3.10 end to end: every first sample fails `/v1/check`, the kernel's errors go back to the
     model in its trained repair format, and a repaired proof links, replays and audits."""
     proved = pipeline.prove(
-        policy=RepairLoop(),
+        policy=RepairLoop(prompt_budget_tokens=RECORDED_PROMPT_BUDGET_TOKENS),
         problem_id=REPAIR_PROBLEM,
         sampling=REPAIR_SAMPLING,
         fixtures=REPAIR_FIXTURES,

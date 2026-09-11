@@ -35,6 +35,7 @@ weights_revision = "abc123"
 serving_version = "vllm==0.28.0"
 seed = 1234
 sampling = {{ temperature = 0.8, top_p = 0.95, max_tokens = 4096, n = 8 }}
+context_tokens = 40960
 
 [models.decomposer]
 backend = "vllm"
@@ -191,6 +192,7 @@ def test_the_manifest_entry_carries_what_a_published_result_must_name() -> None:
         "weights_revision": "abc123",
         "tokenizer_revision": None,
         "serving_version": "vllm==0.28.0",
+        "context_tokens": 40960,
         "provenance": "open_weights",
         "sampling": {
             "temperature": 0.8,
@@ -209,6 +211,7 @@ def test_an_unstated_revision_stays_none_rather_than_being_guessed() -> None:
     decomposer = next(entry for entry in entries if entry["role"] == "decomposer")
     assert decomposer["weights_revision"] is None
     assert decomposer["serving_version"] is None
+    assert decomposer["context_tokens"] is None
 
 
 def test_a_router_built_from_backends_directly_refuses_to_describe_itself() -> None:
