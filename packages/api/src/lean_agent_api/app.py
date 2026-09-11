@@ -30,9 +30,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
-from fastapi.responses import PlainTextResponse, StreamingResponse
-from lean_agent_core.blobs import from_bytea
-from lean_agent_core.protocols import BlobStore, LeanService
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
+from lean_agent_core.protocols import BlobStore, LeanService, TokenizerResolver
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -57,6 +56,8 @@ from lean_agent_api.schemas import (
     TrajectoryResponse,
     VerdictBody,
 )
+from lean_agent_api.trajectories import load_trajectory
+from lean_agent_api.viewer import render_html
 
 #: How often the SSE stream re-reads a run's obligation statuses. Two seconds is a deliberate
 #: compromise: fast enough that a UI feels live, slow enough that a hundred subscribers are a
@@ -84,11 +85,16 @@ def create_app(
     lean: LeanService,
     blobs: BlobStore,
     materializer: BundleMaterializer | None = None,
+    tokenizers: TokenizerResolver | None = None,
 ) -> FastAPI:
     """`materializer` is optional because a read-only deployment of this API (a status dashboard)
     needs no bundle root and no Lake project. `POST /v1/runs` refuses rather than half-works when
     it is absent: a run whose bundle is never compiled can never prove anything (M2.7), so
-    accepting the submission would be accepting work that cannot complete."""
+    accepting the submission would be accepting work that cannot complete.
+
+    `tokenizers` is how the trajectory viewer turns stored token ids back into the exact prompt a
+    model was sent (M3.11). Optional for the same kind of reason: without it the viewer still
+    works and shows the ids, saying why, rather than inventing the text."""
     app = FastAPI(
         title="von-neumann's-orchestra",
         description="Public API (spec §6.1)",
@@ -432,23 +438,23 @@ def create_app(
 
     @app.get("/v1/attempts/{attempt_id}/trajectory", response_model=TrajectoryResponse)
     async def get_trajectory(attempt_id: uuid.UUID) -> TrajectoryResponse:
-        row = await _one(
-            session_factory,
-            "SELECT provenance::text, model_id, n_steps, steps_blob FROM trajectory "
-            "WHERE attempt_id = :id",
-            {"id": attempt_id},
-            f"no trajectory for attempt {attempt_id}",
-        )
-        steps_raw = await from_bytea(blobs, bytes(row[3]))
-        attempts = await _attempts(session_factory, "a.id = :id", {"id": attempt_id})
-        return TrajectoryResponse(
-            attempt_id=attempt_id,
-            provenance=row[0],
-            model_id=row[1],
-            n_steps=row[2],
-            steps=json.loads(steps_raw),
-            verdict=attempts[0].verdict if attempts else None,
-        )
+        """Spec §6.1/§7.4: every prompt decoded from the ids actually sent, every sample, every
+        submission with its diagnostics, tool calls, and the verdict -- read in one read-only
+        transaction (`trajectories.load_trajectory`)."""
+        found = await load_trajectory(session_factory, blobs, attempt_id, tokenizers)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"no trajectory for attempt {attempt_id}")
+        return found
+
+    @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
+    async def view_trajectory(attempt_id: uuid.UUID) -> HTMLResponse:
+        """The read-only trajectory viewer (spec §7.4) -- the same data as the JSON route above,
+        as one plain page. Outside `/v1` because it is a page for a person, not an API a client
+        codes against."""
+        found = await load_trajectory(session_factory, blobs, attempt_id, tokenizers)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"no trajectory for attempt {attempt_id}")
+        return HTMLResponse(render_html(found))
 
     # --- base environments and blobs ------------------------------------------------------------
 

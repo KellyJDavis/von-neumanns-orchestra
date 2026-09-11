@@ -235,6 +235,70 @@ def cmd_materialize(client: ApiClient, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _exchange_lines(exchange: dict[str, Any]) -> list[str]:
+    """One request: its prompt exactly as sent, then every sample, each verbatim."""
+    prompt = exchange["prompt"]
+    if prompt["text"] is not None:
+        how, body = f"decoded with tokenizer {prompt['decoded_with']}", prompt["text"]
+    else:
+        how = prompt.get("note") or "token ids only"
+        body = " ".join(str(i) for i in prompt.get("token_ids") or [])
+    lines = [f"  === prompt: {prompt['token_count']} tokens, {how} ===", body]
+    for sample in exchange["completions"]:
+        text = sample["text"]
+        if text is None:
+            text = " ".join(str(i) for i in sample.get("token_ids") or [])
+        lines.append(
+            f"  === sample {sample['index']}: {sample['token_count']} tokens, finish "
+            f"{sample['finish_reason'] or 'not recorded'}, log-probability "
+            f"{sample['logprob_sum']:.2f} ==="
+        )
+        lines.append(text)
+    return lines
+
+
+def cmd_trajectory(client: ApiClient, args: argparse.Namespace) -> int:
+    """Spec §7.4's trajectory viewer, in a terminal: one attempt, every prompt and sample
+    verbatim, in the order it happened.
+
+    Nothing is collapsed or cut -- pipe it to a pager. It is the same data the API serves as a page
+    at `/attempts/{id}`, and prompts are the stored token ids decoded, never the policy's messages
+    re-rendered (the API says so, per prompt, when it cannot decode).
+    """
+    t = client.get_trajectory(args.attempt_id)
+    lines = [
+        f"attempt {t['attempt_id']}  provenance={t['provenance']}  model={t['model_id'] or 'none'}",
+        (
+            f"  tokenizer={t.get('tokenizer_revision') or 'none'}  opening sampling="
+            f"{t.get('sampling')}  seed={t.get('seed')}"
+        ),
+    ]
+    exchanges = t.get("exchanges") or []
+    for number, step in enumerate(t["steps"], start=1):
+        mark = "ok" if step["ok"] else "failed"
+        detail = f"  {step['detail']}" if step.get("detail") else ""
+        lines.append(f"\n[{number}] {step['label']}  {step['action']}  {mark}{detail}")
+        index = step.get("exchange")
+        if index is not None and 0 <= index < len(exchanges):
+            lines.extend(_exchange_lines(exchanges[index]))
+        if step.get("development"):
+            lines.extend(["  --- submitted ---", step["development"]])
+        for diagnostic in step.get("diagnostics") or []:
+            lines.extend(["  --- diagnostic ---", diagnostic.rstrip("\n")])
+    verdict = t.get("verdict")
+    if verdict is None:
+        lines.append("\nverdict: none (nothing reached /v1/link)")
+    else:
+        lines.append(
+            f"\nverdict: {verdict['kind']}  link={verdict['link_ok']} replay={verdict['replay_ok']}"
+            f" audit={verdict['axiom_audit_ok']}  axioms={', '.join(verdict['axioms'])}"
+        )
+        if verdict.get("proof"):
+            lines.extend(["--- accepted proof ---", verdict["proof"]])
+    _emit(t, as_json=args.json, human="\n".join(lines))
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lean-agent",
@@ -309,6 +373,14 @@ def build_parser() -> argparse.ArgumentParser:
     materialize.add_argument("run_id")
     materialize.add_argument("-o", "--output", help="Write here instead of stdout.")
     materialize.set_defaults(handler=cmd_materialize)
+
+    trajectory = subparsers.add_parser(
+        "trajectory",
+        help="One attempt's trajectory: every prompt, sample, submission and the verdict.",
+        parents=[common],
+    )
+    trajectory.add_argument("attempt_id")
+    trajectory.set_defaults(handler=cmd_trajectory)
 
     return parser
 

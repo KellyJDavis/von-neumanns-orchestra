@@ -88,3 +88,41 @@ def test_empty_sequences_are_legal() -> None:
     assert pack_token_ids(()) == b""
     assert unpack_token_ids(b"") == ()
     assert unpack_logprobs(pack_logprobs(())) == ()
+
+
+def test_each_completions_finish_reason_survives_the_round_trip() -> None:
+    """M3.11. `length` means the budget cut a sample off, and the viewer has to be able to say that
+    about one sample -- the aggregate in the step's detail cannot say *which*."""
+    from lean_agent_core.codecs import decode_trajectory_token_ids, encode_trajectory_token_ids
+    from lean_agent_core.protocols import Completion, Exchange
+
+    samples = (
+        Completion(token_ids=(1, 2), logprobs=(-0.1, -0.2), text="a", finish_reason="stop"),
+        Completion(token_ids=(3,), logprobs=(-0.3,), text="b", finish_reason="length"),
+    )
+    (exchange,) = decode_trajectory_token_ids(
+        encode_trajectory_token_ids([Exchange((7, 8), samples, {"n": 2}, 11)])
+    )
+    assert exchange.finish_reasons == ("stop", "length")
+
+
+def test_an_exchange_recorded_before_finish_reasons_reads_as_not_recorded() -> None:
+    """Honest absence: an empty tuple, never a guessed `stop`."""
+    import json
+
+    from lean_agent_core.codecs import decode_trajectory_token_ids, pack_token_ids
+
+    legacy = json.dumps(
+        {
+            "exchanges": [
+                {
+                    "prompt": pack_token_ids((1,)).hex(),
+                    "completions": [],
+                    "sampling": {},
+                    "seed": None,
+                }
+            ]
+        }
+    ).encode()
+    (exchange,) = decode_trajectory_token_ids(legacy)
+    assert exchange.finish_reasons == ()

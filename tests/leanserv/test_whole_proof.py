@@ -35,14 +35,18 @@ import os
 import sys
 import uuid
 from collections.abc import Iterator
+from html import escape
 from pathlib import Path
 
 import httpx
 import pytest
 from conftest import SealedObligation
 from fastapi.testclient import TestClient
+from lean_agent_api.app import create_app as create_public_app
 from lean_agent_api.ingestion import Ingestor, Submission
 from lean_agent_api.materialize import BundleMaterializer
+from lean_agent_cli.client import ApiClient
+from lean_agent_cli.main import main as cli_main
 from lean_agent_core.actions import ObligationContext
 from lean_agent_core.blobs import LocalBlobStore, from_bytea
 from lean_agent_core.codecs import decode_trajectory_token_ids
@@ -56,7 +60,7 @@ from lean_agent_eval.suites.minif2f import MEASURED_TAIL, load_corpus
 from lean_agent_models.completions import RoutedCompletions
 from lean_agent_models.config import BackendConfig
 from lean_agent_models.router import ModelRouter, build_backend
-from lean_agent_models.template import load_chat_tokenizer
+from lean_agent_models.template import TokenizerRegistry, load_chat_tokenizer
 from lean_agent_policies.repair import RepairLoop
 from lean_agent_policies.whole_proof import WholeProofSampler
 from lean_agent_serv.api import create_app
@@ -380,7 +384,9 @@ def test_a_sampled_proof_closes_a_goal_the_null_agent_could_not(pipeline: Pipeli
     _assert_proved(pipeline.admin_engine, proved, SAMPLING, SEED)
 
 
-def test_a_repair_closes_a_goal_the_first_samples_could_not(pipeline: Pipeline) -> None:
+def test_a_repair_closes_a_goal_the_first_samples_could_not(
+    pipeline: Pipeline, capsys: pytest.CaptureFixture[str]
+) -> None:
     """M3.10 end to end: every first sample fails `/v1/check`, the kernel's errors go back to the
     model in its trained repair format, and a repaired proof links, replays and audits."""
     proved = pipeline.prove(
@@ -422,6 +428,10 @@ def test_a_repair_closes_a_goal_the_first_samples_could_not(pipeline: Pipeline) 
         # lets a server's prefix cache reuse that prefill across rounds.
         prefix = opening.prompt  # type: ignore[attr-defined]
         assert repair.prompt[: len(prefix)] == prefix  # type: ignore[attr-defined]
+
+    # M3.11: the viewer over this same attempt -- the richest trajectory there is, three requests
+    # and three submissions, two of them failed with real kernel diagnostics.
+    _assert_viewer_shows_exactly_what_was_sent(pipeline, proved, capsys)
 
 
 def _assert_proved(
@@ -473,3 +483,76 @@ def _assert_proved(
     assert recorded_sampling == sampling.canonical()
     assert recorded_seed == seed
     assert has_ids and has_logprobs, "§9: token ids and logprobs cannot be recomputed later"
+
+
+def _assert_viewer_shows_exactly_what_was_sent(
+    pipeline: Pipeline, proved: Proved, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Spec §7.4's "exact rendered prompts (not reconstructions)", held to the wire.
+
+    Three independent references, none of them the viewer's own code path: the ids the replay
+    server received (the fixture's recorded requests), the chat template's own rendering of the
+    policy's opening messages, and the server's own text for every sample. The viewer decodes
+    stored ids; if that ever became a reconstruction -- or the stored ids stopped being the ones
+    sent -- one of the three would disagree.
+    """
+    engine = create_async_engine(pipeline.app_async_database_url)
+    app = create_public_app(
+        session_factory=async_sessionmaker(engine, expire_on_commit=False),
+        lean=LeanServiceOverTestClient(pipeline.leanserv),
+        blobs=pipeline.blobs,
+        tokenizers=TokenizerRegistry.from_directories([TOKENIZER_DIR]),
+    )
+    attempt = proved.claimed.attempt_id
+    try:
+        with TestClient(app) as client:
+            view = client.get(f"/v1/attempts/{attempt}/trajectory").json()
+            page = client.get(f"/attempts/{attempt}")
+            exit_code = cli_main(["trajectory", str(attempt)], client=ApiClient(client=client))
+    finally:
+        asyncio.run(engine.dispose())
+
+    tokenizer = load_chat_tokenizer(TOKENIZER_DIR, expect_sha256=TOKENIZER_SHA256)
+    recorded = load_fixtures(REPAIR_FIXTURES).interactions
+    exchanges = view["exchanges"]
+    assert len(exchanges) == len(recorded)
+
+    opening = [
+        {"role": m.role, "content": m.content} for m in RepairLoop().sampler.messages(proved.ctx)
+    ]
+    assert exchanges[0]["prompt"]["text"] == tokenizer.template.render(opening), (
+        "the opening prompt, decoded from its stored ids, must be byte-identical to the render"
+    )
+    for exchange, interaction in zip(exchanges, recorded, strict=True):
+        sent = interaction.request["prompt"]
+        assert exchange["prompt"]["token_count"] == len(sent)
+        assert exchange["prompt"]["text"] == tokenizer.decode(sent)
+        assert exchange["prompt"]["decoded_with"] == TOKENIZER_SHA256
+        for sample, choice in zip(
+            exchange["completions"], interaction.response["choices"], strict=True
+        ):
+            assert sample["token_count"] == len(choice["token_ids"])
+            assert sample["finish_reason"] == choice["finish_reason"]
+            # The sample is the ids the server returned, decoded -- not the server's `text`,
+            # which vLLM detokenizes with special tokens skipped and so drops the end-of-turn
+            # token the model *did* generate (it is in `token_ids`, with a logprob). Found by this
+            # assertion's first version, which compared against `text` and failed on exactly that
+            # token after 5,040 identical characters. The difference is pinned to precisely it.
+            assert sample["text"] == tokenizer.decode(choice["token_ids"])
+            assert sample["text"].removesuffix("<|im_end|>") == choice["text"]
+
+    requests_made = [s for s in view["steps"] if s["action"] == "RequestCompletion"]
+    assert [s["exchange"] for s in requests_made] == list(range(len(recorded)))
+    submissions = [s for s in view["steps"] if s["action"].startswith("SubmitProof")]
+    for failed in submissions[:-1]:
+        assert failed["ok"] is False and failed["diagnostics"], failed["label"]
+        assert "theorem G_1" in failed["development"]
+    assert view["verdict"]["proof"] == submissions[-1]["development"]
+
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert escape("<|im_start|>user") in page.text
+    assert "<|im_start|>" not in page.text, "a special token left unescaped is swallowed as a tag"
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "verdict: proved" in out and "=== prompt:" in out
