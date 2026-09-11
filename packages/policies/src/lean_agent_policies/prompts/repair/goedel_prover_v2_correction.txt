@@ -1,0 +1,5 @@
+The proof (Round $round) is not correct. Following is the compilation error message, where we use <error></error> to signal the position of the error.
+
+$errors
+
+Before producing the Lean 4 code to formally prove the given theorem, provide a detailed analysis of the error message.

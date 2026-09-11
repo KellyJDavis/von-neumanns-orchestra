@@ -211,19 +211,32 @@ class WholeProofSampler:
         its tactic block cut out. The header (`maxHeartbeats`, `opens`) is the one the prompt
         showed, repeated here because the model's final block leaves it out.
         """
+        return "".join(self.development_parts(ctx, block))
+
+    def development_parts(self, ctx: ObligationContext, block: str) -> tuple[str, str, str]:
+        """`development` as `(header, the model's code, footer)`, concatenated verbatim.
+
+        Split out for `RepairLoop` (M3.10), which has to show a model *where in its own code* each
+        error is. Diagnostics are positioned in the development, and the model's code starts after
+        the header -- so `header.count("\\n")` is the exact line offset between the two, and a
+        position outside the code (in the footer's entry) is one the model never wrote.
+        """
         universes, name, namespace = self._names(ctx)
         goal = f"{ctx.goal_decl}{universes}"
         entry = ctx.entry.rsplit(".", 1)[-1]
-        return (
+        header = (
             "set_option linter.defProp false\n"
             f"set_option maxHeartbeats {self.max_heartbeats}\n"
             f"{self.opens}\n"
             f"namespace {namespace}\n\n"
-            f"{_without_imports(block)}\n\n"
+        )
+        footer = (
+            "\n\n"
             f"def {entry}{universes} : {goal} := by unfold {ctx.goal_decl}; "
             f"exact {namespace}.{name}{universes}\n"
             f"end {namespace}"
         )
+        return header, _without_imports(block), footer
 
     async def propose(
         self, ctx: ObligationContext, budget: Budget

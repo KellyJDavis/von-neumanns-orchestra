@@ -69,8 +69,11 @@ bands themselves. M3.9 is done — `lean_agent_policies.whole_proof`: `WholeProo
 prover role for *n* whole proofs and checks each, and the executor now sends each action's result
 back into the policy (`protocols.Observation`). It is the first time this system proves a goal with
 a language model: miniF2F's `imo_1959_p1`, which the null agent does not close, by
-Goedel-Prover-V2-8B -- replayed in CI from a recording, `tests/leanserv/test_whole_proof.py`. Still
-to come: M3.10 (`RepairLoop`), M3.11 (trajectory viewer), M3.12 (the exit gate).
+Goedel-Prover-V2-8B -- replayed in CI from a recording, `tests/leanserv/test_whole_proof.py`. M3.10
+is done -- `lean_agent_policies.{repair,feedback}`: `RepairLoop` shows each failed sample the
+kernel's errors in Goedel-Prover-V2's trained repair format and resamples, and a trajectory now
+records every request of an attempt separately (`protocols.Exchange`). Still to come: M3.11
+(trajectory viewer), M3.12 (the exit gate).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -965,6 +968,118 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: repair-loop facts (M3.10)
+
+From building `lean_agent_policies.{repair,feedback}` against a real Goedel-Prover-V2-8B, a real
+kernel, and Goedel's own published pipeline code (read, and run locally, never committed).
+
+- **A trajectory held one prompt, so a second request's answers were stored against the first
+  request's prompt.** M3.7 designed `token_ids_blob` around one request per attempt, and the executor
+  overwrote `prompt_token_ids` on every `RequestCompletion` -- invisible until a policy asked twice.
+  A repair's answer is conditioned on a conversation containing a failed answer and its errors, and
+  replay and RL both need it paired with *that* context. The blob now holds a list of
+  `protocols.Exchange` (prompt ids, completions, and that request's own effective sampling and
+  seed); the `sampling`/`seed` columns hold the opening request's.
+- **Diagnostics now carry end positions, and the check cache key says so.** `Serve.lean`'s check
+  renders `Message.toString (includeEndPos := true)`, giving `<input>:L:C-L':C': ...`. Goedel was
+  trained on REPL output, which has the whole span; with the start alone every `<error>` span
+  degrades to "to the end of the line". `api.py` adds the format to the cache key's options, the same
+  reasoning as `bundle_sha`: a result cached in the old format must not be served as the new one.
+  Reading the prefix is reading Lean's *output* (`mkErrorStringWithPos`), not the Lean-source regex
+  this codebase refuses.
+- **Goedel's repair format is `get_error_str`, and ours is byte-identical to it.** For each of at
+  most eight errors: four lines of the model's own code before it, the span in `<error></error>`,
+  one line after, a blank line before the closing fence, then `Error Message:`. The conversation
+  grows `[prompt, the failed answer verbatim, the correction turn]`, one new sample per failed
+  sample, two rounds, and the first correction says "Round 0" -- it numbers the answer being
+  corrected. Our `render_errors` was compared against Goedel's own function (extracted from the
+  fetched source by `ast`, run locally) on seven cases -- single-line, multi-line, truncated span,
+  no end position, first and last line, over eight errors -- and matched every byte.
+- **Goedel's repository declares Apache-2.0 in its README badge but ships no LICENSE file**, so its
+  code was reimplemented rather than copied, the reference comparison stayed local, and only the
+  two sentences of the correction turn -- which the model was trained to answer -- are reproduced.
+  The model and its tokenizer are Apache-2.0 on Hugging Face.
+- **Positions have to be mapped back into the model's own code, and a real kernel checks it.**
+  Diagnostics are positioned in the development, where the model's code sits after a five-line
+  header it never wrote (`WholeProofSampler.development_parts`). An off-by-one here is silent in the
+  worst way -- every marker on the wrong line, a plausible prompt, and a recording that freezes the
+  mistake -- so `tests/leanserv/test_repair_positions.py` checks a real worker's diagnostic lands
+  `<error>` on the exact token Lean rejected. An error outside the model's code (the entry's
+  `exact`, when the model renamed or restated its theorem) is shown as its message alone: showing it
+  code it never wrote would invite it to copy that code into its next answer.
+- **A `sorry` rejection has no errors, so the fallback shows everything.** A candidate screened out
+  for `sorryAx` elaborated cleanly; its only message is the warning "declaration uses 'sorry'",
+  and a correction turn built from errors alone would say the proof failed and show nothing.
+- **Band 2's rules apply where Goedel's harness has none.** Each message is truncated by
+  `truncate_kernel_output` (head and `⊢` kept, hypotheses dropped whole, a counted marker) inside
+  `kernel_fraction` of the prompt budget, split across the errors shown. A chain whose next prompt
+  would exceed the budget (default 12,288 tokens -- Goedel's own `max_model_len * 3/4` filter on a
+  16k context) is not repaired further; the history grows by a whole answer and a page of errors
+  each round, and an over-long prompt is a rejected request, not a worse repair.
+- **The policy has no tokenizer, so it estimates -- pessimistically, and measured.** Under Goedel's
+  tokenizer Lean code and prose run ~2.2 characters per token and a diagnostic dense with `ℝ`/`⊢`/
+  subscripts 1.7, so `estimate_tokens` divides by 1.5. Overestimating truncates a little early;
+  underestimating could overflow the context. A test holds it above the real count on every
+  recorded Goedel sample.
+- **The answer to M3.9's `ContextBuilder` question: its rules transfer, its rendering does not.**
+  A trained prover's prompt is a fixed shape, so `# Goal`/`# Kernel diagnostics` headings have no
+  place in it; what `RepairLoop` takes from §6.6 is the band-2 *rules* -- `truncate_kernel_output`
+  and `DEFAULT_KERNEL_FRACTION` -- and the byte-stability of the prefix, which the conversation
+  shape gives for free (each round appends; nothing earlier moves). `ContextBuilder` itself is
+  still uncalled; if a future policy needs bands 3-6, split its budgeting from its rendering.
+- **Labels carry the whole lineage** (`sample 0 repair 1 repair 2`), which stays unambiguous when a
+  repair asks for more than one sample and a chain branches.
+- **Finding a problem that needs a repair took a search, and most problems do not need one.** The
+  real `RepairLoop` was run live over 12 randomly chosen miniF2F problems that are outside the
+  null agent's tail and elaborate in the test's light base env. Of the six that finished inside
+  ten minutes, *all six* were proved by Goedel's first sample (200-480 s each, 12 problems
+  concurrent) -- a whole-proof sampler already closes what the null agent cannot, and repair only
+  matters on the harder remainder. That is also why the repair problem in
+  `tests/leanserv/test_whole_proof.py` was chosen by measurement rather than by guess.
+- **On the six slower problems the picture is different, and more instructive.** One,
+  `mathd_algebra_209`, was proved by `sample 0 repair 1 repair 2` -- both first samples failed
+  (`unsolved goals`; a Mathlib lemma renamed since training, `Function.funext_iff`), both first
+  repairs failed, and the second repair of sample 0 linked. The other five show three ways repair
+  cannot help:
+  * **Truncation.** Every sample of `imo_1984_p2`, `imo_1992_p1` and `amc12a_2010_p10` hit
+    `max_tokens = 4096` (spec Appendix B's value) with `finish_reason = length`. Goedel's own card
+    says 32,768; 4,096 is too small for hard problems, and a sample with no final block has no
+    kernel errors to repair from. The executor's `finish` detail (M3.9) is what makes this legible.
+  * **A truncated sample can hand over its sketch.** Cut off after the first block, the "last
+    block" is the `sorry` sketch. The `sorryAx` screen rejects it as designed, and the repair turn
+    then shows the "declaration uses 'sorry'" warning -- the fallback in `errors_to_show`.
+  * **An environment the prover was not trained for.** `amc12a_2013_p8` and
+    `mathd_numbertheory_314` failed every round on `unknown tactic`: the model reaches for Mathlib
+    tactics the test's seven-module base env does not have, and telling it the imports in the
+    prompt does not stop it. That is an argument for running provers against the full Mathlib they
+    were trained on, and a caution about reading pass rates from a trimmed environment.
+- **Run alone in the real pipeline, the same problem mostly needs no repair at all.** At the
+  search's seed, Goedel's first sample proved `mathd_algebra_209` outright: the failure the batched
+  search saw did not reproduce, because seeded sampling at temperature 0.8 is deterministic for a
+  lone request, not across batch compositions. Over seeds 1234, 7, 42, 99, 314, 2024, 5 and 11 (one
+  first sample from seed 7 on), the first sample proved it five times. Of the three failures, seed
+  5's first repair ran out of tokens (`length` at 4,096), seed 2024's two repairs both failed, and
+  seed 11's *second* repair linked -- the recording CI replays. One repair success in three
+  first-sample failures on one problem is an anecdote, not a rate; M3.12 is where a rate belongs.
+- **The recording pins the error positions, not just the answer.** Shifting `RepairLoop`'s line
+  offset by one changes the rendered `<error>` snippet, hence the repair prompt's token ids, and
+  replay fails with the replay server's 409. So a regression in position mapping cannot pass CI
+  quietly the way it passed through the search script.
+- **The line offset is easy to get wrong -- the search script itself got it wrong.** It declared
+  the goal inline, four lines ahead of the development, while the policy maps positions through the
+  five-line header alone, so its repair prompts pointed every `<error>` four lines off. The
+  prompts looked entirely plausible. That is the failure `test_repair_positions.py` exists to
+  catch, and why the committed recording came from the real pipeline (bundle imported, no inline
+  goal) rather than from the search.
+- **Under load the client's 600 s default request timeout is laptop-marginal.** With 24 sequences
+  sharing one M2 Max, requests for the slowest problems exceeded it and surfaced as
+  `ModelTimeout`. That is the correct classification -- a slow server is not evidence about the
+  goal -- but a deployment batching this heavily on small hardware needs a larger timeout.
+- **Batching is where the throughput is.** One 4-sample request ran at 23-32 tok/s; 24 concurrent
+  sequences ran at 115-122 tok/s on the same M2 Max. The executor performs one `RequestCompletion`
+  at a time, so a repair round is sequential across chains -- worth revisiting once throughput, not
+  correctness, is the question.
 
 ## Implementation notes: whole-proof sampling facts (M3.9)
 

@@ -66,8 +66,8 @@ from lean_agent_core.codecs import (
 from lean_agent_core.enums import ProvenanceClass
 from lean_agent_core.protocols import (
     BlobStore,
-    Completion,
     CompletionResponse,
+    Exchange,
     LeanService,
     Observation,
     Policy,
@@ -217,11 +217,8 @@ class TrajectoryWriter:
         attempt_id: uuid.UUID,
         provenance: ProvenanceClass,
         steps: list[TrajectoryStep],
-        sampling: dict[str, object] | None = None,
         model_id: str | None = None,
-        seed: int | None = None,
-        prompt_token_ids: tuple[int, ...] = (),
-        completions: tuple[Completion, ...] = (),
+        exchanges: tuple[Exchange, ...] = (),
         model_weights_hash: str | None = None,
         tokenizer_revision: str | None = None,
     ) -> None:
@@ -237,24 +234,30 @@ class TrajectoryWriter:
         interpretable: the same ids mean different text under a different tokenizer, and the same
         prompt gives different ids under different weights (§7.3's manifest names both for exactly
         this reason).
+
+        Recorded per `Exchange` since M3.10 -- one request and what came back -- because an
+        attempt can now ask more than once, and each answer has to stay paired with the prompt it
+        answered. The `sampling`/`seed` *columns* hold the first exchange's (the attempt's opening
+        request); every exchange's own is in `token_ids_blob`, so nothing is lost to the columns
+        being scalar.
         """
         payload = json.dumps([step.__dict__ for step in steps], sort_keys=True).encode()
         steps_blob = to_bytea(await store_or_inline(self._blobs, payload, "application/json"))
 
         token_ids_blob: bytes | None = None
         logprobs_blob: bytes | None = None
-        if completions:
+        if any(exchange.completions for exchange in exchanges):
             token_ids_blob = to_bytea(
                 await store_or_inline(
                     self._blobs,
-                    encode_trajectory_token_ids(prompt_token_ids, completions),
+                    encode_trajectory_token_ids(exchanges),
                     "application/json",
                 )
             )
             logprobs_blob = to_bytea(
                 await store_or_inline(
                     self._blobs,
-                    encode_trajectory_logprobs(completions),
+                    encode_trajectory_logprobs(exchanges),
                     "application/json",
                 )
             )
@@ -274,8 +277,10 @@ class TrajectoryWriter:
                     "model": model_id,
                     "weights": model_weights_hash,
                     "tokenizer": tokenizer_revision,
-                    "sampling": json.dumps(sampling or {}, sort_keys=True),
-                    "seed": seed,
+                    "sampling": json.dumps(
+                        exchanges[0].sampling if exchanges else {}, sort_keys=True
+                    ),
+                    "seed": exchanges[0].seed if exchanges else None,
                     "steps": steps_blob,
                     "tokens": token_ids_blob,
                     "logprobs": logprobs_blob,
@@ -329,10 +334,7 @@ class PolicyExecutor:
         model_id: str | None = None
         model_weights_hash: str | None = None
         tokenizer_revision: str | None = None
-        sampling: dict[str, object] | None = None
-        seed: int | None = None
-        prompt_token_ids: tuple[int, ...] = ()
-        sampled: list[Completion] = []
+        exchanges: list[Exchange] = []
         tokens_in = 0
         tokens_out = 0
 
@@ -459,24 +461,27 @@ class PolicyExecutor:
                         # produced it".
                         tokens_in += len(sample.prompt_token_ids)
                         tokens_out += sum(len(c.token_ids) for c in sample.completions)
-                        sampled.extend(sample.completions)
-                        prompt_token_ids = sample.prompt_token_ids or prompt_token_ids
                         model_id = sample.model_id
                         model_weights_hash = sample.model_weights_hash or model_weights_hash
                         tokenizer_revision = sample.tokenizer_revision or tokenizer_revision
                         model_provenance = self._completions.provenance_for(action.role)
-                        # What was actually sent, when the service says: the policy's own
-                        # overrides are only part of it, and for a policy relying on the
+                        # One exchange per request, each paired with its own prompt (M3.10).
+                        # Sampling is what was actually sent when the service says: the policy's
+                        # own overrides are only part of it, and for a policy relying on the
                         # deployment's configured sampling they are empty (see
                         # `CompletionResponse.sampling`).
-                        if sample.sampling is not None:
-                            sampling = sample.sampling.canonical()
-                        else:
-                            sampling = dict(action.sampling) or sampling
-                        if sample.seed is not None:
-                            seed = sample.seed
-                        elif action.seed is not None:
-                            seed = action.seed
+                        exchanges.append(
+                            Exchange(
+                                prompt_token_ids=sample.prompt_token_ids,
+                                completions=sample.completions,
+                                sampling=(
+                                    sample.sampling.canonical()
+                                    if sample.sampling is not None
+                                    else dict(action.sampling)
+                                ),
+                                seed=sample.seed if sample.seed is not None else action.seed,
+                            )
+                        )
                         steps.append(
                             TrajectoryStep(
                                 label=action.role.value,
@@ -497,11 +502,8 @@ class PolicyExecutor:
             attempt_id=attempt_id,
             provenance=provenance,
             steps=steps,
-            sampling=sampling,
             model_id=model_id,
-            seed=seed,
-            prompt_token_ids=prompt_token_ids,
-            completions=tuple(sampled),
+            exchanges=tuple(exchanges),
             model_weights_hash=model_weights_hash,
             tokenizer_revision=tokenizer_revision,
         )

@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import json
 import struct
+from collections.abc import Sequence
+from dataclasses import dataclass
 
-from lean_agent_core.protocols import Completion
+from lean_agent_core.protocols import Completion, Exchange
 
 #: Little-endian, fixed width, no padding. Explicit rather than native (`=`/`@`) because these
 #: bytes are written to a database that a different machine will read: native byte order would make
@@ -132,43 +134,74 @@ def decode_completions(payload: bytes) -> tuple[Completion, ...]:
     )
 
 
-def encode_trajectory_token_ids(
-    prompt_token_ids: tuple[int, ...], completions: tuple[Completion, ...]
-) -> bytes:
-    """Spec §5.3's `token_ids_blob`: "prompt + completion token ids".
+@dataclass(frozen=True)
+class TokenExchange:
+    """One exchange as read back from `token_ids_blob`: ids and what was asked, not the text."""
 
-    Both, in one structure with the boundary preserved. Concatenating them would save a few bytes
-    and destroy the only thing replay needs from this column -- where the prompt ends and the
-    sampled tokens begin. On-policy RL cannot compute a loss over tokens it cannot separate from
-    the context they were conditioned on.
+    prompt: tuple[int, ...]
+    completions: tuple[tuple[int, ...], ...]
+    sampling: dict[str, object]
+    seed: int | None
+
+
+def encode_trajectory_token_ids(exchanges: Sequence[Exchange]) -> bytes:
+    """Spec §5.3's `token_ids_blob`: "prompt + completion token ids" -- per exchange.
+
+    The prompt/completion boundary is kept, which is the only thing replay needs from this column:
+    on-policy RL cannot compute a loss over tokens it cannot separate from the context they were
+    conditioned on. And since M3.10 the boundary is kept *per request*: an attempt that asked twice
+    (a repair after a failed sample) conditioned its second completions on a different prompt, and
+    one prompt for all of them would pair them with the wrong context. Each exchange also carries
+    its own sampling and seed, because a repair asks for one sample where the opening request
+    asked for several; `trajectory.sampling`/`seed` hold the first exchange's.
     """
     return json.dumps(
         {
-            "prompt": pack_token_ids(prompt_token_ids).hex(),
-            "completions": [pack_token_ids(c.token_ids).hex() for c in completions],
+            "exchanges": [
+                {
+                    "prompt": pack_token_ids(exchange.prompt_token_ids).hex(),
+                    "completions": [
+                        pack_token_ids(c.token_ids).hex() for c in exchange.completions
+                    ],
+                    "sampling": exchange.sampling,
+                    "seed": exchange.seed,
+                }
+                for exchange in exchanges
+            ]
         },
         separators=(",", ":"),
+        sort_keys=True,
     ).encode()
 
 
-def decode_trajectory_token_ids(payload: bytes) -> tuple[tuple[int, ...], list[tuple[int, ...]]]:
+def decode_trajectory_token_ids(payload: bytes) -> list[TokenExchange]:
     document = json.loads(payload)
-    return (
-        unpack_token_ids(bytes.fromhex(document["prompt"])),
-        [unpack_token_ids(bytes.fromhex(entry)) for entry in document["completions"]],
-    )
+    return [
+        TokenExchange(
+            prompt=unpack_token_ids(bytes.fromhex(entry["prompt"])),
+            completions=tuple(unpack_token_ids(bytes.fromhex(ids)) for ids in entry["completions"]),
+            sampling=dict(entry["sampling"]),
+            seed=entry["seed"],
+        )
+        for entry in document["exchanges"]
+    ]
 
 
-def encode_trajectory_logprobs(completions: tuple[Completion, ...]) -> bytes:
-    """Spec §5.3's `logprobs_blob`: "sampled-token logprobs, float32".
+def encode_trajectory_logprobs(exchanges: Sequence[Exchange]) -> bytes:
+    """Spec §5.3's `logprobs_blob`: "sampled-token logprobs, float32", per exchange, parallel to
+    `token_ids_blob`'s completions.
 
     Only the sampled tokens, never the prompt's: a prompt token has no sampled logprob, and §6.5
     is explicit that what is stored is "the sampled token's logprob ... not top-k".
     """
     return json.dumps(
-        [pack_logprobs(c.logprobs).hex() for c in completions], separators=(",", ":")
+        [[pack_logprobs(c.logprobs).hex() for c in exchange.completions] for exchange in exchanges],
+        separators=(",", ":"),
     ).encode()
 
 
-def decode_trajectory_logprobs(payload: bytes) -> list[tuple[float, ...]]:
-    return [unpack_logprobs(bytes.fromhex(entry)) for entry in json.loads(payload)]
+def decode_trajectory_logprobs(payload: bytes) -> list[list[tuple[float, ...]]]:
+    return [
+        [unpack_logprobs(bytes.fromhex(entry)) for entry in exchange]
+        for exchange in json.loads(payload)
+    ]
