@@ -62,7 +62,7 @@ from lean_agent_models.config import BackendConfig
 from lean_agent_models.router import ModelRouter, build_backend
 from lean_agent_models.template import TokenizerRegistry, load_chat_tokenizer
 from lean_agent_policies.repair import RepairLoop
-from lean_agent_policies.whole_proof import WholeProofSampler
+from lean_agent_policies.whole_proof import ProverFormat, WholeProofSampler
 from lean_agent_serv.api import create_app
 from lean_agent_serv.cache import VerificationCacheStore
 from lean_agent_serv.pool import LeanReplPool, PoolConfig
@@ -104,10 +104,21 @@ BASE_ENV_IMPORTS = (
     "Mathlib.Tactic.Linarith",
     "Mathlib.Data.Nat.GCD.Basic",
 )
-#: Spec Appendix B's `[models.prover].sampling`, with `n = 4` rather than 8: the recording has to
-#: be replayed on every CI run and stored in the repository, and four samples already carry the
-#: point -- several independent attempts, each checked.
+#: Spec Appendix B's `[models.prover].sampling` as it stood when this was recorded (M3.12 raised
+#: `max_tokens` to 40,960), with `n = 4` rather than 8: the recording has to be replayed on every
+#: CI run and stored in the repository, and four samples already carry the point -- several
+#: independent attempts, each checked.
 SAMPLING = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=4096, n=4)
+
+#: The context both recordings were served at (`--max-model-len 16384`) and the repair prompt
+#: budget that went with it -- three quarters, Goedel's pipeline's filter. M3.12 moved the defaults
+#: to the provers' full 40,960; pinning the recorded values keeps the recordings meaning what they
+#: recorded. Under them no prompt comes near the cap, so capping is exercised and changes nothing.
+RECORDED_CONTEXT_TOKENS = 16_384
+RECORDED_PROMPT_BUDGET_TOKENS = 12_288
+#: The prompt layout both recordings were made with -- M3.9's, which M3.12 found no published prompt
+#: has (a newline before the closing fence) and replaced as the default. Pinned for the same reason.
+RECORDED_SAMPLER = WholeProofSampler(prompt_format=ProverFormat.m3_9())
 SEED = 1234
 
 #: M3.10. A problem whose first samples all fail and a repair succeeds, found by running the real
@@ -258,6 +269,7 @@ class Pipeline:
                     weights_revision=WEIGHTS_REVISION,
                     seed=seed,
                     sampling=sampling,
+                    context_tokens=RECORDED_CONTEXT_TOKENS,
                 )
                 service = RoutedCompletions(
                     router=ModelRouter(
@@ -375,7 +387,7 @@ def pipeline(
 
 def test_a_sampled_proof_closes_a_goal_the_null_agent_could_not(pipeline: Pipeline) -> None:
     proved = pipeline.prove(
-        policy=WholeProofSampler(),
+        policy=RECORDED_SAMPLER,
         problem_id=PROBLEM,
         sampling=SAMPLING,
         fixtures=GOEDEL_FIXTURES,
@@ -390,7 +402,9 @@ def test_a_repair_closes_a_goal_the_first_samples_could_not(
     """M3.10 end to end: every first sample fails `/v1/check`, the kernel's errors go back to the
     model in its trained repair format, and a repaired proof links, replays and audits."""
     proved = pipeline.prove(
-        policy=RepairLoop(),
+        policy=RepairLoop(
+            sampler=RECORDED_SAMPLER, prompt_budget_tokens=RECORDED_PROMPT_BUDGET_TOKENS
+        ),
         problem_id=REPAIR_PROBLEM,
         sampling=REPAIR_SAMPLING,
         fixtures=REPAIR_FIXTURES,
@@ -518,7 +532,7 @@ def _assert_viewer_shows_exactly_what_was_sent(
     assert len(exchanges) == len(recorded)
 
     opening = [
-        {"role": m.role, "content": m.content} for m in RepairLoop().sampler.messages(proved.ctx)
+        {"role": m.role, "content": m.content} for m in RECORDED_SAMPLER.messages(proved.ctx)
     ]
     assert exchanges[0]["prompt"]["text"] == tokenizer.template.render(opening), (
         "the opening prompt, decoded from its stored ids, must be byte-identical to the render"

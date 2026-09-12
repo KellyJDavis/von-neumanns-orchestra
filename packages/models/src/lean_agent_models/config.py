@@ -7,7 +7,8 @@ endpoint = "http://vllm:8000"
 model_id = "Goedel-LM/Goedel-Prover-V2-8B"
 tokenizer_revision = "..."
 provenance = "open_weights"
-sampling = { temperature = 0.8, top_p = 0.95, max_tokens = 4096, n = 8 }
+sampling = { temperature = 0.8, top_p = 0.95, max_tokens = 40960, n = 8 }
+context_tokens = 40960
 ```
 
 Spec's promise for this file is concrete -- "switching provers is one TOML line; a four-model
@@ -52,10 +53,12 @@ _KNOWN_KEYS = frozenset(
         "provenance",
         "seed",
         "sampling",
+        "context_tokens",
+        "request_timeout_s",
     }
 )
 
-_KNOWN_SAMPLING_KEYS = frozenset({"temperature", "top_p", "max_tokens", "n", "stop"})
+_KNOWN_SAMPLING_KEYS = frozenset({"temperature", "top_p", "max_tokens", "n", "stop", "top_k"})
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,34 @@ class BackendConfig:
     serving_version: str | None = None
     seed: int | None = None
     sampling: SamplingParams = field(default_factory=SamplingParams)
+    #: The context window the endpoint serves, in tokens -- vLLM's `--max-model-len`. When set,
+    #: `RoutedCompletions` caps each request's `max_tokens` to what its prompt leaves of it: vLLM
+    #: rejects a request whose prompt plus `max_tokens` exceeds the window (HTTP 400), so without
+    #: the cap `max_tokens = context_tokens` -- the whole window -- could never be sent. `None`
+    #: sends `max_tokens` as configured.
+    context_tokens: int | None = None
+    #: Wallclock allowed for one request, in seconds. `None` derives it from the request's
+    #: `max_tokens` (`lean_agent_models.client.default_timeout_s`).
+    request_timeout_s: float | None = None
+
+
+def _positive_int(role: str, raw: dict[str, Any], key: str) -> int | None:
+    if key not in raw:
+        return None
+    value = raw[key]
+    # `bool` is an `int` to Python, and `context_tokens = true` is a typo, not a context of 1.
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigError(f"[models.{role}] {key} must be a positive integer, got {value!r}")
+    return value
+
+
+def _positive_float(role: str, raw: dict[str, Any], key: str) -> float | None:
+    if key not in raw:
+        return None
+    value = raw[key]
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        raise ConfigError(f"[models.{role}] {key} must be a positive number, got {value!r}")
+    return float(value)
 
 
 def _sampling(role: str, raw: Any) -> SamplingParams:
@@ -100,6 +131,13 @@ def _sampling(role: str, raw: Any) -> SamplingParams:
     stop = raw.get("stop", ())
     if isinstance(stop, str):
         raise ConfigError(f"[models.{role}] sampling.stop must be a list of strings, not a string")
+    top_k = raw.get("top_k")
+    # vLLM's own rule: 0 disables it, otherwise at least 1. `true` is a typo, not a top-k of 1.
+    if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 0):
+        raise ConfigError(
+            f"[models.{role}] sampling.top_k must be 0 (disabled) or a positive integer, "
+            f"got {top_k!r}"
+        )
     defaults = SamplingParams()
     return SamplingParams(
         temperature=float(raw.get("temperature", defaults.temperature)),
@@ -107,6 +145,7 @@ def _sampling(role: str, raw: Any) -> SamplingParams:
         max_tokens=int(raw.get("max_tokens", defaults.max_tokens)),
         n=int(raw.get("n", defaults.n)),
         stop=tuple(stop),
+        top_k=top_k,
     )
 
 
@@ -148,6 +187,8 @@ def parse_backend(role: str, raw: dict[str, Any]) -> BackendConfig:
         serving_version=str(raw["serving_version"]) if "serving_version" in raw else None,
         seed=int(raw["seed"]) if "seed" in raw else None,
         sampling=_sampling(role, raw.get("sampling", {})),
+        context_tokens=_positive_int(role, raw, "context_tokens"),
+        request_timeout_s=_positive_float(role, raw, "request_timeout_s"),
     )
 
 

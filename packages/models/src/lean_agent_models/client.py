@@ -36,10 +36,34 @@ from lean_agent_models.config import BackendConfig
 from lean_agent_models.errors import ModelProtocolError, ModelTimeout, ModelUnavailable
 from lean_agent_models.template import ChatTokenizer
 
-#: Generous by default: a prover sampling `n=8` at 4096 max tokens is a long request, and giving up
-#: early turns a slow-but-succeeding completion into an error the control loop would treat as
-#: infrastructure. Overridable per request via `CompletionRequest.timeout_ms`.
-DEFAULT_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
+#: Everything in a request that is not decoding: queueing behind other requests, prefilling a long
+#: repair prompt, transferring the response. Prefilling 40,900 tokens alone took ~190 s for an 8B
+#: prover on an M2 Max (M3.12). It was the whole default before M3.12, at 4,096 tokens -- and
+#: marginal even then under load (M3.10).
+BASE_TIMEOUT_S = 600.0
+
+#: The decode rate, per sequence, a derived timeout allows for. Measured for an 8B prover on an
+#: M2 Max: ~17 tok/s alone on a short prompt, ~5 per sequence with 24 sharing the server (M3.10),
+#: and ~4 alone once the context nears the 40,960 window (M3.12). Decoding slows as the context
+#: grows, so an answer running to the end of the window averages above its final rate, and 4
+#: covers one sequence doing that. It does not cover `n = 8` all running long at once -- only 5.66
+#: full-window sequences fit in that machine's KV cache -- and a deployment doing that sets
+#: `request_timeout_s`. Erring long matters: giving up on a slow-but-succeeding request turns it
+#: into an error the control loop treats as infrastructure.
+MIN_DECODE_TOKENS_PER_S = 4.0
+
+CONNECT_TIMEOUT_S = 10.0
+
+
+def default_timeout_s(max_tokens: int) -> float:
+    """A request's wallclock allowance when neither it nor its configuration names one.
+
+    Derived from `max_tokens` rather than fixed, since a non-streaming request is silent until it
+    finishes and the answer's length is what decides how long that is. At 40,960 tokens this is
+    about three hours -- worth seeing before a laptop run, not a number to hide.
+    """
+    return BASE_TIMEOUT_S + max_tokens / MIN_DECODE_TOKENS_PER_S
+
 
 #: Ask for the sampled token's logprob and nothing more. Spec §6.5 is explicit -- "Store the
 #: sampled token's logprob as float32 ... **not top-k**" -- so requesting top-k would pay for
@@ -69,7 +93,8 @@ class CompletionsClient:
         self._config = config
         self._tokenizer = tokenizer
         self._client = client or httpx.AsyncClient(
-            base_url=config.endpoint or "", timeout=DEFAULT_TIMEOUT
+            base_url=config.endpoint or "",
+            timeout=httpx.Timeout(BASE_TIMEOUT_S, connect=CONNECT_TIMEOUT_S),
         )
         self._owned = client is None
 
@@ -110,6 +135,10 @@ class CompletionsClient:
         treat an explicitly empty stop list differently from an absent one, and there is nothing to
         gain by finding out. Everything with a value is sent explicitly, including defaults, so the
         request says what it means rather than relying on server-side defaults agreeing with ours.
+
+        `top_k` is omitted when unset too, and that one *does* leave a choice to the server: vLLM
+        fills it from the model's `generation_config.json` (M3.12 -- 20 for every Phase 3 prover,
+        recorded in the fixtures made before it). A configuration that cares states it.
         """
         sampling = request.sampling
         body: dict[str, Any] = {
@@ -124,18 +153,25 @@ class CompletionsClient:
         }
         if sampling.stop:
             body["stop"] = list(sampling.stop)
+        if sampling.top_k is not None:
+            body["top_k"] = sampling.top_k
         seed = request.seed if request.seed is not None else self._config.seed
         if seed is not None:
             body["seed"] = seed
         return body
 
+    def timeout_s(self, request: CompletionRequest) -> float:
+        """The request's own `timeout_ms`, else the configured `request_timeout_s`, else one
+        derived from the `max_tokens` actually being sent."""
+        if request.timeout_ms is not None:
+            return request.timeout_ms / 1000
+        if self._config.request_timeout_s is not None:
+            return self._config.request_timeout_s
+        return default_timeout_s(request.sampling.max_tokens)
+
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
         body = self.build_body(request)
-        timeout = (
-            httpx.Timeout(request.timeout_ms / 1000, connect=10.0)
-            if request.timeout_ms is not None
-            else DEFAULT_TIMEOUT
-        )
+        timeout = httpx.Timeout(self.timeout_s(request), connect=CONNECT_TIMEOUT_S)
 
         started = time.monotonic()
         try:

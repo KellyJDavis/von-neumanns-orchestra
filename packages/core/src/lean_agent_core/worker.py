@@ -212,8 +212,14 @@ class Worker:
         lease: timedelta = DEFAULT_LEASE,
         heartbeat_every: timedelta = DEFAULT_HEARTBEAT_INTERVAL,
         backoff: Backoff | None = None,
+        eligible_tenants: list[uuid.UUID] | None = None,
     ) -> None:
         self.worker_id = worker_id
+        #: Spec §6.4's `$eligible_tenants`, passed through to every claim. `None` claims from any
+        #: tenant, as a deployment's workers do; an evaluation run passes its own tenant, because
+        #: the claim is global by design and would otherwise spend the prover on whatever else
+        #: happens to be open in the same database (M3.12).
+        self._eligible_tenants = eligible_tenants
         self._sessions = session_factory
         self._heartbeat_engine = heartbeat_engine
         self._runner = runner
@@ -251,6 +257,7 @@ class Worker:
             policy_id=self._policy_id,
             policy_config_hash=self._policy_config_hash,
             lease=self._lease,
+            eligible_tenants=self._eligible_tenants,
         )
         if claimed is None:
             return False

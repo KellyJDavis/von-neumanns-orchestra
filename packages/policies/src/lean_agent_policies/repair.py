@@ -55,12 +55,14 @@ GOEDEL_CORRECTION = "repair/goedel_prover_v2_correction.txt"
 #: Goedel-Prover-V2's pipeline runs two correction rounds.
 DEFAULT_ROUNDS = 2
 
-#: The largest prompt a repair may send, in tokens. Three quarters of a 16k context -- the filter
-#: Goedel's own pipeline applies (`max_model_len * 3 / 4`) -- which leaves the rest for the answer.
+#: The largest prompt a repair may send, in tokens: three quarters of the provers' 40,960-token
+#: context, the filter Goedel's own pipeline applies (`max_model_len * 3 / 4` at its
+#: `MAX_MODEL_LEN=40960`). The rest -- at least 10,240 tokens -- is the answer's, and
+#: `RoutedCompletions` caps each request's `max_tokens` to exactly what its prompt leaves.
 #: A chain whose next prompt would not fit is not repaired further: the history grows by a whole
 #: answer and a page of errors per round, and a prompt past the server's context is a rejected
-#: request, not a worse repair.
-DEFAULT_PROMPT_BUDGET_TOKENS = 12_288
+#: request, not a worse repair. (12,288 -- the same fraction of a 16k context -- until M3.12.)
+DEFAULT_PROMPT_BUDGET_TOKENS = 30_720
 
 #: The chat-template markers two new turns add around their content (`<|im_start|>assistant\n`,
 #: `<|im_end|>\n`, ...). Small, and counted so the budget is not optimistic by exactly this much.

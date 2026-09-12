@@ -1,0 +1,6 @@
+Think about and solve the following problem step by step in Lean 4.
+# Problem:$informal_statement
+# Formal statement:
+```lean4
+$formal_statement
+```

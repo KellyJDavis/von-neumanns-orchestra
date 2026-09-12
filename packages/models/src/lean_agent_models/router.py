@@ -169,6 +169,9 @@ class ModelRouter:
                 "weights_revision": config.weights_revision,
                 "tokenizer_revision": config.tokenizer_revision,
                 "serving_version": config.serving_version,
+                # What each request's `max_tokens` was capped against, so part of what decided
+                # how long an answer could be.
+                "context_tokens": config.context_tokens,
                 "provenance": config.provenance.value,
                 "sampling": {**config.sampling.canonical(), "seed": config.seed},
             }

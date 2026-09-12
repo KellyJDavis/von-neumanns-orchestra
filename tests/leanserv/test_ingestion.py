@@ -498,3 +498,38 @@ def test_admission_flags_a_source_that_only_elaborates_with_auto_implicit(
         assert "NoSuchIdentifier" in stored[1]
     finally:
         _cleanup(admin_engine, result.run_id)  # type: ignore[attr-defined]
+
+
+def test_the_submissions_attempt_budget_reaches_every_obligation(
+    admin_engine: Engine,
+    base_env: str,
+    leanserv: TestClient,
+    app_async_database_url: str,
+    tmp_path: Path,
+) -> None:
+    """M3.12. The budget was written into the run manifest and nowhere else, so every obligation
+    ran on the column's default of 8 whatever was asked. A one-attempt evaluation run found it: a
+    failed problem was quietly attempted again, turning pass@n into pass@n x 8."""
+    submission = Submission(
+        base_env_digest=base_env,
+        tenant_id=uuid.uuid4(),
+        source=(
+            "theorem p : (1 : Nat) + 1 = 2 ∧ (2 : Nat) + 2 = 4 := by\n"
+            "  constructor\n  · sorry\n  · sorry"
+        ),
+        budget_attempts=1,
+    )
+    result = _ingest(app_async_database_url, tmp_path, leanserv, submission)
+    try:
+        with admin_engine.connect() as conn:
+            budgets = (
+                conn.execute(
+                    text("SELECT budget_attempts FROM obligation WHERE run_id = :r"),
+                    {"r": result.run_id},  # type: ignore[attr-defined]
+                )
+                .scalars()
+                .all()
+            )
+        assert budgets == [1, 1]
+    finally:
+        _cleanup(admin_engine, result.run_id)  # type: ignore[attr-defined]

@@ -29,6 +29,8 @@ from lean_agent_core.roles import ModelRole
 from lean_agent_policies.whole_proof import (
     GOEDEL_PROVER_V2,
     PromptTemplate,
+    ProverFormat,
+    StatementLayout,
     WholeProofSampler,
     extract_lean_block,
 )
@@ -86,7 +88,7 @@ def test_band_one_is_the_sealed_goal_plus_the_base_env() -> None:
         "import Mathlib.Data.Nat.GCD.Basic\nimport Mathlib.Tactic.Ring\n\n"
         "set_option maxHeartbeats 400000\n\n"
         "open BigOperators Real Nat Topology Rat\n\n"
-        "theorem G_7 : ∀ (n : ℕ), 0 < n → (21 * n + 4).gcd (14 * n + 3) = 1 := by\n  sorry\n"
+        "theorem G_7 : ∀ (n : ℕ), 0 < n → (21 * n + 4).gcd (14 * n + 3) = 1 := by sorry"
     )
 
 
@@ -96,7 +98,7 @@ def test_the_statement_shown_is_the_sealed_one() -> None:
     one the kernel will hold the answer to."""
     (message,) = WholeProofSampler().messages(CTX)
     assert message.role == "user"
-    assert f"theorem G_7 : {CTX.goal_src} := by\n  sorry\n```" in message.content
+    assert f"theorem G_7 : {CTX.goal_src} := by sorry```" in message.content
     assert message.content.startswith("Complete the following Lean 4 code:\n\n```lean4\nimport ")
 
 
@@ -262,7 +264,13 @@ def test_sampling_overrides_are_passed_through_and_hashed() -> None:
 @pytest.mark.parametrize(
     "changed",
     [
-        {"prompt": PromptTemplate(name=GOEDEL_PROVER_V2, text=GOEDEL_VERBATIM + " ")},
+        {
+            "prompt_format": ProverFormat(
+                PromptTemplate(name=GOEDEL_PROVER_V2, text=GOEDEL_VERBATIM + " "),
+                StatementLayout.GOEDEL_PIPELINE,
+            )
+        },
+        {"prompt_format": ProverFormat.pythagoras_card()},
         {"opens": "open Nat"},
         {"max_heartbeats": 200_000},
         {"check_timeout_ms": 1_000},
@@ -285,3 +293,97 @@ def test_the_policy_declares_the_prover_role_and_no_tools() -> None:
     policy = WholeProofSampler()
     assert policy.roles == frozenset({ModelRole.PROVER})
     assert policy.tools == frozenset()
+
+
+# --------------------------------------------------------------------------------------------
+# M3.12: each prover's published prompt, byte for byte, rebuilt by its own code or card.
+# --------------------------------------------------------------------------------------------
+
+INFORMAL = "What is the least positive $n$ with $n > 0$? Show that it is 1."
+FULL = ObligationContext(
+    **{**CTX.__dict__, "base_env_imports": ("Mathlib", "Aesop"), "informal_statement": INFORMAL}
+)
+#: The published header (DeepSeek-Prover's miniF2F, which Goedel-Prover-V2's `dataset/minif2f.jsonl`
+#: carries verbatim), with the one stated change: the heartbeat limit this system actually sets.
+HEADER = (
+    "import Mathlib\nimport Aesop\n\nset_option maxHeartbeats 0\n\n"
+    "open BigOperators Real Nat Topology Rat\n\n"
+).replace("maxHeartbeats 0", "maxHeartbeats 400000")
+THEOREM = f"theorem G_7 : {CTX.goal_src} := by"
+PLAN = (
+    "Before producing the Lean 4 code to formally prove the given theorem, provide a detailed "
+    "proof plan outlining the main proof steps and strategies.\nThe plan should highlight key "
+    "ideas, intermediate lemmas, and proof structures that will guide the construction of the "
+    "final formal proof."
+)
+
+
+def test_goedels_default_prompt_is_what_its_released_pipeline_builds() -> None:
+    """`prover_inference` from Goedel-Prover-V2's `src/utils.py`, applied to its own dataset's
+    `lean4_code` shape (header, informal docstring, statement)."""
+    lean4_code = f"{HEADER}/-- {INFORMAL}-/\n{THEOREM} sorry"
+    formal_statement = lean4_code.split(":= by")[0] + ":= by sorry"
+    prompt = f"Complete the following Lean 4 code:\n\n```lean4\n{formal_statement}```\n\n{PLAN}"
+    (message,) = WholeProofSampler().messages(FULL)
+    assert (message.role, message.content) == ("user", prompt)
+
+
+def test_pythagoras_prompt_is_what_its_card_builds() -> None:
+    formal_statement = f"""
+{HEADER}/-- {INFORMAL}-/
+{THEOREM}
+  sorry
+""".strip()
+    prompt = f"""
+Complete the following Lean 4 code:
+
+```lean4
+{{}}```
+
+{PLAN}
+""".strip()
+    (message,) = WholeProofSampler(prompt_format=ProverFormat.pythagoras_card()).messages(FULL)
+    assert (message.role, message.content) == ("user", prompt.format(formal_statement))
+
+
+def test_kiminas_prompt_is_what_its_card_builds() -> None:
+    header = (
+        "import Mathlib\nimport Aesop\nset_option maxHeartbeats 400000\n"
+        "open BigOperators Real Nat Topology Rat\n"
+    )
+    formal_statement = f"{header}/-- {INFORMAL}-/\n{THEOREM}\n"
+    prompt = "Think about and solve the following problem step by step in Lean 4."
+    prompt += f"\n# Problem:{INFORMAL}"
+    prompt += f"\n# Formal statement:\n```lean4\n{formal_statement}\n```\n"
+    messages = WholeProofSampler(prompt_format=ProverFormat.kimina_card()).messages(FULL)
+    assert [(m.role, m.content) for m in messages] == [
+        ("system", "You are an expert in mathematics and Lean 4."),
+        ("user", prompt),
+    ]
+
+
+def test_without_an_informal_statement_nothing_is_invented() -> None:
+    """No docstring, and Kimina's `# Problem:` left empty: the published shapes, unfilled."""
+    ctx = ObligationContext(**{**FULL.__dict__, "informal_statement": None})
+    assert "/--" not in WholeProofSampler().formal_statement(ctx)
+    _, user = WholeProofSampler(prompt_format=ProverFormat.kimina_card()).messages(ctx)
+    assert "\n# Problem:\n# Formal statement:\n" in user.content
+
+
+def test_the_m3_9_layout_is_byte_identical_to_what_was_recorded() -> None:
+    """No docstring even when there is an informal statement, and the newline before the fence --
+    what M3.9 shipped, or the M3.9/M3.10 recordings would stop replaying."""
+    statement = WholeProofSampler(prompt_format=ProverFormat.m3_9()).formal_statement(FULL)
+    assert statement == f"{HEADER}{THEOREM}\n  sorry\n"
+
+
+def test_each_format_is_a_different_configuration() -> None:
+    formats = (
+        ProverFormat.goedel_pipeline,
+        ProverFormat.pythagoras_card,
+        ProverFormat.kimina_card,
+        ProverFormat.m3_9,
+    )
+    assert len({WholeProofSampler(prompt_format=f()).config_hash for f in formats}) == 4
+    kimina = WholeProofSampler(prompt_format=ProverFormat.kimina_card()).prompt_hashes
+    assert set(kimina) == {"prover", "prover_system"}

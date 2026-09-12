@@ -257,21 +257,31 @@ class SamplingParams:
     max_tokens: int = 1024
     n: int = 1
     stop: tuple[str, ...] = ()
+    #: Unset, it is *omitted* from the request, and that hands the choice to the server: vLLM
+    #: fills an unset `top_k` from the model's `generation_config.json` -- 20 for all three Phase 3
+    #: provers -- unless served with `--generation-config vllm`, and says so only in its startup
+    #: log (M3.12). So a configuration meaning "no top-k" says `top_k = 0`, vLLM's "disabled".
+    #: Optional rather than defaulted so that requests recorded before M3.12 keep their bodies.
+    top_k: int | None = None
 
     def canonical(self) -> dict[str, object]:
         """The form that goes into a cache key and into `trajectory.sampling`.
 
         A plain dict with sorted keys at the point of use rather than a JSON string here, so the
         same value can be hashed by the cache and stored as `jsonb` without one of them
-        re-serializing the other's output and drifting.
+        re-serializing the other's output and drifting. `top_k` appears only when set, which
+        keeps every key and record written before it existed unchanged.
         """
-        return {
+        canonical: dict[str, object] = {
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
             "n": self.n,
             "stop": list(self.stop),
         }
+        if self.top_k is not None:
+            canonical["top_k"] = self.top_k
+        return canonical
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,7 @@ httpx implementation.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from lean_agent_core.actions import RequestCompletion
 from lean_agent_core.enums import ProvenanceClass
@@ -22,8 +22,34 @@ from lean_agent_core.protocols import CompletionRequest, CompletionResponse, Sam
 from lean_agent_core.roles import ModelRole
 
 from lean_agent_models.cache import ResponseCacheStore, compute_response_cache_key, is_cacheable
+from lean_agent_models.errors import ModelProtocolError
 from lean_agent_models.router import ModelRouter
 from lean_agent_models.template import ChatTokenizer
+
+
+def fit_to_context(
+    sampling: SamplingParams, prompt_tokens: int, context_tokens: int | None
+) -> SamplingParams:
+    """`sampling` with `max_tokens` capped to what a prompt leaves of the served context.
+
+    Required, not cosmetic: vLLM 0.28.0 rejects a request whose prompt plus `max_tokens` exceeds
+    its `--max-model-len` with a 400 ("This model's maximum context length is 40960 tokens.
+    However, you requested 100 output tokens and your prompt contains 40900 input tokens ..."),
+    verified against a live server. So a configuration asking for the whole window -- how
+    Goedel-Prover-V2's own pipeline runs, `max_tokens = max_model_len` -- could not send a single
+    request uncapped, and a repair after a 20,000-token prompt is sent 20,960. The capped value is
+    what goes into the cache key and onto the trajectory, because it is what was asked.
+    """
+    if context_tokens is None:
+        return sampling
+    room = context_tokens - prompt_tokens
+    if room < 1:
+        # A 4xx's reasoning: this prompt is too long for this server however often it is sent.
+        raise ModelProtocolError(
+            f"a prompt of {prompt_tokens} tokens leaves no room for an answer in the served "
+            f"context of {context_tokens} tokens"
+        )
+    return sampling if sampling.max_tokens <= room else replace(sampling, max_tokens=room)
 
 
 @dataclass(frozen=True)
@@ -66,6 +92,7 @@ class RoutedCompletions:
             max_tokens=int(overrides.get("max_tokens", base.max_tokens)),
             n=int(overrides.get("n", base.n)),
             stop=tuple(stop),
+            top_k=int(overrides["top_k"]) if "top_k" in overrides else base.top_k,
         )
 
     async def complete(self, request: RequestCompletion) -> CompletionResponse:
@@ -81,6 +108,14 @@ class RoutedCompletions:
 
         prompt_token_ids = tokenizer.to_token_ids(
             [{"role": message.role, "content": message.content} for message in request.messages]
+        )
+        # Before the cache key: the capped value is what is sent, so it is what a hit must match.
+        sampling = fit_to_context(
+            sampling,
+            len(prompt_token_ids),
+            configs[request.role].context_tokens
+            if configs is not None and request.role in configs
+            else None,
         )
 
         cache_key = compute_response_cache_key(prompt_token_ids, backend.id, sampling, seed)

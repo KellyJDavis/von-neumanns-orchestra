@@ -272,6 +272,36 @@ def load_corpus(path: Path = CORPUS_PATH) -> MiniF2FCorpus:
     )
 
 
+#: The informal statements (M3.12): original miniF2F, same licence, a separate digest-pinned file
+#: so the formal corpus and the Phase 2 baseline are untouched. See `vendor_minif2f.build_informal`.
+INFORMAL_PATH = Path(__file__).parent / "data" / "minif2f_informal.json"
+
+
+@dataclass(frozen=True)
+class InformalStatements:
+    by_id: dict[str, str]
+    split_by_id: dict[str, str]
+    provenance: dict[str, Any]
+    informal_sha256: str
+
+    def for_problem(self, problem_id: str) -> str:
+        """Raising on an id it lacks, for `MiniF2FCorpus.by_id`'s reason: a problem that silently
+        lost its informal statement would be shown to a prover in a different prompt shape."""
+        if problem_id not in self.by_id:
+            raise KeyError(f"no informal statement for {problem_id!r}")
+        return self.by_id[problem_id]
+
+
+def load_informal(path: Path = INFORMAL_PATH) -> InformalStatements:
+    data = json.loads(path.read_text())
+    return InformalStatements(
+        by_id={i: s["informal_statement"] for i, s in data["statements"].items()},
+        split_by_id={i: s["split"] for i, s in data["statements"].items()},
+        provenance=dict(data["provenance"]),
+        informal_sha256=data["informal_sha256"],
+    )
+
+
 def build_submission_source(
     problems: Sequence[MiniF2FProblem], *, opens: str = CORPUS_OPENS
 ) -> str:

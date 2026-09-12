@@ -478,3 +478,45 @@ def test_backoff_grows_to_a_cap_and_resets() -> None:
     assert [backoff.next() for _ in range(5)] == [0.1, 0.2, 0.4, 0.4, 0.4]
     backoff.reset()
     assert backoff.next() == 0.1
+
+
+def test_eligible_tenants_scope_every_claim(
+    fx: Fixture, app_async_database_url: str, app_database_url: str
+) -> None:
+    """M3.12. `claim_attempt` is global by design, so an evaluation run's workers pass their own
+    tenant -- otherwise they spend the prover on whatever else happens to be open in the same
+    database. A worker scoped to another tenant sees nothing; scoped to this run's, it claims."""
+    fx.obligation()
+    (tenant,) = fx.row("run", "tenant_id", fx.run_id)
+    claimed_runs: list[uuid.UUID] = []
+
+    async def runner(claimed: ClaimedAttempt) -> AttemptResult:
+        claimed_runs.append(claimed.run_id)
+        return AttemptResult(outcome=ObligationOutcome.RETRYABLE_FAILURE)
+
+    async def main() -> None:
+        async_engine = create_async_engine(app_async_database_url)
+        sync_engine = create_engine(app_database_url)
+        try:
+            sessions = async_sessionmaker(async_engine, expire_on_commit=False)
+
+            def scoped(tenants: list[uuid.UUID]) -> Worker:
+                return Worker(
+                    worker_id="scoped",
+                    session_factory=sessions,
+                    heartbeat_engine=sync_engine,
+                    runner=runner,
+                    policy_id="stub",
+                    policy_config_hash=b"cfg",
+                    heartbeat_every=timedelta(milliseconds=50),
+                    eligible_tenants=tenants,
+                )
+
+            assert await scoped([uuid.uuid4()]).run_once() is False
+            assert await scoped([tenant]).run_once() is True  # type: ignore[list-item]
+        finally:
+            sync_engine.dispose()
+            await async_engine.dispose()
+
+    asyncio.run(main())
+    assert claimed_runs == [fx.run_id]

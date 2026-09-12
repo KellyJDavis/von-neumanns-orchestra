@@ -2,13 +2,20 @@
 name = "lean-agent-eval"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = ["lean-agent-core", "lean-agent-serv", "lean-agent-api", "lean-agent-policies"]
+dependencies = [
+    "lean-agent-core",
+    "lean-agent-serv",
+    "lean-agent-api",
+    "lean-agent-policies",
+    "lean-agent-models",
+]
 
 [tool.uv.sources]
 lean-agent-core = { workspace = true }
 lean-agent-serv = { workspace = true }
 lean-agent-api = { workspace = true }
 lean-agent-policies = { workspace = true }
+lean-agent-models = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

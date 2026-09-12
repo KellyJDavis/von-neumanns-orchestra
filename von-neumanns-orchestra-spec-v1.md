@@ -856,7 +856,7 @@ The run manifest is frozen at creation and included in every published result:
   "models":    [{ "role": "prover", "backend": "vllm",
                   "model_id": "…", "weights_revision": "…",
                   "tokenizer_revision": "…", "serving_version": "vllm==0.7.3",
-                  "provenance": "open_weights",
+                  "context_tokens": 40960, "provenance": "open_weights",
                   "sampling": { "temperature": 0.8, "top_p": 0.95, "seed": 1234 } }],
   "policies":  [{ "id": "DecomposeAndConquer", "config_hash": "…",
                   "prompt_hashes": { "coordinator": "sha256:…" } }],
@@ -1087,7 +1087,13 @@ backend = "vllm"
 endpoint = "http://vllm:8000"
 model_id = "Goedel-LM/Goedel-Prover-V2-8B"
 tokenizer_revision = "…"
-sampling = { temperature = 0.8, top_p = 0.95, max_tokens = 4096, n = 8 }
+sampling = { temperature = 0.8, top_p = 0.95, max_tokens = 40960, n = 8 }
+context_tokens = 40960           # the served --max-model-len; each request's max_tokens is
+                                 # capped to what its prompt leaves of it (the provers' whole
+                                 # 40,960-token window, as Goedel-Prover-V2's own pipeline runs)
+# request_timeout_s: derived from max_tokens when unset (600 s + 4 tok/s decode)
+# sampling.top_k: state it (0 = disabled). Unset, it is omitted, and vLLM fills it from the
+# model's generation_config.json -- 20 for this prover -- unless served --generation-config vllm
 
 [models.informal]
 backend = "vllm"

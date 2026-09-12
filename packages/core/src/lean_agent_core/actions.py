@@ -137,6 +137,12 @@ class ObligationContext:
     #: without saying what it was elaborated against asks the model to guess which lemmas exist.
     #: Empty means "not loaded", not "no imports": every real base env imports something.
     base_env_imports: tuple[str, ...] = ()
+    #: The problem in natural language, when whoever posed it supplied one -- a benchmark's
+    #: informal statement (M3.12). Every Phase 3 prover's published prompt carries it (as a
+    #: docstring, or as Kimina's "# Problem:"), so leaving it out is a different experiment from the
+    #: one whose numbers are published. Context, never the goal: nothing checked depends on it, and
+    #: `None` -- what ingestion produces today -- renders as it always has.
+    informal_statement: str | None = None
 
 
 @dataclass(frozen=True)
