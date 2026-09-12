@@ -135,6 +135,10 @@ class CompletionsClient:
         treat an explicitly empty stop list differently from an absent one, and there is nothing to
         gain by finding out. Everything with a value is sent explicitly, including defaults, so the
         request says what it means rather than relying on server-side defaults agreeing with ours.
+
+        `top_k` is omitted when unset too, and that one *does* leave a choice to the server: vLLM
+        fills it from the model's `generation_config.json` (M3.12 -- 20 for every Phase 3 prover,
+        recorded in the fixtures made before it). A configuration that cares states it.
         """
         sampling = request.sampling
         body: dict[str, Any] = {
@@ -149,6 +153,8 @@ class CompletionsClient:
         }
         if sampling.stop:
             body["stop"] = list(sampling.stop)
+        if sampling.top_k is not None:
+            body["top_k"] = sampling.top_k
         seed = request.seed if request.seed is not None else self._config.seed
         if seed is not None:
             body["seed"] = seed

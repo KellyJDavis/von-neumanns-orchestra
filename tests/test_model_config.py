@@ -196,3 +196,22 @@ def test_a_context_that_is_not_a_positive_integer_is_rejected(value: object) -> 
 def test_a_timeout_that_is_not_a_positive_number_is_rejected(value: object) -> None:
     with pytest.raises(ConfigError, match="request_timeout_s must be a positive number"):
         parse_backend("prover", {**_MINIMAL, "request_timeout_s": value})
+
+
+def test_top_k_is_read_and_left_unset_unless_stated() -> None:
+    """M3.12. Unset, a request omits it and vLLM fills it from the model's `generation_config.json`
+    (20 for every Phase 3 prover), so a configuration meaning "no top-k" has to say `top_k = 0`."""
+    stated = parse_backend("prover", {**_MINIMAL, "sampling": {"top_k": 0}}).sampling
+    assert stated.top_k == 0
+    assert stated.canonical()["top_k"] == 0
+    unstated = parse_backend("prover", {**_MINIMAL}).sampling
+    assert unstated.top_k is None
+    # Absent from the canonical form, so every cache key and trajectory written before it existed
+    # still says exactly what it said.
+    assert "top_k" not in unstated.canonical()
+
+
+@pytest.mark.parametrize("value", [-1, True, "20", 2.5])
+def test_a_top_k_vllm_would_not_accept_is_rejected(value: object) -> None:
+    with pytest.raises(ConfigError, match="top_k must be 0"):
+        parse_backend("prover", {**_MINIMAL, "sampling": {"top_k": value}})

@@ -1092,6 +1092,8 @@ context_tokens = 40960           # the served --max-model-len; each request's ma
                                  # capped to what its prompt leaves of it (the provers' whole
                                  # 40,960-token window, as Goedel-Prover-V2's own pipeline runs)
 # request_timeout_s: derived from max_tokens when unset (600 s + 4 tok/s decode)
+# sampling.top_k: state it (0 = disabled). Unset, it is omitted, and vLLM fills it from the
+# model's generation_config.json -- 20 for this prover -- unless served --generation-config vllm
 
 [models.informal]
 backend = "vllm"

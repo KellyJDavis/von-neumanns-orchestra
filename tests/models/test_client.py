@@ -381,3 +381,16 @@ def test_the_request_on_the_wire_carries_the_derived_timeout(fixtures: Fixtures)
 
     asyncio.run(main())
     assert [(t["read"], t["connect"]) for t in seen] == [(default_timeout_s(8), 10.0)]
+
+
+def test_top_k_is_sent_only_when_stated() -> None:
+    """Unset, it is left out -- keeping every request recorded before M3.12 byte-identical -- and
+    vLLM then applies the model's own default; stated, it is sent, `0` included."""
+    client = CompletionsClient(_config(), load_chat_tokenizer(TOKENIZER_DIR))
+    unset = client.build_body(GREEDY)
+    assert "top_k" not in unset
+    for top_k in (0, 20):
+        request = dataclasses.replace(
+            GREEDY, sampling=dataclasses.replace(GREEDY.sampling, top_k=top_k)
+        )
+        assert client.build_body(request)["top_k"] == top_k

@@ -92,6 +92,7 @@ class RoutedCompletions:
             max_tokens=int(overrides.get("max_tokens", base.max_tokens)),
             n=int(overrides.get("n", base.n)),
             stop=tuple(stop),
+            top_k=int(overrides["top_k"]) if "top_k" in overrides else base.top_k,
         )
 
     async def complete(self, request: RequestCompletion) -> CompletionResponse:

@@ -58,7 +58,7 @@ _KNOWN_KEYS = frozenset(
     }
 )
 
-_KNOWN_SAMPLING_KEYS = frozenset({"temperature", "top_p", "max_tokens", "n", "stop"})
+_KNOWN_SAMPLING_KEYS = frozenset({"temperature", "top_p", "max_tokens", "n", "stop", "top_k"})
 
 
 @dataclass(frozen=True)
@@ -131,6 +131,13 @@ def _sampling(role: str, raw: Any) -> SamplingParams:
     stop = raw.get("stop", ())
     if isinstance(stop, str):
         raise ConfigError(f"[models.{role}] sampling.stop must be a list of strings, not a string")
+    top_k = raw.get("top_k")
+    # vLLM's own rule: 0 disables it, otherwise at least 1. `true` is a typo, not a top-k of 1.
+    if top_k is not None and (isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 0):
+        raise ConfigError(
+            f"[models.{role}] sampling.top_k must be 0 (disabled) or a positive integer, "
+            f"got {top_k!r}"
+        )
     defaults = SamplingParams()
     return SamplingParams(
         temperature=float(raw.get("temperature", defaults.temperature)),
@@ -138,6 +145,7 @@ def _sampling(role: str, raw: Any) -> SamplingParams:
         max_tokens=int(raw.get("max_tokens", defaults.max_tokens)),
         n=int(raw.get("n", defaults.n)),
         stop=tuple(stop),
+        top_k=top_k,
     )
 
 
