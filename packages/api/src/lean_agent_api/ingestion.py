@@ -484,9 +484,9 @@ class Ingestor:
             await session.execute(
                 text(
                     "INSERT INTO obligation (id, run_id, base_env_digest, goal_digest, "
-                    "bundle_sha, goal_src, decl_name, is_root, depth, admission) VALUES "
-                    "(:id, :run, :base_env, :gd, :bundle, :src, :decl, true, 0, "
-                    "CAST(:admission AS jsonb))"
+                    "bundle_sha, goal_src, decl_name, is_root, depth, admission, "
+                    "budget_attempts) VALUES (:id, :run, :base_env, :gd, :bundle, :src, :decl, "
+                    "true, 0, CAST(:admission AS jsonb), :budget_attempts)"
                 ),
                 {
                     "id": obligation_id,
@@ -499,6 +499,11 @@ class Ingestor:
                     "src": goal.goal_src,
                     "decl": goal.decl_name,
                     "admission": json.dumps(admission.as_json(), sort_keys=True),
+                    # The submission's own attempt budget. Until M3.12 this was recorded in the
+                    # run manifest and nowhere else, so every obligation ran on the column's
+                    # default of 8 whatever was asked -- found when a one-attempt evaluation run
+                    # re-attempted a failed problem and quietly measured pass@4 x 8.
+                    "budget_attempts": submission.budget_attempts,
                 },
             )
             await session.commit()
