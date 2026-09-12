@@ -76,8 +76,10 @@ records every request of an attempt separately (`protocols.Exchange`). M3.11 is 
 the same data as a page at `GET /attempts/{id}`, and `lean-agent trajectory <id>`, each showing every
 prompt decoded from the token ids actually sent. M3.12 (the exit gate) is in progress: the prover
 token limit is now the provers' whole 40,960-token context, with every downstream limit moved to
-accept it (see the M3.12 notes); the three-prover miniF2F ranking and the corpus exporter's
-provenance test are still to come.
+accept it; the corpus exporter raises on a mixed-provenance set (`lean_agent_core.corpus`); and the
+three-prover miniF2F ranking has its harness (`lean_agent_eval.{ranking,suites.prover_eval}`),
+each prover's published prompt and sampling, and the benchmark's informal statements -- the full
+runs themselves are still to come (see the M3.12 notes).
 
 Phase 1's remaining scope is gate 1's 10k-proof throughput report,
 blocked on the Lean Workbook corpus targeting the wrong toolchain version — unresolved since Phase 1 planning —
@@ -245,8 +247,26 @@ Two decisions drive nearly everything else in the design (spec §1):
   16384 is what those recordings were made at, and the test pins it (`RECORDED_CONTEXT_TOKENS`).
 - Serving a prover for real work (M3.12): at its whole 40,960-token context, which is the
   default `vllm serve` picks for all three provers, and must match `[models.prover]
-  context_tokens` -- `vllm serve <model> --port 8766 --max-model-len 40960`. A server started
-  with a smaller window rejects requests that do not fit it (HTTP 400); see the M3.12 notes.
+  context_tokens` -- `vllm serve <model> --port 8766 --max-model-len 40960 --generation-config
+  vllm`. A server started with a smaller window rejects requests that do not fit it (HTTP 400);
+  `--generation-config vllm` stops the model's `generation_config.json` filling any sampling
+  parameter a request omits (see the M3.12 notes). Beside Lean on the 64 GiB M2 Max, add
+  `--gpu-memory-utilization 0.55`: the default 0.92 leaves ~3 GB, and a full-Mathlib worker is ~6.
+- The prover ranking (M3.12, `lean_agent_eval.suites.prover_eval`, manual -- needs a live vLLM per
+  prover): with `LEAN_AGENT_APP_DATABASE_URL`/`LEAN_AGENT_LEANSERV_DATABASE_URL` set to asyncpg URLs
+  for those roles, `uv run python -m lean_agent_eval.suites.prover_eval run --prover goedel-8b
+  --endpoint http://127.0.0.1:8766 --samples 32 --out reports/` once per prover (`--limit N` for a
+  fixed-seed pilot subset), `run --prover symbolic --out reports/` for the dominance check, then
+  `... prover_eval rank reports/`. It refuses a server not serving that model at 40,960.
+- The corpus exporter (M3.12, `lean_agent_core.corpus`): `export_corpus`/`write_corpus`, tested
+  against real Postgres by `tests/db/test_corpus_export.py`.
+- The harness's own CI coverage (M3.12, `tests/eval/test_prover_eval_replay.py`): each prover
+  through `prover_eval`'s `infrastructure`/`prepare`/`prove` on `imo_1959_p1`, completions
+  replayed from `tests/models/data/prover_eval_<prover>.json`. Needs full Mathlib and Postgres,
+  like the miniF2F gate. Re-record one prover (the same test, in record mode) with its server up:
+  `LEAN_AGENT_RECORD_PROVER=goedel-8b=http://127.0.0.1:8766 uv run pytest
+  tests/eval/test_prover_eval_replay.py` -- the other provers replay meanwhile, or report "no
+  recording" if theirs does not exist yet.
 - The trajectory viewer (M3.11): `lean-agent trajectory <attempt_id>` in a terminal, `GET
   /attempts/<attempt_id>` as a page, or `GET /v1/attempts/<attempt_id>/trajectory` as JSON. Prompts
   are decoded only when the API was built with a `TokenizerRegistry` holding the tokenizer the
@@ -982,6 +1002,126 @@ These surfaced while building `lean_agent_api.ingestion` against a real kernel a
   opt itself into the hot pool.
 - **The OpenAPI document is asserted to contain every §6.1 path.** Spec says it is "generated, not
   written", and that test is the cheapest check that no endpoint was quietly dropped.
+
+## Implementation notes: prover-ranking facts (M3.12)
+
+From building Phase 3's exit gate -- `lean_agent_eval.{ranking,suites.prover_eval}`,
+`lean_agent_core.corpus`, the informal statements and the per-prover prompt formats -- against the
+three provers' own published code and cards.
+
+- **vLLM silently applies the model's `generation_config.json` to any sampling parameter a request
+  omits**, and says so only in its startup log: "Default vLLM sampling parameters have been
+  overridden by the model's `generation_config.json`: `{'temperature': 0.6, 'top_k': 20,
+  'top_p': 0.95}`". We send `temperature` and `top_p`, never `top_k` -- so every sample recorded in
+  M3.9/M3.10 used `top_k = 20` while the trajectory's `sampling` omits it (that server's own log
+  shows the warning). `SamplingParams.top_k` exists now: sent when set, omitted otherwise so the
+  recorded bodies stay byte-identical, and every prover spec states it. Serve with
+  `--generation-config vllm` so an omitted parameter means vLLM's neutral default.
+- **The provers' published sampling differs, and none of it is spec Appendix B's.** Goedel's
+  released pipeline samples at temperature **1.0**, top_p 0.95, no top_k (`scripts/pipeline.sh`,
+  `src/inference.py`, vLLM's offline API); its card's snippet samples via `generation_config`
+  (0.6 / 0.95 / top_k 20). Pythagoras's card uses its `generation_config` (0.6 / 0.95 / 20);
+  Kimina's card passes `SamplingParams(temperature=0.6, top_p=0.95)` to vLLM's offline API, so
+  top_k is off. `prover_eval.PROVERS` follows each prover's *evaluation* code where it exists.
+- **Every published prompt carries the problem in natural language, and our corpus had none.**
+  Goedel's and Pythagoras's as a `/-- …-/` docstring (no space before the close), Kimina's under
+  `# Problem:` too. The original miniF2F (facebookresearch, same MIT licence as the Lean port) ships
+  them; vendored separately (`data/minif2f_informal.json`, digest-pinned) so neither the formal
+  corpus digest nor the Phase 2 baseline moved. Measured before trusting them: **identical to
+  Goedel-Prover-V2's own `dataset/minif2f.jsonl` docstrings for all 244 test problems**, and to
+  DeepSeek-Prover-V1.5's for 487 of 488. One id differs between the two upstreams by case alone
+  (`notEquiv` vs `notequiv`) -- an explicit, reviewed rename, still held to an exact id comparison.
+  Only statements are vendored, never the informal proofs beside them. They reach a prompt through
+  `ObligationContext.informal_statement`, which ingestion leaves `None` -- the eval supplies it.
+- **Each prover's prompt is rebuilt byte for byte by its own code in a test.** `ProverFormat`:
+  Goedel's pipeline (`lean4_code.split(":= by")[0] + ":= by sorry"`, so the fence closes right after
+  `sorry`), Pythagoras's card (the `.strip()`ped file), Kimina's card (a system turn, `# Problem:`,
+  a header with no blank lines, ending at `:= by`). The tests run each source's own string
+  construction and compare -- the only substitution being `maxHeartbeats` (below).
+- **M3.9's prompt had a newline no published prompt has** (`sorry\n` before the closing fence; the
+  card strips it, the pipeline never writes it), and its note that Goedel's card shows
+  `maxHeartbeats 400000` was wrong -- every published prompt shows `0`. The default is now Goedel's
+  pipeline layout; the M3.9/M3.10 tests pin `ProverFormat.m3_9()`, and replay unchanged. We show
+  and set 400000 because spec §7.2 denies 0: a stated divergence, in every report's manifest.
+- **One converted tokenizer serves all three provers -- measured.** Each prover's tokenizer
+  converts to exactly the vendored `41e00ecc…`, and for every prompt format in the ranking, each
+  prover's own `apply_chat_template` produces exactly the ids our renderer does. (The upstream
+  `tokenizer.json` files were already identical; the render check is what makes the claim.)
+- **The corpus exporter raises; it does not filter** (`lean_agent_core.corpus`). Provenance is read
+  for every selected trajectory before any record is built, and `write_corpus` opens the file only
+  after the whole export assembled -- so a refused export leaves nothing at the path, not an empty
+  file that reads as "no trajectories". Read-only by transaction mode, like the viewer.
+- **`Worker` takes `eligible_tenants`.** `claim_attempt` is global by design, so an evaluation run
+  would otherwise spend the prover on whatever else is open in the same database. The scoping
+  protects the eval from others, not others from the eval: several `tests/db` tests claim
+  *unscoped*, so running the test suite against the same database during an eval can steal the
+  eval's obligations and charge them to a stub runner. Give a real run its own database, or do not
+  run tests beside it.
+- **Ingestion ignored a submission's attempt budget -- since M2.6.** `Submission.budget_attempts`
+  went into the run manifest and nowhere else; the obligation `INSERT` never set it, so every
+  obligation ran on the column default of 8. Invisible to the M2.10 gate (every easy-tail
+  obligation proves on its first attempt) and to `POST /v1/runs` callers alike. Found by the first
+  Goedel pilot: a problem whose one attempt failed was quietly claimed again, which would have
+  reported pass@4 x up-to-8 as pass@4. Fixed; `test_the_submissions_attempt_budget_reaches_every_
+  obligation` fails with `[8, 8]` without the fix. Generalizes: **read back what a pipeline stored,
+  not only what it returned** -- the run manifest said `attempts: 1` the whole time.
+- **What a Goedel-Prover-V2-8B sample costs on the M2 Max, measured** (pilot, 10 test problems at
+  n = 4, 4 attempts in flight, before the budget bug stopped it): 20 finished samples averaged
+  **1,895 tokens** (max 5,007), every one ending `stop` -- none reached the 40,960 window. An
+  attempt of 4 samples took 219-1,017 s. vLLM sustained ~90-100 tok/s across 16 sequences once
+  prefill was done, falling toward ~55-65 as sequences grew. So a full pass@32 over the ~215
+  sealable test problems is ~13M tokens, on the order of **two days per prover here** -- which is
+  why the full ranking's venue is a decision, not a default.
+- **Pythagoras-Prover-4B costs over ten times as much, and the long tail is why** (pilot, the same
+  10 problems, n = 4, 4 attempts in flight, complete and clean: 6 proved, 4 failed, no infra, no
+  link refused). 40 samples came to 275,021 tokens (prompt + completion), ~6,900 each, and **4 ran
+  to the end of the 40,960 window** (`length`). Those 4 fell on 3 problems whose attempts took
+  ~2.6 h each -- **86% of all attempt wallclock** on 30% of the problems -- because a sample at
+  the end of the window decodes at ~4 tok/s and ends with no final block to check. End to end
+  that is 24 tok/s, a quarter of Goedel's, and a pass@32 projection of ~54M tokens, **~25 days
+  here**. So a prover's mean answer length does not predict its cost: its truncation rate does,
+  and it has to be measured per prover. The 4B fits more sequences in the same memory (149,296
+  KV tokens at 0.55 against Goedel's 92,048), which did not help: the window, not the weights,
+  is what the long answers occupy.
+- **Kimina-Prover-Distill-8B sits between the two, and its pilot hit the derived request timeout.**
+  On the same 10 problems at n = 4: 8 scored, 7 proved, 32 samples for 139,735 tokens (~4,400
+  each, 2 truncated) -- about 34M tokens at pass@32. The other 2 problems produced **no tokens at
+  all** in ~9 h each. They are the same two that dominated Pythagoras's cost, and every one of
+  their three tries hit the client's derived timeout (10,777 s = 600 + 40,910/4) after ~3 h.
+- **A derived timeout allows a decode rate per *sequence*, but the request is not done until its
+  slowest sample is** -- so `n` samples at once can need `n` times the allowance, and the default
+  silently assumes one. With 16 sequences against 91,936 KV tokens (2.24 full windows at 0.55),
+  aggregate throughput fell to 17.5 tok/s and those requests could not finish in three hours.
+  **At n = 32 this is worse**: one request's samples would need up to 1.3M KV tokens, more than
+  any single card holds. So a real run sets `request_timeout_s` explicitly and sizes concurrency
+  against the server's measured KV, rather than inheriting `600 + max_tokens / 4`.
+- **A timed-out problem costs three times the timeout, and lands in `failed` while the report
+  says `infra_error`.** `endpoint_trouble_is_infra` re-types the first `MAX_ENDPOINT_RETRIES` (2)
+  as `InfraError` -- unbudgeted, the obligation reopened -- and charges the third, which exhausts
+  `budget_attempts = 1`. Both readings are right: the obligation's status is the state machine's
+  account, and the report scores from the attempts, so such a problem is never counted as a miss.
+- **The harness's replay test holds each replay to its recording's own outcome, not to "proved".**
+  Pythagoras-4B's recording of `imo_1959_p1` (2 samples, 9,337 and 5,347 tokens, both `stop`, both
+  final blocks extracted correctly) proved nothing -- Lean refused both proofs -- while its pilot
+  proved 5 of its first 5 problems. Demanding that every prover prove the CI problem would make CI
+  a matter of sampling luck, and a recorded miss is coverage of its own: the path where Lean says
+  no. So each fixture's provenance records what its run concluded, a replay must reach exactly
+  that, a miss must show Lean's diagnostics on every submitted sample with nothing linked, and at
+  least one recording must prove the problem so the `/v1/link` + `mark_proved` path stays covered.
+- **A model timeout was charged as a failed attempt.** `ModelBackendError` is an ordinary
+  exception, so the loop charges it (M2.4) -- right for a misbehaving policy, wrong for a slow
+  server, which says nothing about the problem. The eval runner re-types `ModelTimeout`/
+  `ModelUnavailable` as `InfraError` (bounded retries), and reports such a problem as infra, never
+  as a miss. Whether the *executor* should do the same for every policy is an open question.
+- **The criteria were fixed before any run** (`ranking.py`, pinned by a test): a published pair
+  must be reproduced -- paired-bootstrap 95% interval excluding zero -- when the published numbers
+  are ≥ 5 points apart (Goedel/Kimina 6.7, Pythagoras/Kimina 8.2); Goedel/Pythagoras (1.5 apart)
+  is reported, not required, since 244 problems cannot resolve it; nothing may be significantly
+  reversed. The absolute match is Goedel-8B against the paper's 84.6% (its card says 83.0%) within
+  5 points. Dominance is set containment over the problems both scored. The measure is pass@n --
+  one attempt of n samples, proved by any -- exactly the published pass@32's definition; pass@k for
+  k < n is not reported, because the executor links only the first screened sample and the count
+  it would need is never taken.
 
 ## Implementation notes: token-limit facts (M3.12)
 

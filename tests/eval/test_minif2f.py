@@ -71,44 +71,9 @@ GATE_TACTICS = ("rfl", "decide", "simp", "simp_all", "omega", "norm_num", "linar
 GATE_TACTIC_TIMEOUT_MS = 20_000
 
 
-def _mathlib_built(lake_project_dir: Path) -> bool:
-    """Is Mathlib actually built in this checkout?
-
-    Every other Lean suite here gets away with `Init`, so a checkout that has never built Mathlib
-    is a normal local state, not a broken one. CI builds it and sets `LEANKERNEL_REQUIRED=1`, and
-    the guard below turns this skip into a hard failure there -- which is the whole point of that
-    flag (M2.1.1: a fixture that skips on a missing prerequisite is honest locally and dangerous
-    in CI).
-    """
-    return (
-        lake_project_dir
-        / ".lake"
-        / "packages"
-        / "mathlib"
-        / ".lake"
-        / "build"
-        / "lib"
-        / "lean"
-        / "Mathlib.olean"
-    ).exists()
-
-
 @pytest.fixture(scope="session")
 def corpus() -> MiniF2FCorpus:
     return load_corpus()
-
-
-@pytest.fixture(scope="module")
-def mathlib(lake_project_dir: Path) -> Path:
-    if not _mathlib_built(lake_project_dir):
-        if os.environ.get("LEANKERNEL_REQUIRED") == "1":
-            raise AssertionError(
-                "LEANKERNEL_REQUIRED=1 but Mathlib is not built in "
-                f"{lake_project_dir}: miniF2F cannot run, and a skip here would hide "
-                "Phase 2's exit gate"
-            )
-        pytest.skip("Mathlib is not built; run `lake build` in packages/leankernel")
-    return lake_project_dir
 
 
 @pytest.fixture(scope="module")

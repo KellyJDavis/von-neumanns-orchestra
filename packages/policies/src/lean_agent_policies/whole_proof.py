@@ -34,6 +34,7 @@ leaves Lean to parse Lean.
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import json
 import re
@@ -62,6 +63,12 @@ PROMPTS = Path(__file__).parent / "prompts"
 #: trained on.
 GOEDEL_PROVER_V2 = "whole_proof/goedel_prover_v2.txt"
 
+#: Kimina-Prover's prompt and system turn, verbatim from its model card's vLLM quick start
+#: (AI-MO/Kimina-Prover-Distill-8B): the problem in natural language under "# Problem:", then the
+#: formal statement ending at `:= by`.
+KIMINA_PROVER = "whole_proof/kimina_prover.txt"
+KIMINA_PROVER_SYSTEM = "whole_proof/kimina_prover_system.txt"
+
 #: The `open` line Goedel-Prover-V2's training header carries, so the model's proofs lean on it:
 #: its final code block restates the theorem but *not* the header (measured), which means names
 #: like `sq_nonneg` or `Real.sqrt_nonneg` resolve only because this line is in force. It is shown
@@ -71,9 +78,12 @@ GOEDEL_OPENS = "open BigOperators Real Nat Topology Rat"
 
 #: Bounded, and deliberately not upstream's `maxHeartbeats 0`. Spec §7.2 denies `maxHeartbeats 0`
 #: outright, and M2.10 found the concrete cost: an unbounded tactic runs until the *wallclock*
-#: timeout, which SIGKILLs a ~6 GiB full-Mathlib worker and pays ~30 s to re-warm it. 400000 is
-#: what Goedel-Prover-V2's own model card shows and double Lean's default, since the proofs a prover
-#: writes are heavier than a single portfolio tactic.
+#: timeout, which SIGKILLs a ~6 GiB full-Mathlib worker and pays ~30 s to re-warm it. Every
+#: published prover prompt shows `0` -- Goedel-Prover-V2's card and pipeline header, Pythagoras's
+#: and Kimina's cards (M3.9's note said the card showed 400000; it does not) -- so the prompt here
+#: differs from theirs in that one number, a stated divergence: it shows the value the development
+#: actually sets. 400000 is double Lean's default, since a prover's proofs are heavier than a
+#: single portfolio tactic.
 DEFAULT_MAX_HEARTBEATS = 400_000
 
 #: Per-candidate `/v1/check` wallclock. Generous next to the portfolio's 10 s because a whole proof
@@ -104,6 +114,56 @@ class PromptTemplate:
         """`string.Template`, not `str.format`: a prompt about Lean is full of `{` and `}`, and a
         `format` template would make every binder in an edited prompt a placeholder."""
         return string.Template(self.text).substitute(fields)
+
+
+class StatementLayout(enum.Enum):
+    """How the formal statement sits inside a prover's prompt, copied from the code or card that
+    produced each prover's published numbers (M3.12) -- the shape a model was trained on is part of
+    the model, down to where a fence closes. Each is held byte-for-byte to its source by a test."""
+
+    #: Goedel-Prover-V2's released pipeline (`src/utils.py`, `prover_inference`): DeepSeek-Prover's
+    #: miniF2F header, the informal docstring, then `code.split(":= by")[0] + ":= by sorry"` -- so
+    #: the fence closes straight after `sorry`.
+    GOEDEL_PIPELINE = "goedel_pipeline"
+    #: Pythagoras-Prover's card: the same file with `:= by` and an indented `sorry` on its own line,
+    #: `.strip()`ped before formatting.
+    PYTHAGORAS_CARD = "pythagoras_card"
+    #: Kimina-Prover's card: header lines with no blank line between them, ending at `:= by`.
+    KIMINA_CARD = "kimina_card"
+    #: What M3.9 shipped and M3.9/M3.10 recorded: the card's file *with* a trailing newline, which
+    #: no published prompt has, and no docstring. Kept so those recordings keep replaying.
+    M3_9 = "m3.9"
+
+
+@dataclass(frozen=True)
+class ProverFormat:
+    """One prover's published prompt: its user template, its system turn if it has one, and the
+    layout of the statement inside it."""
+
+    prompt: PromptTemplate
+    layout: StatementLayout
+    system: PromptTemplate | None = None
+
+    @classmethod
+    def goedel_pipeline(cls) -> ProverFormat:
+        return cls(PromptTemplate.load(GOEDEL_PROVER_V2), StatementLayout.GOEDEL_PIPELINE)
+
+    @classmethod
+    def pythagoras_card(cls) -> ProverFormat:
+        """Pythagoras-Prover's card prompt is Goedel's text, word for word, around its own layout."""
+        return cls(PromptTemplate.load(GOEDEL_PROVER_V2), StatementLayout.PYTHAGORAS_CARD)
+
+    @classmethod
+    def kimina_card(cls) -> ProverFormat:
+        return cls(
+            PromptTemplate.load(KIMINA_PROVER),
+            StatementLayout.KIMINA_CARD,
+            PromptTemplate.load(KIMINA_PROVER_SYSTEM),
+        )
+
+    @classmethod
+    def m3_9(cls) -> ProverFormat:
+        return cls(PromptTemplate.load(GOEDEL_PROVER_V2), StatementLayout.M3_9)
 
 
 def extract_lean_block(text: str) -> str | None:
@@ -143,7 +203,9 @@ class WholeProofSampler:
     """Implements `lean_agent_core.protocols.Policy`. Frozen, so `config_hash` cannot drift from
     the configuration it was computed for."""
 
-    prompt: PromptTemplate = field(default_factory=lambda: PromptTemplate.load(GOEDEL_PROVER_V2))
+    #: Goedel-Prover-V2's released pipeline by default (M3.12; M3.9 shipped a layout no published
+    #: prompt has, which `ProverFormat.m3_9` keeps for the recordings made with it).
+    prompt_format: ProverFormat = field(default_factory=ProverFormat.goedel_pipeline)
     opens: str = GOEDEL_OPENS
     max_heartbeats: int = DEFAULT_MAX_HEARTBEATS
     check_timeout_ms: int = DEFAULT_CHECK_TIMEOUT_MS
@@ -159,17 +221,23 @@ class WholeProofSampler:
     @property
     def prompt_hashes(self) -> dict[str, str]:
         """Spec §7.3's `policies[].prompt_hashes`, in the manifest's own `sha256:` form."""
-        return {"prover": f"sha256:{self.prompt.sha256}"}
+        hashes = {"prover": f"sha256:{self.prompt_format.prompt.sha256}"}
+        if self.prompt_format.system is not None:
+            hashes["prover_system"] = f"sha256:{self.prompt_format.system.sha256}"
+        return hashes
 
     @property
     def config_hash(self) -> bytes:
         """Everything that changes what is asked or what is checked: the prompt's *content* (not
-        its file name -- an edited prompt under the same name is a different experiment), the
-        header lines repeated into every development, the check budget, and any sampling
-        override."""
+        its file name -- an edited prompt under the same name is a different experiment), its
+        system turn and statement layout, the header lines repeated into every development, the
+        check budget, and any sampling override."""
+        system = self.prompt_format.system
         payload = json.dumps(
             {
-                "prompt": self.prompt.sha256,
+                "prompt": self.prompt_format.prompt.sha256,
+                "system": system.sha256 if system is not None else None,
+                "layout": self.prompt_format.layout.value,
                 "opens": self.opens,
                 "max_heartbeats": self.max_heartbeats,
                 "check_timeout_ms": self.check_timeout_ms,
@@ -187,22 +255,43 @@ class WholeProofSampler:
         return universes, ctx.goal_decl.rsplit(".", 1)[-1], ctx.entry.rsplit(".", 1)[0]
 
     def formal_statement(self, ctx: ObligationContext) -> str:
-        """Band 1, as a Lean file the prover recognises: the base env's imports, the header, and the
-        sealed goal as a theorem to complete."""
+        """Band 1, as a Lean file the prover recognises: the base env's imports, the header, the
+        problem's informal statement as a docstring when there is one, and the sealed goal as a
+        theorem to complete -- laid out as the prover's own published code or card lays it out.
+
+        The docstring is `/-- {text}-/`, with no space before the close: DeepSeek-Prover's miniF2F
+        (what Goedel-Prover-V2's pipeline reads) and both cards write it that way.
+        """
         universes, name, _ = self._names(ctx)
         imports = "".join(f"import {module}\n" for module in ctx.base_env_imports)
-        return (
-            f"{imports}\nset_option maxHeartbeats {self.max_heartbeats}\n\n{self.opens}\n\n"
-            f"theorem {name}{universes} : {ctx.goal_src} := by\n  sorry\n"
-        )
+        heartbeats = f"set_option maxHeartbeats {self.max_heartbeats}"
+        theorem = f"theorem {name}{universes} : {ctx.goal_src} := by"
+        doc = f"/-- {ctx.informal_statement}-/\n" if ctx.informal_statement else ""
+        layout = self.prompt_format.layout
+        if layout is StatementLayout.KIMINA_CARD:
+            return f"{imports}{heartbeats}\n{self.opens}\n{doc}{theorem}\n"
+        header = f"{imports}\n{heartbeats}\n\n{self.opens}\n\n"
+        if layout is StatementLayout.GOEDEL_PIPELINE:
+            return f"{header}{doc}{theorem} sorry"
+        if layout is StatementLayout.PYTHAGORAS_CARD:
+            return f"{header}{doc}{theorem}\n  sorry"
+        return f"{header}{theorem}\n  sorry\n"
 
     def messages(self, ctx: ObligationContext) -> tuple[Message, ...]:
-        return (
-            Message(
-                role="user",
-                content=self.prompt.render(formal_statement=self.formal_statement(ctx)),
+        """The system turn, if the prover's format has one, then the prompt. Kimina's `# Problem:`
+        is left empty when no informal statement was supplied -- the card's format, with nothing
+        invented to fill it."""
+        fmt = self.prompt_format
+        user = Message(
+            role="user",
+            content=fmt.prompt.render(
+                formal_statement=self.formal_statement(ctx),
+                informal_statement=ctx.informal_statement or "",
             ),
         )
+        if fmt.system is None:
+            return (user,)
+        return (Message(role="system", content=fmt.system.text), user)
 
     def development(self, ctx: ObligationContext, block: str) -> str:
         """The model's block as an auxiliary theorem, and an entry typed by the sealed constant.

@@ -264,3 +264,39 @@ def sealed_obligation(admin_engine: Engine) -> Iterator[SealedObligation]:
             text("DELETE FROM base_env WHERE digest = :digest"), {"digest": base_env_digest}
         )
         conn.commit()
+
+
+def _mathlib_built(lake_project_dir: Path) -> bool:
+    """Is Mathlib actually built in this checkout? (Shared by the miniF2F gate and M3.12's prover
+    replay, both of which need a full-Mathlib base env.)
+
+    Every other Lean suite here gets away with `Init`, so a checkout that has never built Mathlib
+    is a normal local state, not a broken one. CI builds it and sets `LEANKERNEL_REQUIRED=1`, and
+    the guard below turns this skip into a hard failure there -- which is the whole point of that
+    flag (M2.1.1: a fixture that skips on a missing prerequisite is honest locally and dangerous
+    in CI).
+    """
+    return (
+        lake_project_dir
+        / ".lake"
+        / "packages"
+        / "mathlib"
+        / ".lake"
+        / "build"
+        / "lib"
+        / "lean"
+        / "Mathlib.olean"
+    ).exists()
+
+
+@pytest.fixture(scope="module")
+def mathlib(lake_project_dir: Path) -> Path:
+    if not _mathlib_built(lake_project_dir):
+        if os.environ.get("LEANKERNEL_REQUIRED") == "1":
+            raise AssertionError(
+                "LEANKERNEL_REQUIRED=1 but Mathlib is not built in "
+                f"{lake_project_dir}: this suite cannot run, and a skip here would hide "
+                "a full-Mathlib suite"
+            )
+        pytest.skip("Mathlib is not built; run `lake build` in packages/leankernel")
+    return lake_project_dir

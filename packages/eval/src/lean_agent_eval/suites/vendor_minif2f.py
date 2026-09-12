@@ -44,6 +44,24 @@ DATA_DIR = Path(__file__).parent / "data"
 CORPUS_PATH = DATA_DIR / "minif2f.json"
 LICENSE_PATH = DATA_DIR / "LICENSE.miniF2F"
 
+#: The informal statements (M3.12), from the original miniF2F -- the repository the Lean 4 port
+#: above was made from, under the same MIT licence and copyright. Every Phase 3 prover's published
+#: prompt carries the problem in natural language, so a run without them is a different experiment
+#: from the one whose numbers are published. Measured before vendoring: these texts are
+#: byte-identical to the docstrings in DeepSeek-Prover-V1.5's `minif2f.jsonl` -- the file
+#: Goedel-Prover-V2's own pipeline reads -- for 487 of 488 problems, every test problem among them.
+#: Kept in a separate file, pinned by commit like the formal corpus, so adding them moves neither
+#: `corpus_sha256` nor the Phase 2 baseline.
+INFORMAL_REPO = "facebookresearch/miniF2F"
+INFORMAL_COMMIT = "e4f113090ad82d64f8ce064d2f55b613a9b6bded"
+INFORMAL_PATH = DATA_DIR / "minif2f_informal.json"
+
+#: The one problem whose name differs between the two upstreams, and only by case: the Lean 4 port
+#: spells it `notEquiv`, the original miniF2F (and DeepSeek-Prover's copy of it) `notequiv`. Mapped
+#: explicitly, and still held to `main`'s exact id comparison, rather than matching every problem
+#: case-insensitively -- which would also hide a real mismatch the day one appears.
+INFORMAL_RENAMES = {"numbertheory_notequiv2i2jasqbsqdiv8": "numbertheory_notEquiv2i2jasqbsqdiv8"}
+
 #: Every one of the 488 upstream files has exactly this header -- verified, not assumed, by
 #: `_parse` rejecting anything that does not match. Hoisting it out of the per-problem records
 #: keeps the corpus honest about what is shared and what is the problem's own text.
@@ -139,10 +157,80 @@ def corpus_digest(corpus: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def build_informal(commit: str = INFORMAL_COMMIT) -> dict[str, Any]:
+    """The informal statements, one per problem, checked the way `build` checks the formal ones.
+
+    Only the statements: upstream also ships informal *proofs*, and a prompt carrying one would be
+    handing the prover the answer.
+    """
+    url = f"https://github.com/{INFORMAL_REPO}/archive/{commit}.tar.gz"
+    with urllib.request.urlopen(url, timeout=300) as response:
+        raw = response.read()
+
+    statements: dict[str, dict[str, str]] = {}
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
+        for member in sorted(archive.getmembers(), key=lambda m: m.name):
+            parts = Path(member.name).parts
+            if not member.isfile() or not member.name.endswith(".json"):
+                continue
+            if len(parts) != 4 or parts[1] != "informal" or parts[2] not in ("test", "valid"):
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            name, record = Path(parts[3]).stem, json.loads(handle.read())
+            if record.get("problem_name") != name:
+                raise VendorError(f"informal/{parts[2]}/{name}: names {record.get('problem_name')}")
+            name = INFORMAL_RENAMES.get(name, name)
+            text = record.get("informal_statement")
+            if not isinstance(text, str) or not text.strip():
+                raise VendorError(f"informal/{parts[2]}/{name}: no informal statement")
+            # Rendered inside a `/-- ... -/` docstring, which a `-/` in the text would close.
+            if "-/" in text:
+                raise VendorError(f"informal/{parts[2]}/{name}: contains `-/`")
+            statements[name] = {"split": parts[2], "informal_statement": text}
+
+    if len(statements) != 488:
+        raise VendorError(f"expected miniF2F's 488 informal statements, parsed {len(statements)}")
+    return {
+        "name": "miniF2F informal statements",
+        "provenance": {
+            "repo": f"https://github.com/{INFORMAL_REPO}",
+            "commit": commit,
+            "license": "MIT",
+            "copyright": "Copyright (c) Meta Platforms, Inc. and affiliates.",
+        },
+        "statements": dict(sorted(statements.items())),
+    }
+
+
+def informal_digest(informal: dict[str, Any]) -> str:
+    """Digest of the statements alone, for `corpus_digest`'s reason."""
+    payload = json.dumps(informal["statements"], sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", default=COMMIT, help="upstream commit to vendor")
+    parser.add_argument(
+        "--informal", action="store_true", help="vendor only the informal statements (M3.12)"
+    )
     args = parser.parse_args()
+
+    if args.informal:
+        informal = build_informal()
+        formal = {(p["id"], p["split"]) for p in json.loads(CORPUS_PATH.read_text())["problems"]}
+        vendored = {(i, s["split"]) for i, s in informal["statements"].items()}
+        if vendored != formal:
+            raise VendorError(
+                f"informal and formal corpora disagree on {sorted(vendored ^ formal)[:5]}"
+            )
+        informal["informal_sha256"] = informal_digest(informal)
+        INFORMAL_PATH.write_text(json.dumps(informal, indent=1, ensure_ascii=False) + "\n")
+        print(f"wrote {INFORMAL_PATH} ({len(informal['statements'])} statements)")
+        print(f"informal_sha256 = {informal['informal_sha256']}")
+        return 0
 
     corpus = build(args.commit)
     corpus["corpus_sha256"] = corpus_digest(corpus)
